@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Editor / backup / disabled artifacts
+*.bak
+*.bak.*
+*.disabled
+*.swp
+.DS_Store
