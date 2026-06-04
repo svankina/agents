@@ -4,18 +4,15 @@ Custom resources for [Claude Code](https://claude.com/claude-code): slash comman
 
 ## Layout
 
-- **[`commands/`](commands/)** — Custom slash commands (`.md` files with YAML frontmatter). Drop a file here and reference it in `~/.claude/settings.json` to expose it as a `/` command.
+- **[`commands/`](commands/)** — Custom slash commands (`.md` files with YAML frontmatter). Symlinked to `~/.claude/commands/` so Claude Code auto-discovers them.
 
-## Configuration
+## Setup
 
-In `~/.claude/settings.json`, reference this directory:
+Commands in this directory are symlinked from `~/.claude/commands/`:
 
-```json
-{
-  "command-paths": [
-    "~/src/agents/claude/commands"
-  ]
-}
+```bash
+ln -s ~/src/agents/claude/commands/arch_scan.md ~/.claude/commands/arch_scan.md
+ln -s ~/src/agents/claude/commands/warpfork.md ~/.claude/commands/warpfork.md
 ```
 
-Add to an existing `command-paths` array or create one if absent.
+Claude Code auto-discovers `.md` files in `~/.claude/commands/` and exposes them as `/` commands.

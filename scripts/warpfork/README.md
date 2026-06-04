@@ -4,8 +4,7 @@ Fork the current Claude Code session into Warp (resumed with `--fork-session`).
 
 ## Files
 
-- **`warpfork`** — Bash script that handles forking. Supports three modes (split pane, simulated split via xdotool, or new window). Respects env vars for customization (`WARPFORK_MODE`, `WARPFORK_PANE`, etc.).
-- **`warpfork.md`** — Claude Code slash command interface (`/warpfork`).
+- **`warpfork`** — Bash script that handles forking. Uses native `warp://action/split_pane` deep link. Respects env vars for customization (`WARPFORK_DIRECTION`, `WARPFORK_SCHEME`, etc.).
 
 ## Setup
 
