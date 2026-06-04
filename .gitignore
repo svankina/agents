@@ -5,6 +5,11 @@ __pycache__/
 # Local machine-specific config (real values live here, never committed)
 .env
 .env.local
+agent.json
+
+# Local symlink mirror of the external browser-harness checkout (absolute
+# symlinks into ~/src/browser-harness; lives in pagent as a packaged skill)
+pi/skills/browser-harness/
 
 # Editor / backup / disabled artifacts
 *.bak
