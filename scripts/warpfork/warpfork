@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Fork the current Claude Code session into Warp (resumed with --fork-session).
+# Linux only. Uses native warp://action/split_pane deep link.
+#
+# Usage: warpfork [session-id]   (no arg = current session, via process tree)
+# Env: WARPFORK_DIRECTION (default "right"), WARPFORK_NAME, WARPFORK_SCHEME (default "warp")
+
+die() { echo "warpfork: $*" >&2; exit 1; }
+command -v jq >/dev/null || die "jq not found (required)"
+
+urlencode() { python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1],safe=''))" "$1"; }
+
+# --- Resolve session id, cwd, and parent name ---
+PARENT_NAME=""
+if [ $# -ge 1 ]; then
+  SESSION_ID="$1"; CWD="$(pwd)"
+  for f in "${HOME}/.claude/sessions/"*.json; do
+    [ -f "$f" ] || continue
+    [ "$(jq -r '.sessionId' "$f" 2>/dev/null)" = "$SESSION_ID" ] && {
+      CWD=$(jq -r '.cwd' "$f"); PARENT_NAME=$(jq -r '.name // empty' "$f"); break; }
+  done
+else
+  SESSION_FILE=""; pid=$$
+  while [ "$pid" -gt 1 ]; do
+    f="${HOME}/.claude/sessions/$pid.json"
+    [ -f "$f" ] && { SESSION_FILE="$f"; break; }
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ') || break
+  done
+  [ -n "$SESSION_FILE" ] || SESSION_FILE=$(ls -t "${HOME}/.claude/sessions/"*.json 2>/dev/null | head -1 || true)
+  [ -n "$SESSION_FILE" ] && [ -f "$SESSION_FILE" ] || die "no Claude session found — start a session first"
+  SESSION_ID=$(jq -r '.sessionId' "$SESSION_FILE")
+  CWD=$(jq -r '.cwd' "$SESSION_FILE")
+  PARENT_NAME=$(jq -r '.name // empty' "$SESSION_FILE")
+fi
+[ -n "$SESSION_ID" ] && [ "$SESSION_ID" != "null" ] || die "could not read sessionId"
+[ -n "$CWD" ] && [ "$CWD" != "null" ] || CWD="${HOME}"
+
+# --- Fork display name (collapse repeat-fork suffixes) ---
+if [ -n "${WARPFORK_NAME:-}" ]; then FORK_NAME="$WARPFORK_NAME"
+elif [ -n "$PARENT_NAME" ]; then FORK_NAME="${PARENT_NAME% (fork)} (fork)"
+else FORK_NAME="fork ${SESSION_ID:0:8}"; fi
+
+# Single-quote the name for the shell command (escape embedded quotes).
+QNAME="'${FORK_NAME//\'/\'\\\'\'}'"
+CMD="claude --resume ${SESSION_ID} --fork-session --name ${QNAME}"
+
+if [ -n "${WARPFORK_DRY_RUN:-}" ]; then
+  echo "warpfork[dry-run]: session=${SESSION_ID:0:8} name=\"$FORK_NAME\""
+  echo "  cmd: $CMD"
+  exit 0
+fi
+
+SCHEME="${WARPFORK_SCHEME:-warp}"
+DIR="${WARPFORK_DIRECTION:-right}"
+xdg-open "${SCHEME}://action/split_pane?direction=${DIR}&command=$(urlencode "$CMD")" 2>/dev/null
+echo "warpfork: split pane → fork ${SESSION_ID:0:8} \"${FORK_NAME}\""
