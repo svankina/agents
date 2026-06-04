@@ -1,0 +1,363 @@
+#!/usr/bin/env python3
+"""filetree.py — deterministic operations for FILETREE.md maintenance."""
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+MANIFEST_PATH = Path('FILETREE.md')
+
+# Binary, asset and lock files — LLM summaries add no value here.
+SKIP_EXTENSIONS = {
+    '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.svg', '.bmp',
+    '.woff', '.woff2', '.ttf', '.otf', '.eot',
+    '.mp4', '.mp3', '.wav', '.ogg', '.webm',
+    '.zip', '.tar', '.gz', '.bz2', '.7z',
+    '.pdf', '.psd', '.ai',
+}
+SKIP_FILENAMES = {
+    'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml',
+    'Cargo.lock', 'poetry.lock', 'Pipfile.lock', 'go.sum',
+    'FILETREE.md',
+}
+
+# Entry format: - `filename` — summary <!--hash:xxxxxxxx-->
+ENTRY_RE = re.compile(r'^- `([^`]+)` — (.+?) <!--hash:([a-f0-9]+)-->\s*$')
+SECTION_RE = re.compile(r'^## (.+?)/?\s*$')
+
+
+def require_git():
+    """Require a git repository; all change detection depends on git."""
+    try:
+        subprocess.run(
+            ['git', 'rev-parse', '--git-dir'],
+            check=True, capture_output=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        sys.exit(
+            "Error: This skill requires the project to be a git repository.\n"
+            "       Run `git init && git add . && git commit -m \"initial\"` first."
+        )
+
+
+def should_skip(path: str) -> bool:
+    """Skip binary extensions and lock files."""
+    p = Path(path)
+    return p.suffix.lower() in SKIP_EXTENSIONS or p.name in SKIP_FILENAMES
+
+
+def list_current_files() -> list[str]:
+    """Tracked + untracked-unignored files, deduped and sorted."""
+    # -z: NUL-delimited records, no quoting ambiguity for paths with spaces/newlines/non-ASCII.
+    # core.quotePath=false: redundant under -z but kept as belt-and-braces and to match peer calls.
+    # encoding='utf-8': pin decoding so a C/POSIX locale doesn't crash on multi-byte paths.
+    tracked = subprocess.check_output(
+        ['git', '-c', 'core.quotePath=false', 'ls-files', '-z'],
+        encoding='utf-8',
+    ).split('\0')
+    # Submodule gitlinks (mode 160000) appear in `ls-files` but `git hash-object`
+    # cannot hash them — exits 128 and crashes the whole pipeline. Filter them out.
+    stage = subprocess.check_output(
+        ['git', '-c', 'core.quotePath=false', 'ls-files', '--stage', '-z'],
+        encoding='utf-8',
+    ).split('\0')
+    gitlinks = {
+        rec.split('\t', 1)[1]
+        for rec in stage
+        if rec.startswith('160000 ') and '\t' in rec
+    }
+    untracked = subprocess.check_output(
+        ['git', '-c', 'core.quotePath=false', 'ls-files', '--others', '--exclude-standard', '-z'],
+        encoding='utf-8',
+    ).split('\0')
+    all_files = set(tracked) | set(untracked)
+    return sorted(
+        f for f in all_files
+        if f
+        and f not in gitlinks
+        and not should_skip(f)
+        # Tracked deletions still appear in git ls-files, but are no longer
+        # current files. Broken symlinks are present repository entries even
+        # though Path.exists() is false, so keep any symlink.
+        and (Path(f).exists() or Path(f).is_symlink())
+    )
+
+
+def hash_files(paths: list[str]) -> dict[str, str]:
+    """Batch `git hash-object`; returns {path: 8-char hash}.
+
+    Uses --stdin-paths for regular files to sidestep ARG_MAX on large repos.
+    Symlinks need special handling: `git hash-object <path>` follows the link
+    target and fails for broken links, while git stores the link target string
+    itself as the blob content.
+    """
+    if not paths:
+        return {}
+
+    hashes: dict[str, str] = {}
+    regular_paths: list[str] = []
+    for p in paths:
+        path = Path(p)
+        if path.is_symlink():
+            proc = subprocess.run(
+                ['git', 'hash-object', '--stdin'],
+                input=os.readlink(path),
+                capture_output=True, encoding='utf-8', check=True,
+            )
+            hashes[p] = proc.stdout.strip()[:8]
+        else:
+            regular_paths.append(p)
+
+    if regular_paths:
+        proc = subprocess.run(
+            ['git', 'hash-object', '--stdin-paths'],
+            input='\n'.join(regular_paths),
+            capture_output=True, encoding='utf-8', check=True,
+        )
+        out = proc.stdout.strip().splitlines()
+        if len(out) != len(regular_paths):
+            raise RuntimeError(
+                f'git hash-object: expected {len(regular_paths)} hashes, got {len(out)}'
+            )
+        hashes.update({p: h[:8] for p, h in zip(regular_paths, out)})
+
+    return {p: hashes[p] for p in paths}
+
+
+def detect_renames() -> list[tuple[str, str]]:
+    """Parse staged rename pairs from `git status -z`. Trust git's default 50% similarity.
+
+    Limitation: a worktree-only `mv old new` (no `git add`) appears as delete + untracked.
+    Git cannot detect those as renames without staging, so neither can we.
+    """
+    out = subprocess.check_output(
+        ['git', '-c', 'core.quotePath=false', 'status', '--porcelain=v1', '-z'],
+        encoding='utf-8',
+    )
+    # porcelain v1 with -z: 'XY NEW\0OLD\0' for renames; 'XY PATH\0' otherwise.
+    fields = out.split('\0')
+    renames = []
+    i = 0
+    while i < len(fields):
+        entry = fields[i]
+        if len(entry) < 4:
+            i += 1
+            continue
+        xy = entry[:2]
+        new_path = entry[3:]
+        if xy[0] in ('R', 'C') and i + 1 < len(fields):
+            renames.append((fields[i + 1], new_path))
+            i += 2
+            continue
+        i += 1
+    return renames
+
+
+def _unquote_git_path(s: str) -> str:
+    """Decode git's legacy C-style quoted-octal path. Idempotent on raw paths.
+
+    Migration hook: manifests produced before `core.quotePath=false` stored non-ASCII
+    paths as e.g. `"templates/\\345\\205\\211.txt"`. We decode them transparently so
+    upgrades don't see phantom remove+add churn.
+    """
+    if len(s) < 2 or s[0] != '"' or s[-1] != '"':
+        return s
+    inner = s[1:-1]
+    raw = bytearray()
+    i = 0
+    while i < len(inner):
+        c = inner[i]
+        if c == '\\' and i + 1 < len(inner):
+            nxt = inner[i + 1]
+            if nxt in '01234567' and i + 4 <= len(inner):
+                raw.append(int(inner[i + 1:i + 4], 8))
+                i += 4
+                continue
+            simple = {'n': 0x0A, 't': 0x09, 'r': 0x0D, '\\': 0x5C, '"': 0x22}
+            raw.append(simple.get(nxt, ord(nxt)))
+            i += 2
+        else:
+            raw.append(ord(c))
+            i += 1
+    return raw.decode('utf-8', errors='replace')
+
+
+def parse_manifest() -> list[dict]:
+    """Read FILETREE.md into [{path, summary, hash}]."""
+    if not MANIFEST_PATH.exists():
+        return []
+    entries = []
+    section = ''
+    for line in MANIFEST_PATH.read_text(encoding='utf-8').splitlines():
+        m = SECTION_RE.match(line)
+        if m:
+            section = m.group(1).strip().rstrip('/')
+            if section == '(root)':
+                section = ''
+            continue
+        m = ENTRY_RE.match(line)
+        if m:
+            filename, summary, h = m.groups()
+            filename = _unquote_git_path(filename)
+            # Backward-compat: legacy entries stored the full path.
+            if '/' in filename:
+                full_path = filename
+            elif section:
+                full_path = f'{section}/{filename}'
+            else:
+                full_path = filename
+            entries.append({
+                'path': full_path,
+                'summary': summary.strip(),
+                'hash': h,
+            })
+    return entries
+
+
+def write_manifest(entries: list[dict]) -> None:
+    """Group by directory, sort stably, write back to FILETREE.md."""
+    by_dir: dict[str, list[dict]] = {}
+    for e in entries:
+        d = str(Path(e['path']).parent)
+        if d == '.':
+            d = ''
+        by_dir.setdefault(d, []).append(e)
+
+    lines = [
+        '# Project Filetree',
+        '',
+        '_Auto-maintained by `/filetree:update`. Each entry carries a content hash; mismatched hashes indicate stale summaries._',
+        '',
+    ]
+
+    for d in sorted(by_dir):
+        heading = f'{d}/' if d else '(root)/'
+        lines.append(f'## {heading}')
+        lines.append('')
+        for e in sorted(by_dir[d], key=lambda x: x['path']):
+            filename = Path(e['path']).name
+            lines.append(
+                f"- `{filename}` — {e['summary']} <!--hash:{e['hash']}-->"
+            )
+        lines.append('')
+
+    # Atomic write: tmp + os.replace, so a crash mid-write can't truncate the manifest.
+    tmp = MANIFEST_PATH.with_name(MANIFEST_PATH.name + '.tmp')
+    tmp.write_text('\n'.join(lines), encoding='utf-8')
+    tmp.replace(MANIFEST_PATH)
+
+
+def cmd_todo() -> dict:
+    """Diff current files vs manifest; emit the LLM todo list."""
+    require_git()
+    current_paths = set(list_current_files())
+    manifest = parse_manifest()
+    manifest_by_path = {e['path']: e for e in manifest}
+
+    renames_raw = detect_renames()
+    renames = [
+        {'old_path': o, 'new_path': n}
+        for o, n in renames_raw
+        if o in manifest_by_path and not should_skip(n)
+    ]
+    renamed_olds = {r['old_path'] for r in renames}
+    renamed_news = {r['new_path'] for r in renames}
+
+    added_paths = sorted(current_paths - set(manifest_by_path) - renamed_news)
+    removed = sorted(set(manifest_by_path) - current_paths - renamed_olds)
+    common = sorted(current_paths & set(manifest_by_path))
+
+    to_hash = common + added_paths
+    hashes = hash_files(to_hash)
+
+    changed = []
+    for p in common:
+        if hashes[p] != manifest_by_path[p]['hash']:
+            changed.append({
+                'path': p,
+                'old_summary': manifest_by_path[p]['summary'],
+                'old_hash': manifest_by_path[p]['hash'],
+                'new_hash': hashes[p],
+            })
+
+    added = [{'path': p, 'hash': hashes[p]} for p in added_paths]
+
+    return {
+        'added': added,
+        'changed': changed,
+        'removed': removed,
+        'renamed': renames,
+        'stats': {
+            'total_in_repo': len(current_paths),
+            'total_in_manifest': len(manifest_by_path),
+            'need_llm': len(added) + len(changed),
+        },
+    }
+
+
+def cmd_apply(updates_json: str) -> dict:
+    """Apply LLM decisions to the manifest. UNCHANGED refreshes hash only."""
+    require_git()
+    updates = json.loads(updates_json)
+    current_paths = set(list_current_files())
+    manifest = parse_manifest()
+    by_path = {e['path']: e for e in manifest}
+
+    # Rehash the new path: renames often carry small content edits.
+    for r in updates.get('renames', []):
+        old, new = r['old_path'], r['new_path']
+        if old in by_path and new in current_paths:
+            entry = by_path.pop(old)
+            entry['path'] = new
+            entry['hash'] = hash_files([new]).get(new, entry['hash'])
+            by_path[new] = entry
+
+    for p in updates.get('removals', []):
+        by_path.pop(p, None)
+
+    for u in updates.get('updates', []):
+        p = u['path']
+        h = u['hash']
+        s = u['summary']
+        # Reject hallucinated paths: LLMs sometimes emit entries for nonexistent files.
+        if p not in current_paths:
+            continue
+        if s == 'UNCHANGED':
+            # UNCHANGED contract: refresh hash, keep old summary — linchpin of the cacheless design.
+            # If path was popped by an earlier rename/removal in this same call, skip silently —
+            # never persist the literal sentinel string as a real summary.
+            if p in by_path:
+                by_path[p]['hash'] = h
+        else:
+            by_path[p] = {'path': p, 'hash': h, 'summary': s}
+
+    write_manifest(list(by_path.values()))
+    return {'total_entries': len(by_path)}
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('command', choices=['todo', 'lint', 'apply'])
+    args = parser.parse_args()
+
+    if args.command in ('todo', 'lint'):
+        result = cmd_todo()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if args.command == 'lint':
+            # CI-friendly: exit 1 on drift.
+            drift = (
+                len(result['added']) + len(result['changed'])
+                + len(result['removed']) + len(result['renamed'])
+            )
+            sys.exit(0 if drift == 0 else 1)
+    elif args.command == 'apply':
+        result = cmd_apply(sys.stdin.read())
+        print(json.dumps(result, ensure_ascii=False))
+
+
+if __name__ == '__main__':  # pragma: no cover - CLI entry; tests call main() directly.
+    main()
