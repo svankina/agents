@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  claude-saddle start [-s SESSION] [-c CWD] [--cmd CLAUDE_CMD] [--prompt TEXT | --prompt-file FILE]
+  claude-saddle send -s SESSION [--message TEXT | --file FILE]
+  claude-saddle capture -s SESSION [-n LINES]
+  claude-saddle attach -s SESSION
+  claude-saddle stop -s SESSION
+
+Starts and drives an interactive Claude Code session inside tmux.
+USAGE
+}
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "Missing required command: $1" >&2
+    exit 127
+  }
+}
+
+session=""
+cwd="$PWD"
+claude_cmd="${CLAUDE_SADDLE_CMD:-claude --dangerously-skip-permissions}"
+prompt=""
+prompt_file=""
+lines="200"
+
+require_session() {
+  if [[ -z "$session" ]]; then
+    echo "Missing -s SESSION" >&2
+    usage >&2
+    exit 2
+  fi
+}
+
+send_text() {
+  local target="$1"
+  local text="$2"
+  local tmp
+  tmp="$(mktemp "${TMPDIR:-/tmp}/claude-saddle-message.XXXXXX")"
+  printf '%s' "$text" >"$tmp"
+  tmux load-buffer -b claude-saddle-buffer "$tmp"
+  rm -f "$tmp"
+  tmux paste-buffer -t "$target" -b claude-saddle-buffer -d
+  tmux send-keys -t "$target" Enter
+}
+
+cmd="${1:-}"
+if [[ $# -gt 0 ]]; then
+  shift
+fi
+
+case "$cmd" in
+  start)
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -s|--session) session="$2"; shift 2 ;;
+        -c|--cwd) cwd="$2"; shift 2 ;;
+        --cmd) claude_cmd="$2"; shift 2 ;;
+        --prompt) prompt="$2"; shift 2 ;;
+        --prompt-file) prompt_file="$2"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
+      esac
+    done
+    need tmux
+    command -v "${claude_cmd%% *}" >/dev/null 2>&1 || {
+      echo "Claude command not found: $claude_cmd" >&2
+      echo "Set CLAUDE_SADDLE_CMD or pass --cmd if needed." >&2
+      exit 127
+    }
+    if [[ -z "$session" ]]; then
+      session="claude-saddle-$(date +%Y%m%d-%H%M%S)"
+    fi
+    if tmux has-session -t "$session" 2>/dev/null; then
+      echo "Session already exists: $session" >&2
+      exit 3
+    fi
+    tmux new-session -d -s "$session" -c "$cwd" "$claude_cmd"
+    echo "Started tmux session: $session"
+    echo "Attach with: tmux attach -t $session"
+    if [[ -n "$prompt_file" ]]; then
+      prompt="$(<"$prompt_file")"
+    fi
+    if [[ -n "$prompt" ]]; then
+      sleep 1
+      send_text "$session" "$prompt"
+      echo "Sent initial prompt."
+    fi
+    ;;
+  send)
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -s|--session) session="$2"; shift 2 ;;
+        --message) prompt="$2"; shift 2 ;;
+        --file) prompt_file="$2"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
+      esac
+    done
+    need tmux
+    require_session
+    tmux has-session -t "$session" >/dev/null
+    if [[ -n "$prompt_file" ]]; then
+      prompt="$(<"$prompt_file")"
+    fi
+    if [[ -z "$prompt" ]]; then
+      echo "Missing --message TEXT or --file FILE" >&2
+      exit 2
+    fi
+    send_text "$session" "$prompt"
+    ;;
+  capture)
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -s|--session) session="$2"; shift 2 ;;
+        -n|--lines) lines="$2"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
+      esac
+    done
+    need tmux
+    require_session
+    tmux capture-pane -t "$session" -p -S "-$lines"
+    ;;
+  attach)
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -s|--session) session="$2"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
+      esac
+    done
+    need tmux
+    require_session
+    tmux attach -t "$session"
+    ;;
+  stop)
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -s|--session) session="$2"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
+      esac
+    done
+    need tmux
+    require_session
+    tmux kill-session -t "$session"
+    ;;
+  -h|--help|help)
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac
