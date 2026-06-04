@@ -12,10 +12,6 @@ This repository tracks custom agent work, including local Pi skills, prompts, ex
 
 Machine-specific paths and URLs are not hardcoded. Copy [`.env.example`](.env.example) to `.env` (gitignored) and fill in values for your machine; prompts and skills reference these as `$VARS`.
 
-## Current inventories
-
-- [Pi skills developed in `~/src/pagent`](pi-skills.md) — skills we created locally, ported/adapted skills, and related packaged skill surfaces.
-
 ## Source checkouts
 
 - Primary local Pi resource checkout: `~/src/pagent`
