@@ -1,0 +1,20 @@
+# Skill discovery allowlist.
+#
+# Pi respects .ignore files while scanning skill directories. Keep the blanket
+# ignore below, then add one pair of negated patterns for each skill that should
+# be registered as an explicit slash-invoked skill.
+#
+# Skills in this directory should also set `disable-model-invocation: true` in
+# SKILL.md frontmatter so they are available via /skill:name (and /name through
+# the skill-shortcuts extension) without appearing in the model system prompt.
+
+*
+!dogfood/
+!dogfood/**
+!filetree/
+!filetree/**
+!parallel-task-planner/
+!parallel-task-planner/**
+!pi-init/
+!pi-init/**
+
