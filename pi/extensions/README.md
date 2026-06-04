@@ -68,8 +68,9 @@ and a record-key toggle (default `alt+r`).
 | `HERMES_AGENT_DIR` | Hermes Agent checkout (default `~/.hermes/hermes-agent`) |
 
 **`wfork.ts`** — `/warpfork`. Forks the current Pi session into Warp. Delivery via
-`PI_WFORK_MODE`: `window` (new window, default), `pane` (xdotool split-pane on X11,
-`PI_WFORK_PANE=1`), `split` (native `warp://action/split_pane` deep link), or `auto`.
+`PI_WFORK_MODE`: `auto` (default: pane when invoked from Warp with xdotool, otherwise
+window), `window` (new window), `pane` (xdotool split-pane on X11), or `split`
+(native `warp://action/split_pane` deep link).
 
 ## Shell & system integration
 

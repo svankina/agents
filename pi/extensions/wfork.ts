@@ -6,10 +6,10 @@ import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // Fork the current pi session into Warp. Delivery modes (PI_WFORK_MODE):
-//   window  new window via warp://launch — reliable, the default
-//   pane    xdotool split-pane keyboard sim (X11 + Warp focused) — PI_WFORK_PANE=1
+//   window  new window via warp://launch
+//   pane    xdotool split-pane keyboard sim (X11 + Warp focused)
 //   split   native warp://action/split_pane deep link (Warp builds that support it)
-//   auto    pane if PI_WFORK_PANE=1 and xdotool present, else window
+//   auto    default: pane when invoked from Warp with xdotool, else window
 
 type Direction = "l" | "r" | "u" | "d";
 const directions: Direction[] = ["l", "r", "u", "d"];
@@ -68,8 +68,10 @@ function hasXdotool(): boolean {
 
 function inWarp(): boolean {
 	return (
-		process.env.TERM_PROGRAM === "WarpTerminal" &&
-		!!process.env.WARP_TERMINAL_SESSION_UUID
+		process.env.TERM_PROGRAM === "WarpTerminal" ||
+		!!process.env.WARP_TERMINAL_SESSION_UUID ||
+		!!process.env.WARP_IS_LOCAL_SHELL_SESSION ||
+		!!process.env.WARP_SESSION_ID
 	);
 }
 
@@ -158,13 +160,13 @@ function launchPane(cwd: string, sessionFile: string, direction: Direction): boo
 function resolveMode(): "window" | "pane" | "split" {
 	const mode = (process.env.PI_WFORK_MODE ?? "auto").toLowerCase();
 	if (mode === "window" || mode === "pane" || mode === "split") return mode;
-	return process.env.PI_WFORK_PANE === "1" && hasXdotool() ? "pane" : "window";
+	return inWarp() && hasXdotool() ? "pane" : "window";
 }
 
 export default function wforkExtension(pi: ExtensionAPI) {
 	pi.registerCommand("warpfork", {
 		description:
-			"Fork this session into Warp (window; PI_WFORK_PANE=1 for a split pane): /warpfork [l|r|u|d]",
+			"Fork this session into Warp (pane in Warp by default; PI_WFORK_MODE=window to force a window): /warpfork [l|r|u|d]",
 		getArgumentCompletions: (prefix: string) => {
 			const normalized = prefix.trim().toLowerCase();
 			return directions
