@@ -2,6 +2,10 @@
 __pycache__/
 *.py[cod]
 
+# Local machine-specific config (real values live here, never committed)
+.env
+.env.local
+
 # Editor / backup / disabled artifacts
 *.bak
 *.bak.*
