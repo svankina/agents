@@ -18,8 +18,8 @@ from urllib.request import Request, urlopen
 
 MAX_SKILL_NAME = 64
 DEFAULT_MATTERMOST_ENV = Path.home() / ".config" / "mattermost_service" / "mattermost_service.env"
-DEFAULT_MATTERMOST_BOT_SCRIPT = Path.home() / "src" / "mattermost" / "bot.py"
-DEFAULT_MATTERMOST_BOT_PYTHON = Path.home() / "src" / "mattermost" / ".venv" / "bin" / "python"
+DEFAULT_MATTERMOST_BOT_SCRIPT = Path.home() / "mattermost-ai-bot" / "bot.py"
+DEFAULT_MATTERMOST_BOT_PYTHON = Path.home() / "mattermost-ai-bot" / ".venv" / "bin" / "python"
 
 
 def slugify(text: str) -> str:
@@ -634,7 +634,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--prompts-dir", default=".pi/prompts", help="Prompts directory under scope-dir")
     parser.add_argument("--with-skill", action="store_true", help="Also create a backing skill file")
     parser.add_argument("--no-prompt", action="store_true", help="Do not create a slash prompt; requires --with-skill")
-    parser.add_argument("--skip-mattermost", action="store_true", help="Do not create/configure a Mattermost bot")
+    parser.add_argument("--with-mattermost", action="store_true", help="Opt in to creating/configuring a Mattermost bot (off by default)")
+    parser.add_argument("--skip-mattermost", action="store_true", help="Deprecated/no-op: Mattermost is off by default; still forces it off if combined with --with-mattermost")
     parser.add_argument("--mattermost-env", default=str(DEFAULT_MATTERMOST_ENV), help="Env file containing Mattermost URL/token")
     parser.add_argument("--mattermost-url", help="Mattermost base URL; overrides env file")
     parser.add_argument("--mattermost-token", help="Mattermost admin/service token; overrides env file")
@@ -675,9 +676,10 @@ def main(argv: list[str] | None = None) -> int:
         print("Re-run with --overwrite to replace it, or choose --name <different-slug>.", file=sys.stderr)
         return 2
 
-    mattermost_result = {"status": "skipped", "reason": "--skip-mattermost"}
-    mattermost_runtime_result = {"status": "skipped", "reason": "--skip-mattermost or --skip-mattermost-runtime"}
-    if not args.skip_mattermost:
+    do_mattermost = args.with_mattermost and not args.skip_mattermost
+    mattermost_result = {"status": "skipped", "reason": "Mattermost off by default; pass --with-mattermost to enable"}
+    mattermost_runtime_result = {"status": "skipped", "reason": "Mattermost off by default; pass --with-mattermost to enable"}
+    if do_mattermost:
         channels = [item.strip() for item in args.mattermost_channels.split(",") if item.strip()]
         mattermost_result = create_mattermost_bot(
             name=name,

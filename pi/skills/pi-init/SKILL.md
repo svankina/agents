@@ -8,12 +8,18 @@ disable-model-invocation: true
 
 Use this skill to turn an explicit name and purpose like `security-reviewer Security review agent` into a reusable pi slash prompt.
 
-The default instantiation is now **prompt-only**:
+The default instantiation is **prompt-only, no Mattermost**:
 
 - a project-local slash prompt at `.pi/prompts/<variant-slug>.md`
-- a Mattermost bot account for the variant, joined to `home` and `bots`, with a direct-message channel opened for the local user
-- a complete Mattermost runtime for that bot: a bot access token, `.mattermost-agent/bot.env`, `.mattermost-agent/.gitignore`, a `mattermost-<bot>-bot.service` user systemd unit, and the service enabled/started
 - a git repository initialized in the target project directory, with all safe current files staged for tracking (runtime secrets must remain ignored)
+
+Mattermost provisioning is **opt-in** — pass `--with-mattermost` to the helper. When opted in it
+adds a Mattermost bot account for the variant (joined to `home` and `bots`, with a DM channel opened
+for the local user) plus a complete runtime: a bot access token, `.mattermost-agent/bot.env`,
+`.mattermost-agent/.gitignore`, a `mattermost-<bot>-bot.service` user systemd unit, and the service
+enabled/started. Do not opt in unless the user explicitly asks for a Mattermost-reachable bot, and
+confirm the bot runtime defaults (`~/mattermost-ai-bot/bot.py` + `.venv`) point at a working install
+first — stale paths produce a broken service.
 
 After `/reload`, the user can invoke the variant with:
 
@@ -68,28 +74,31 @@ For `/init`, parse the first argument as the explicit prompt name and everything
    --scope-dir <project-dir>  # write into another project root
    --with-skill               # also create .pi/skills/<variant-slug>/SKILL.md
    --no-prompt                # create only the skill; requires --with-skill
-   --skip-mattermost          # opt out of Mattermost bot setup
+   --with-mattermost          # opt IN to Mattermost bot setup (off by default)
+   --skip-mattermost          # deprecated/no-op; Mattermost is already off by default
    --mattermost-env <path>    # defaults to ~/.config/mattermost_service/mattermost_service.env
    --mattermost-team <team>   # defaults to MATTERMOST_TEAM_NAME or the service user's first team
    --mattermost-channels home,bots
    --mattermost-dm-username <username>
    --skip-mattermost-runtime        # create/configure the bot account only; no token/env/service
    --no-start-mattermost-runtime    # write token/env/service but do not enable/start it
-   --mattermost-bot-script <path>   # defaults to ~/src/mattermost/bot.py
-   --mattermost-bot-python <path>   # defaults to ~/src/mattermost/.venv/bin/python
+   --mattermost-bot-script <path>   # defaults to ~/mattermost-ai-bot/bot.py
+   --mattermost-bot-python <path>   # defaults to ~/mattermost-ai-bot/.venv/bin/python
    ```
 
-   The helper also:
+   By default the helper only creates the slash prompt and runs `git init` / `git add -A` in the
+   target project directory so generated and other safe files are staged for tracking.
+
+   **Only when `--with-mattermost` is passed**, the helper also:
 
    - creates or reuses a Mattermost bot named after the variant
    - adds it to the target Mattermost team
    - joins it to the `home` and `bots` channels by default
    - opens a direct-message channel with the user from `--mattermost-dm-username`, `MATTERMOST_DM_USERNAME`, or `$USER`
    - creates/reuses a runtime access token for the bot
-   - writes `.mattermost-agent/bot.env` with the token and pi-backed runtime settings for `~/src/mattermost/bot.py`
+   - writes `.mattermost-agent/bot.env` with the token and pi-backed runtime settings for `~/mattermost-ai-bot/bot.py`
    - writes `.mattermost-agent/.gitignore` so runtime tokens/env/logs are not staged
    - writes and starts `~/.config/systemd/user/mattermost-<bot>-bot.service`
-   - runs `git init` and `git add -A` in the target project directory so generated files and other safe files are staged for tracking
 
    Mattermost credentials are read from `--mattermost-env`, environment variables, or both. Expected variables are `MATTERMOST_URL` and one of `MATTERMOST_ADMIN_TOKEN`, `MATTERMOST_SERVICE_TOKEN`, or `MATTERMOST_TOKEN`. Do not write Mattermost tokens into generated project files except the ignored runtime env at `.mattermost-agent/bot.env`, because `/init` stages the whole project with git.
 
@@ -112,7 +121,8 @@ For `/init`, parse the first argument as the explicit prompt name and everything
    - Move detailed behavior into the skill and keep `.pi/prompts/<variant-slug>.md` short, calling the skill by name and passing `$ARGUMENTS`.
    - Keep frontmatter valid and description under 1024 characters.
 
-6. **Verify Mattermost setup**
+6. **Verify Mattermost setup** *(only if `--with-mattermost` was passed)*
+   - If Mattermost was not requested, skip this step entirely.
    - Review the helper's `mattermost` and `mattermost_runtime` JSON results.
    - Confirm whether the bot was created or reused, joined to `home` and `bots`, opened as a direct message, received a runtime token/env file, and has a user systemd service enabled/started.
    - Run `systemctl --user status mattermost-<bot>-bot --no-pager` or an equivalent check when practical.
@@ -130,8 +140,8 @@ For `/init`, parse the first argument as the explicit prompt name and everything
 
 8. **Report completion**
    - List created/updated files.
-   - List the Mattermost bot username and whether it joined `home`, joined `bots`, was opened under direct messages, and has a running runtime service.
-   - Confirm that a git repository was initialized and files were staged, and that `.mattermost-agent/bot.env` is ignored; otherwise report the exact git error.
+   - If `--with-mattermost` was used, list the bot username and whether it joined `home`, joined `bots`, was opened under direct messages, and has a running runtime service; confirm `.mattermost-agent/bot.env` is ignored. Otherwise state that Mattermost was not provisioned (prompt-only).
+   - Confirm that a git repository was initialized and files were staged; otherwise report the exact git error.
    - Tell the user to run `/reload` before using the new prompt/skill in the current session.
    - Show invocation examples.
 
