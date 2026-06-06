@@ -21,6 +21,7 @@ nothing here changes Pi's behaviour until you opt in.
 | `voice/` | Push-to-talk voice input + TTS rewrite of replies (via a Hermes Agent helper) | command |
 | `wfork.ts` | `/warpfork` — fork the current Pi session into a new Warp window or split pane | command |
 | `user-bash-aliases.ts` | Runs the Bash tool through your shell so `~/.bash_aliases` are available | bash hook |
+| `playground-routing.ts` | Routes the Bash tool through the session's active tester playground (cd/export persist); no-op unless opted in | bash hook |
 | `sudo-handoff.ts` | `request_sudo_handoff` tool — runs sudo in an attached tmux session instead of asking for a password in chat | tool |
 | `settings-git-autocommit.ts` | Auto-commits changes to the nearest `.pi/settings.json` | background |
 | `claude-saddle.ts` | Launch and supervise Claude Code in a tmux session with a live picture-in-picture widget | tool + commands |
@@ -84,6 +85,29 @@ wraps recognized terminal-agent launches (e.g. `codex exec`) with `agent_track.p
 | `PI_USER_BASH_SHELL` | Shell to run commands through (default `/bin/bash`) |
 | `PI_USER_BASH_INIT` | File to source for aliases (default `$HOME/.bash_aliases`) |
 | `PI_TRACK_TERMINAL_AGENTS` | `1` to wrap terminal-agent commands with tracking |
+
+**`playground-routing.ts`** — transparently routes the Bash tool through the
+session's active **tester playground** so `cd`/`export`/shell-vars persist (via the
+per-session playground supervisor). **Off by default**: it registers the `user_bash`
+hook only when `PLAYGROUND_ROUTING_ENABLED=1`; otherwise its default export returns
+without touching Pi's Bash tool. When enabled, each Bash command is forwarded to
+`bin/playground route --json -- <command>` (bin located via `PLAYGROUND_BIN`, else by
+walking up from cwd to a `.tester/playgrounds` dir and using its repo's
+`bin/playground`). It branches on the JSON `status`: `ok` runs inside the playground
+supervisor (streams stdout/stderr, resolves with the command's exit code), `inactive`
+falls through to a normal shell exec (non-playground sessions are unaffected), and
+`stale` surfaces a recovery message (`run: bin/playground deactivate`) with a non-zero
+exit and **never runs on host**. `PI_SESSION_ID`/`PLAYGROUND_SESSION_ID`/
+`PLAYGROUND_STATE_ROOT` are passed through to the route subprocess so marker resolution
+matches what `activate` used.
+
+| Env | Purpose |
+|---|---|
+| `PLAYGROUND_ROUTING_ENABLED` | `1` to enable the routing hook (default off) |
+| `PLAYGROUND_BIN` | Override path to `bin/playground` (else discovered from cwd) |
+
+(`PI_SESSION_ID` and `PLAYGROUND_STATE_ROOT` are forwarded, not configured here, so
+the route subprocess resolves the same active marker as `activate`.)
 
 **`sudo-handoff.ts`** — registers the `request_sudo_handoff` tool. Instead of asking
 for a sudo password in chat, it runs the command via `sudo bash -lc` inside a
