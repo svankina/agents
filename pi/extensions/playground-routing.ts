@@ -18,23 +18,24 @@ import { dirname, resolve } from "node:path";
 // fires before the bash tool runs and lets us mutate event.input.command, which
 // is how we wrap it.
 
-// One stable session id for the whole Pi process, injected into the wrapped
-// command so that `playground activate` run from inside this session and the
-// later routed commands all resolve the SAME marker. (Pi does not export a
-// session id to tools, and active.py's pid-<ppid> fallback is not stable across
-// the activate-on-host vs. route spawn paths.)
-const ROUTING_SESSION_ID =
-  process.env.PLAYGROUND_SESSION_ID ||
-  process.env.PI_SESSION_ID ||
-  `pi-${process.pid}`;
+// Resolve one stable session id from the environment. Pinned once at module load
+// and injected into the wrapped command so that `playground activate` run from
+// inside this session and the later routed commands all resolve the SAME marker.
+// (Pi does not export a session id to tools, and active.py's pid-<ppid> fallback
+// is not stable across the activate-on-host vs. route spawn paths.)
+export function resolveSessionId(env: NodeJS.ProcessEnv = process.env): string {
+  return env.PLAYGROUND_SESSION_ID || env.PI_SESSION_ID || `pi-${process.pid}`;
+}
 
-function shellQuote(value: string): string {
+const ROUTING_SESSION_ID = resolveSessionId(process.env);
+
+export function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 // Locate bin/playground: prefer PLAYGROUND_BIN, else walk up from the given dir
 // looking for a `.tester/playgrounds` state dir and use that repo's bin/playground.
-function locatePlaygroundBin(start: string): string | null {
+export function locatePlaygroundBin(start: string): string | null {
   const override = process.env.PLAYGROUND_BIN;
   if (override && existsSync(override)) {
     return override;
@@ -54,6 +55,23 @@ function locatePlaygroundBin(start: string): string | null {
   return null;
 }
 
+// Build the transparent wrapper for a single bash command. Pins
+// PLAYGROUND_SESSION_ID for both the route call and any activate it wraps, then
+// execs the wrapper so its stdout/stderr/exit become the tool result.
+export function buildRoutedCommand(opts: {
+  bin: string;
+  sessionId: string;
+  original: string;
+  timeout?: number;
+}): string {
+  const timeoutArg =
+    typeof opts.timeout === "number" && opts.timeout > 0 ? ` --timeout ${opts.timeout}` : "";
+  return (
+    `PLAYGROUND_SESSION_ID=${shellQuote(opts.sessionId)} ` +
+    `exec ${shellQuote(opts.bin)} route --exec${timeoutArg} -- ${shellQuote(opts.original)}`
+  );
+}
+
 export default function (pi: ExtensionAPI) {
   if (process.env.PLAYGROUND_ROUTING_ENABLED !== "1") {
     return;
@@ -70,14 +88,11 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
-    const original = event.input.command;
-    const timeout = event.input.timeout;
-    const timeoutArg = typeof timeout === "number" && timeout > 0 ? ` --timeout ${timeout}` : "";
-
-    // Pin PLAYGROUND_SESSION_ID for both the route call and any activate it wraps,
-    // then exec the wrapper so its stdout/stderr/exit become the tool result.
-    event.input.command =
-      `PLAYGROUND_SESSION_ID=${shellQuote(ROUTING_SESSION_ID)} ` +
-      `exec ${shellQuote(bin)} route --exec${timeoutArg} -- ${shellQuote(original)}`;
+    event.input.command = buildRoutedCommand({
+      bin,
+      sessionId: ROUTING_SESSION_ID,
+      original: event.input.command,
+      timeout: event.input.timeout,
+    });
   });
 }
