@@ -220,3 +220,11 @@ export async function restoreGlobalDefaultsAfterPiWrite(
   await new Promise((resolve) => setTimeout(resolve, 0));
   return restoreGlobalDefaults(snapshot, fields);
 }
+
+// This module is a shared library for the agent-folder-config extensions
+// (agent-folder-session, fast-command, thinking-command import its helpers),
+// but it lives in the auto-discovered extensions directory, where pi loads
+// every .ts file and requires each to export a factory function. Export a
+// no-op factory so the loader accepts it instead of failing the whole session
+// with "Extension does not export a valid factory function".
+export default function agentFolderConfig(): void {}
