@@ -323,13 +323,9 @@ export function buildStatusLine(state: StatusLineState, width: number, theme: Th
 
 export function buildModeLine(state: StatusLineState, width: number, theme: ThemeLike = {}): string | undefined {
   const statuses = (state.statuses ?? []).map((s) => sanitizeSingleLine(s)).filter(Boolean);
-  const pieces = [color(theme, "dim", "-- INSERT --")];
-  const sessionName = sanitizeSingleLine(state.sessionName);
-  if (sessionName) pieces.push(color(theme, "dim", `session ${sessionName}`));
-  pieces.push(...statuses);
+  if (statuses.length === 0) return undefined;
 
-  if (pieces.length === 1 && !sessionName) return undefined;
-  return truncateToWidth(pieces.join(color(theme, "dim", " · ")), width, color(theme, "dim", "…"));
+  return truncateToWidth(statuses.join(color(theme, "dim", " · ")), width, color(theme, "dim", "…"));
 }
 
 function collectState(ctx: ClaudeUiContext, footerData?: FooterDataLike): StatusLineState {

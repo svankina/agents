@@ -59,6 +59,32 @@ test("appendSessionLabelToRenderedLines adds and deduplicates the border badge",
   expect(deduped[0]).toBe(labelled[0]);
 });
 
+test("buildModeLine omits Claude Code insert/session-only text", () => {
+  expect(
+    mod.buildModeLine(
+      {
+        host: "pop-os",
+        cwd: "~/src/pagent",
+        sessionName: "tester_badge",
+        totals: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+      },
+      80,
+    ),
+  ).toBeUndefined();
+
+  expect(
+    mod.buildModeLine(
+      {
+        host: "pop-os",
+        cwd: "~/src/pagent",
+        totals: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+        statuses: ["Remote Control active"],
+      },
+      80,
+    ),
+  ).toBe("Remote Control active");
+});
+
 test("buildStatusLine keeps the rendered footer within the requested width", () => {
   const line = mod.buildStatusLine(
     {
