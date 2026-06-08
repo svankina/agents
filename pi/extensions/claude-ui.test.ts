@@ -85,6 +85,22 @@ test("buildModeLine omits Claude Code insert/session-only text", () => {
   ).toBe("Remote Control active");
 });
 
+test("buildModeLine strips ANSI styling from extension statuses", () => {
+  expect(mod.sanitizeSingleLine("\x1b[38;2;102;102;102mvoice off\x1b[39m")).toBe("voice off");
+
+  expect(
+    mod.buildModeLine(
+      {
+        host: "pop-os",
+        cwd: "~/src/pagent",
+        totals: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+        statuses: ["\x1b[38;2;102;102;102mvoice off\x1b[39m"],
+      },
+      80,
+    ),
+  ).toBe("voice off");
+});
+
 test("buildStatusLine keeps the rendered footer within the requested width", () => {
   const line = mod.buildStatusLine(
     {

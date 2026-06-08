@@ -148,7 +148,7 @@ function truncateAnsi(text: string, width: number): string {
 }
 
 export function sanitizeSingleLine(text: string | undefined): string {
-  return (text ?? "")
+  return stripAnsi(text ?? "")
     .replace(CONTROL_PATTERN, " ")
     .replace(/[\r\n\t]/g, " ")
     .replace(/ +/g, " ")
