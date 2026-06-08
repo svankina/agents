@@ -1,0 +1,84 @@
+import { expect, mock, test } from "bun:test";
+
+// The extension runs inside Pi, whose packages are not installed as local deps in
+// this resource repo. Mock just the TUI/editor bits needed for pure helper tests.
+// eslint-disable-next-line no-control-regex
+const ANSI_PATTERN = new RegExp("\\u001B(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~]|\\][^\\u0007]*(?:\\u0007|\\u001B\\\\))", "g");
+
+function visibleWidth(text: string): number {
+  return [...text.replace(ANSI_PATTERN, "")].length;
+}
+
+function truncateToWidth(text: string, width: number, ellipsis = "…"): string {
+  if (visibleWidth(text) <= width) return text;
+  if (width <= 0) return "";
+  const suffix = visibleWidth(ellipsis) <= width ? ellipsis : "";
+  return [...text.replace(ANSI_PATTERN, "")].slice(0, Math.max(0, width - visibleWidth(suffix))).join("") + suffix;
+}
+
+mock.module("@earendil-works/pi-tui", () => ({ visibleWidth, truncateToWidth }));
+mock.module("@earendil-works/pi-coding-agent", () => ({
+  isToolCallEventType: (kind: string, event: any) => event?.tool === kind,
+  CustomEditor: class {
+    borderColor = (text: string) => text;
+    render(width: number) {
+      return ["─".repeat(width), "> "];
+    }
+  },
+}));
+
+const mod = await import("./claude-ui.ts");
+
+test("formatCwdForStatus shortens paths under HOME", () => {
+  expect(mod.formatCwdForStatus("/home/example/src/project", "/home/example")).toBe("~/src/project");
+  expect(mod.formatCwdForStatus("/opt/project", "/home/example")).toBe("/opt/project");
+});
+
+test("formatTokens uses compact suffixes", () => {
+  expect(mod.formatTokens(999)).toBe("999");
+  expect(mod.formatTokens(1500)).toBe("1.5k");
+  expect(mod.formatTokens(48800)).toBe("49k");
+  expect(mod.formatTokens(1_200_000)).toBe("1.2M");
+});
+
+test("getUsageTotals sums assistant usage only", () => {
+  const totals = mod.getUsageTotals([
+    { type: "message", message: { role: "user", usage: { input: 100 } } },
+    { type: "message", message: { role: "assistant", usage: { input: 100, output: 20, cacheRead: 5, cost: { total: 0.01 } } } },
+    { type: "message", message: { role: "assistant", usage: { input: 50, output: 5, cacheWrite: 2, cost: { total: 0.02 } } } },
+  ] as any);
+
+  expect(totals).toEqual({ input: 150, output: 25, cacheRead: 5, cacheWrite: 2, cost: 0.03 });
+});
+
+test("appendSessionLabelToRenderedLines adds and deduplicates the border badge", () => {
+  const labelled = mod.appendSessionLabelToRenderedLines(["────────────────────", "> "], 20, "demo");
+  expect(labelled[0]).toBe("────────────── demo ");
+
+  const deduped = mod.appendSessionLabelToRenderedLines(labelled, 20, "demo");
+  expect(deduped[0]).toBe(labelled[0]);
+});
+
+test("buildStatusLine keeps the rendered footer within the requested width", () => {
+  const line = mod.buildStatusLine(
+    {
+      host: "pop-os",
+      cwd: "~/src/pagent",
+      branch: "master",
+      ageMs: 5 * 60 * 60 * 1000,
+      totals: { input: 12_000, output: 3400, cacheRead: 0, cacheWrite: 0, cost: 2.8 },
+      modelId: "gpt-5.5",
+      provider: "openai-codex",
+      thinkingLevel: "medium",
+      contextTokens: 48_800,
+      contextWindow: 1_000_000,
+      contextPercent: 4.88,
+    },
+    80,
+  );
+
+  expect(visibleWidth(line)).toBeLessThanOrEqual(80);
+  expect(line).toContain("pop-os");
+  expect(line).toContain("~/src/pagent");
+  expect(line).toContain("gpt-5.5");
+});

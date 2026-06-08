@@ -18,6 +18,7 @@ nothing here changes Pi's behaviour until you opt in.
 | `fast-command.ts` | `/fast on\|off\|toggle\|status` — OpenAI/Codex Priority Processing fast mode | command |
 | `thinking-command.ts` | `/thinking none\|low\|medium\|high\|xhigh` — set thinking level | command |
 | `clear-screen-shortcut.ts` | `Ctrl+L` clears the visible TUI like a terminal, keeping the session intact | editor |
+| `claude-ui.ts` | Claude-style TUI footer plus a session-name badge on the editor border | footer + editor |
 | `voice/` | Push-to-talk voice input + TTS rewrite of replies (via a Hermes Agent helper) | command |
 | `wfork.ts` | `/warpfork` — fork the current Pi session into a new Warp window or split pane | command |
 | `user-bash-aliases.ts` | Runs the Bash tool through your shell so `~/.bash_aliases` are available | bash hook |
@@ -55,6 +56,12 @@ level and persists it to the folder config.
 **`clear-screen-shortcut.ts`** — rebinds `Ctrl+L` to clear the visible conversation
 above the editor (like a real terminal clear) without dropping session state; old
 messages return on the next reload/rebuild.
+
+**`claude-ui.ts`** — replaces Pi's default footer with a compact Claude-like status
+line: host, cwd, git branch, session age, context usage, model/thinking level, and
+cost. It also wraps the input editor so `/name <label>` appears as a right-aligned
+badge on the editor border. Disable with `PI_CLAUDE_UI=0`, or selectively with
+`PI_CLAUDE_UI_FOOTER=0` / `PI_CLAUDE_UI_SESSION_LABEL=0`.
 
 **`voice/`** — push-to-talk voice input and optional text-to-speech rewriting of
 assistant replies. `index.ts` is the Pi extension; `helper.py` is a long-lived JSONL
