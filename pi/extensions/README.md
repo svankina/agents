@@ -62,7 +62,11 @@ line: host, cwd, git branch, session age, context usage, model/thinking level,
 provider usage-limit headers when available, and cost. It also wraps the input
 editor so `/name <label>` appears as a right-aligned badge on the editor border.
 Disable with `PI_CLAUDE_UI=0`, or selectively with `PI_CLAUDE_UI_FOOTER=0` /
-`PI_CLAUDE_UI_SESSION_LABEL=0` / `PI_CLAUDE_UI_LIMITS=0`.
+`PI_CLAUDE_UI_SESSION_LABEL=0` / `PI_CLAUDE_UI_LIMITS=0`. The limits display
+uses provider response headers when available and also polls the local limitsd
+service at `PI_CLAUDE_UI_LIMITS_URL` (default `http://127.0.0.1:8787/api/limits`)
+so quota still appears while Codex is using WebSocket transport; set
+`PI_CLAUDE_UI_LOCAL_LIMITS=0` to disable the local-service poll.
 
 **`voice/`** — push-to-talk voice input and optional text-to-speech rewriting of
 assistant replies. `index.ts` is the Pi extension; `helper.py` is a long-lived JSONL

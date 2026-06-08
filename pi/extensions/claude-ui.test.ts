@@ -132,6 +132,54 @@ test("parseProviderLimitHeaders formats common rate-limit headers", () => {
   expect(mod.formatProviderLimitText(snapshot, now)).toBe("limit req 75% ↺2m");
 });
 
+test("formatLocalLimitsText formats local limitsd Codex windows", () => {
+  const now = Date.parse("2026-06-08T08:39:00Z");
+  const text = mod.formatLocalLimitsText(
+    {
+      providers: {
+        codex: {
+          provider: "codex",
+          available: true,
+          windows: [
+            { id: "primary", label: "5-hour", remaining_percent: 63, reset_at: "2026-06-08T08:44:00Z" },
+            { id: "secondary", label: "Weekly", remaining_percent: 50, reset_at: "2026-06-11T00:26:20Z" },
+            { id: "spark_primary", label: "gpt-5.3-codex-spark 5-hour", remaining_percent: 100, reset_at: "2026-06-08T13:39:00Z" },
+          ],
+        },
+      },
+    },
+    "openai-codex",
+    "gpt-5.5",
+    now,
+  );
+
+  expect(text).toBe("limit codex 5h 63%↺5m W 50% rem");
+});
+
+test("formatLocalLimitsText selects Spark-specific Codex windows", () => {
+  const now = Date.parse("2026-06-08T08:39:00Z");
+  const text = mod.formatLocalLimitsText(
+    {
+      providers: {
+        codex: {
+          provider: "codex",
+          available: true,
+          windows: [
+            { id: "primary", label: "5-hour", remaining_percent: 63, reset_at: "2026-06-08T08:44:00Z" },
+            { id: "spark_primary", label: "gpt-5.3-codex-spark 5-hour", remaining_percent: 100, reset_at: "2026-06-08T13:39:00Z" },
+            { id: "spark_secondary", label: "gpt-5.3-codex-spark Weekly", remaining_percent: 95, reset_at: "2026-06-12T10:33:34Z" },
+          ],
+        },
+      },
+    },
+    "openai-codex",
+    "gpt-5.3-codex-spark",
+    now,
+  );
+
+  expect(text).toBe("limit codex 5h 100%↺5h W 95% rem");
+});
+
 test("buildStatusLine includes provider usage-limit text", () => {
   const line = mod.buildStatusLine(
     {

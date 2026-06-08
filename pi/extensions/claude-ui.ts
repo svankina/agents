@@ -96,6 +96,29 @@ type LimitCandidate = Omit<ProviderLimitSnapshot, "capturedAtMs"> & {
   priority: number;
 };
 
+type LocalLimitWindow = {
+  id?: string;
+  label?: string;
+  used_percent?: number;
+  remaining_percent?: number;
+  reset_at?: string | null;
+};
+
+type LocalProviderLimits = {
+  provider?: string;
+  available?: boolean;
+  windows?: LocalLimitWindow[];
+};
+
+type LocalLimitsPayload = {
+  providers?: Record<string, LocalProviderLimits>;
+};
+
+type LocalLimitsSnapshot = {
+  payload: LocalLimitsPayload;
+  fetchedAtMs: number;
+};
+
 type StatusLineState = {
   host: string;
   cwd: string;
@@ -117,8 +140,14 @@ type StatusLineState = {
 const WRAPPED_EDITOR = "__piClaudeUiSessionLabelEditorWrapped";
 const DEFAULT_BAR_WIDTH = 10;
 const LIMIT_STALE_GRACE_MS = 5 * 60 * 1000;
+const DEFAULT_LOCAL_LIMITS_URL = "http://127.0.0.1:8787/api/limits";
+const DEFAULT_LOCAL_LIMITS_REFRESH_MS = 60_000;
 
 let latestProviderLimit: ProviderLimitSnapshot | undefined;
+let latestLocalLimits: LocalLimitsSnapshot | undefined;
+let localLimitsTimer: ReturnType<typeof setInterval> | undefined;
+let localLimitsInflight = false;
+let localLimitsLastFetchMs = 0;
 
 // ANSI/control matching is intentional: these helpers must preserve styling while measuring rendered TUI lines.
 // eslint-disable-next-line no-control-regex
@@ -196,6 +225,23 @@ export function formatDuration(ms: number | undefined): string | undefined {
 
 function limitsEnabled(): boolean {
   return process.env.PI_CLAUDE_UI_LIMITS !== "0";
+}
+
+function localLimitsEnabled(): boolean {
+  return limitsEnabled() && process.env.PI_CLAUDE_UI_LOCAL_LIMITS !== "0";
+}
+
+function envNumber(name: string, defaultValue: number): number {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : defaultValue;
+}
+
+function localLimitsUrl(): string {
+  return process.env.PI_CLAUDE_UI_LIMITS_URL?.trim() || DEFAULT_LOCAL_LIMITS_URL;
+}
+
+function localLimitsRefreshMs(): number {
+  return envNumber("PI_CLAUDE_UI_LIMITS_REFRESH_MS", DEFAULT_LOCAL_LIMITS_REFRESH_MS);
 }
 
 function normalizeHeaderMap(headers: Record<string, string> | undefined): Map<string, string> {
@@ -345,6 +391,86 @@ export function formatProviderLimitText(snapshot: ProviderLimitSnapshot | undefi
   }
 
   return parts.length > 1 ? parts.join(" ") : undefined;
+}
+
+function numberFromUnknown(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function providerKeyForLimits(provider: string | undefined, modelId: string | undefined): string | undefined {
+  const providerText = sanitizeSingleLine(provider).toLowerCase();
+  const modelText = sanitizeSingleLine(modelId).toLowerCase();
+  if (providerText.includes("codex") || modelText.includes("codex")) return "codex";
+  if (providerText.includes("anthropic") || providerText.includes("claude") || modelText.includes("claude")) return "claude";
+  return providerText || undefined;
+}
+
+function shortLocalLimitLabel(window: LocalLimitWindow): string {
+  const id = sanitizeSingleLine(window.id).toLowerCase();
+  const label = sanitizeSingleLine(window.label);
+  const lowerLabel = label.toLowerCase();
+  if (id.includes("secondary") || id.includes("seven_day") || lowerLabel.includes("weekly")) return "W";
+  if (id.includes("primary") || id.includes("five_hour") || lowerLabel.includes("5-hour")) return "5h";
+  return label.replace(/^gpt-5\.3-codex-spark\s*/i, "spark ") || id || "quota";
+}
+
+function localLimitResetText(window: LocalLimitWindow, nowMs: number): string | undefined {
+  const resetAt = Date.parse(String(window.reset_at ?? ""));
+  if (!Number.isFinite(resetAt) || resetAt <= nowMs) return undefined;
+  return formatDuration(resetAt - nowMs);
+}
+
+function formatLocalLimitWindow(window: LocalLimitWindow, nowMs: number, includeReset: boolean): string | undefined {
+  const remaining = numberFromUnknown(window.remaining_percent);
+  const used = numberFromUnknown(window.used_percent);
+  const percent = remaining ?? (used === undefined ? undefined : 100 - used);
+  const cleanPercent = clampPercent(percent);
+  if (cleanPercent === null) return undefined;
+
+  const reset = includeReset ? localLimitResetText(window, nowMs) : undefined;
+  return `${shortLocalLimitLabel(window)} ${Math.round(cleanPercent)}%${reset ? `↺${reset}` : ""}`;
+}
+
+function pickLocalWindows(provider: LocalProviderLimits, modelId: string | undefined): LocalLimitWindow[] {
+  const windows = provider.windows ?? [];
+  const byId = (id: string) => windows.find((window) => sanitizeSingleLine(window.id).toLowerCase() === id);
+  const isSpark = sanitizeSingleLine(modelId).toLowerCase().includes("spark");
+
+  if (sanitizeSingleLine(provider.provider).toLowerCase() === "codex") {
+    const primary = byId(isSpark ? "spark_primary" : "primary");
+    const secondary = byId(isSpark ? "spark_secondary" : "secondary");
+    return [primary, secondary].filter((window): window is LocalLimitWindow => Boolean(window));
+  }
+
+  const fiveHour = byId("five_hour");
+  const sevenDay = byId("seven_day");
+  if (fiveHour || sevenDay) {
+    return [fiveHour, sevenDay].filter((window): window is LocalLimitWindow => Boolean(window));
+  }
+
+  return windows.slice(0, 2);
+}
+
+export function formatLocalLimitsText(
+  payload: LocalLimitsPayload | undefined,
+  provider: string | undefined,
+  modelId: string | undefined,
+  nowMs = Date.now(),
+): string | undefined {
+  const providerKey = providerKeyForLimits(provider, modelId);
+  if (!payload?.providers || !providerKey) return undefined;
+
+  const limits = payload.providers[providerKey];
+  if (!limits?.available) return undefined;
+
+  const windows = pickLocalWindows(limits, modelId);
+  const parts = windows
+    .map((window, index) => formatLocalLimitWindow(window, nowMs, index === 0))
+    .filter((part): part is string => Boolean(part));
+  if (parts.length === 0) return undefined;
+
+  const label = sanitizeSingleLine(limits.provider) || providerKey;
+  return `limit ${label} ${parts.join(" ")} rem`;
 }
 
 export function formatCwdForStatus(cwd: string, home: string | undefined = homedir()): string {
@@ -523,7 +649,9 @@ function collectState(ctx: ClaudeUiContext, footerData?: FooterDataLike): Status
     contextTokens: contextUsage?.tokens,
     contextWindow: contextUsage?.contextWindow ?? model?.contextWindow,
     contextPercent: contextUsage?.percent,
-    apiLimitText: limitsEnabled() ? formatProviderLimitText(latestProviderLimit) : undefined,
+    apiLimitText: limitsEnabled()
+      ? formatProviderLimitText(latestProviderLimit) ?? formatLocalLimitsText(latestLocalLimits?.payload, model?.provider, model?.id)
+      : undefined,
     usingSubscription: model ? ctx.modelRegistry?.isUsingOAuth?.(model) : false,
     statuses,
   };
@@ -654,14 +782,59 @@ function installFooter(ctx: ClaudeUiContext): void {
   });
 }
 
-function captureProviderLimit(event: { headers?: Record<string, string> }, ctx: ClaudeUiContext): void {
-  if (!limitsEnabled()) return;
-
-  latestProviderLimit = parseProviderLimitHeaders(event.headers);
+function invalidateFooter(ctx: ClaudeUiContext): void {
   // There is no public footer invalidation API on the extension context. setStatus()
   // already requests a TUI render, and clearing a private key keeps this data in
   // the Claude UI footer instead of adding another extension-status line.
   ctx.ui.setStatus?.("claude-ui-limits", undefined);
+}
+
+function captureProviderLimit(event: { headers?: Record<string, string> }, ctx: ClaudeUiContext): void {
+  if (!limitsEnabled()) return;
+
+  latestProviderLimit = parseProviderLimitHeaders(event.headers);
+  invalidateFooter(ctx);
+}
+
+async function refreshLocalLimits(ctx: ClaudeUiContext, force = false): Promise<void> {
+  if (!localLimitsEnabled() || localLimitsInflight) return;
+
+  const now = Date.now();
+  const refreshMs = localLimitsRefreshMs();
+  if (!force && now - localLimitsLastFetchMs < refreshMs) return;
+
+  localLimitsInflight = true;
+  localLimitsLastFetchMs = now;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2_000);
+
+  try {
+    const response = await fetch(localLimitsUrl(), { signal: controller.signal });
+    if (!response.ok) return;
+    const payload = (await response.json()) as LocalLimitsPayload;
+    if (!payload?.providers) return;
+
+    latestLocalLimits = { payload, fetchedAtMs: Date.now() };
+    invalidateFooter(ctx);
+  } catch {
+    // limitsd is optional; keep footer quiet when the local service is unavailable.
+  } finally {
+    clearTimeout(timeout);
+    localLimitsInflight = false;
+  }
+}
+
+function startLocalLimitsPolling(ctx: ClaudeUiContext): void {
+  if (!localLimitsEnabled()) return;
+
+  void refreshLocalLimits(ctx, true);
+  if (localLimitsTimer) return;
+
+  localLimitsTimer = setInterval(() => {
+    void refreshLocalLimits(ctx);
+  }, localLimitsRefreshMs());
+  const timerWithUnref = localLimitsTimer as { unref?: () => void };
+  timerWithUnref.unref?.();
 }
 
 export default function (pi: ExtensionAPI): void {
@@ -676,5 +849,11 @@ export default function (pi: ExtensionAPI): void {
     if (process.env.PI_CLAUDE_UI === "0" || ctx.hasUI === false) return;
     installSessionLabel(ctx);
     installFooter(ctx);
+    startLocalLimitsPolling(ctx);
+  });
+
+  pi.on("session_shutdown", async () => {
+    if (localLimitsTimer) clearInterval(localLimitsTimer);
+    localLimitsTimer = undefined;
   });
 }
