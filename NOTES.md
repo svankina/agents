@@ -13,3 +13,7 @@ Additional skill surfaces in the same checkout include `extensions/browser-harne
 ## 2026-06-04 `/warpfork` Warp pane default
 
 `pi/extensions/wfork.ts` now treats `PI_WFORK_MODE=auto` as pane-first when invoked from Warp and `xdotool` is present, falling back to a new Warp window outside Warp. Warp detection accepts `TERM_PROGRAM=WarpTerminal`, `WARP_TERMINAL_SESSION_UUID`, `WARP_IS_LOCAL_SHELL_SESSION`, or `WARP_SESSION_ID`. Force the old new-window behavior with `PI_WFORK_MODE=window`.
+
+## 2026-06-08 Codex usage-limit headers
+
+A minimal Pi SSE probe with an `after_provider_response` extension showed ChatGPT/Codex responses include usage-limit headers such as `x-codex-active-limit`, `x-codex-primary-over-secondary-limit-percent`, `x-codex-primary-reset-after-seconds`, `x-codex-primary-reset-at`, `x-codex-secondary-reset-after-seconds`, `x-codex-secondary-reset-at`, and `x-codex-credits-unlimited`; one response reported `x-codex-active-limit=premium`, primary percent `0`, primary reset in `4336` seconds, and secondary reset in `233654` seconds. Pi only exposes these through `after_provider_response` for HTTP/SSE provider calls; the current Codex WebSocket transport path does not surface HTTP response headers to extensions.

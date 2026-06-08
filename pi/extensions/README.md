@@ -58,10 +58,11 @@ above the editor (like a real terminal clear) without dropping session state; ol
 messages return on the next reload/rebuild.
 
 **`claude-ui.ts`** — replaces Pi's default footer with a compact Claude-like status
-line: host, cwd, git branch, session age, context usage, model/thinking level, and
-cost. It also wraps the input editor so `/name <label>` appears as a right-aligned
-badge on the editor border. Disable with `PI_CLAUDE_UI=0`, or selectively with
-`PI_CLAUDE_UI_FOOTER=0` / `PI_CLAUDE_UI_SESSION_LABEL=0`.
+line: host, cwd, git branch, session age, context usage, model/thinking level,
+provider usage-limit headers when available, and cost. It also wraps the input
+editor so `/name <label>` appears as a right-aligned badge on the editor border.
+Disable with `PI_CLAUDE_UI=0`, or selectively with `PI_CLAUDE_UI_FOOTER=0` /
+`PI_CLAUDE_UI_SESSION_LABEL=0` / `PI_CLAUDE_UI_LIMITS=0`.
 
 **`voice/`** — push-to-talk voice input and optional text-to-speech rewriting of
 assistant replies. `index.ts` is the Pi extension; `helper.py` is a long-lived JSONL

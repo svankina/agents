@@ -58,6 +58,7 @@ type ClaudeUiContext = {
     setEditorComponent?: (factory: EditorFactory | undefined) => void;
     getEditorComponent?: () => EditorFactory | undefined;
     notify?: (message: string, type?: "info" | "warning" | "error") => void;
+    setStatus?: (key: string, text: string | undefined) => void;
   };
 };
 
@@ -82,6 +83,19 @@ type UsageTotals = {
   cost: number;
 };
 
+type ProviderLimitSnapshot = {
+  label?: string;
+  percentUsed?: number;
+  remaining?: number;
+  limit?: number;
+  resetAtMs?: number;
+  capturedAtMs: number;
+};
+
+type LimitCandidate = Omit<ProviderLimitSnapshot, "capturedAtMs"> & {
+  priority: number;
+};
+
 type StatusLineState = {
   host: string;
   cwd: string;
@@ -95,12 +109,16 @@ type StatusLineState = {
   contextTokens?: number | null;
   contextWindow?: number;
   contextPercent?: number | null;
+  apiLimitText?: string;
   usingSubscription?: boolean;
   statuses?: string[];
 };
 
 const WRAPPED_EDITOR = "__piClaudeUiSessionLabelEditorWrapped";
 const DEFAULT_BAR_WIDTH = 10;
+const LIMIT_STALE_GRACE_MS = 5 * 60 * 1000;
+
+let latestProviderLimit: ProviderLimitSnapshot | undefined;
 
 // ANSI/control matching is intentional: these helpers must preserve styling while measuring rendered TUI lines.
 // eslint-disable-next-line no-control-regex
@@ -174,6 +192,159 @@ export function formatDuration(ms: number | undefined): string | undefined {
   if (hours < 48) return `${hours}h`;
   const days = Math.floor(hours / 24);
   return `${days}d`;
+}
+
+function limitsEnabled(): boolean {
+  return process.env.PI_CLAUDE_UI_LIMITS !== "0";
+}
+
+function normalizeHeaderMap(headers: Record<string, string> | undefined): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const [key, value] of Object.entries(headers ?? {})) {
+    map.set(key.toLowerCase(), value);
+  }
+  return map;
+}
+
+function getHeader(headers: Map<string, string>, name: string): string | undefined {
+  return headers.get(name.toLowerCase());
+}
+
+function parseHeaderNumber(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const n = Number(sanitizeSingleLine(value));
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function parseResetValueToAtMs(value: string | undefined, nowMs: number): number | undefined {
+  const raw = sanitizeSingleLine(value);
+  if (!raw) return undefined;
+
+  const numeric = Number(raw);
+  if (Number.isFinite(numeric)) {
+    if (numeric > 1_000_000_000_000) return numeric;
+    if (numeric > 1_000_000_000) return numeric * 1000;
+    return nowMs + numeric * 1000;
+  }
+
+  const text = raw.toLowerCase();
+  const durationPattern = /(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)/g;
+  let totalMs = 0;
+  let matched = false;
+  for (const match of text.matchAll(durationPattern)) {
+    matched = true;
+    const amount = Number(match[1]);
+    const unit = match[2];
+    if (!Number.isFinite(amount)) continue;
+    if (unit === "ms") totalMs += amount;
+    else if (unit === "s") totalMs += amount * 1000;
+    else if (unit === "m") totalMs += amount * 60_000;
+    else if (unit === "h") totalMs += amount * 3_600_000;
+    else if (unit === "d") totalMs += amount * 86_400_000;
+  }
+  if (matched) return nowMs + totalMs;
+
+  const date = Date.parse(raw);
+  return Number.isFinite(date) ? date : undefined;
+}
+
+function resetAtFromCodexHeaders(headers: Map<string, string>, resetAfterHeader: string, resetAtHeader: string, nowMs: number): number | undefined {
+  const resetAfterSeconds = parseHeaderNumber(getHeader(headers, resetAfterHeader));
+  if (resetAfterSeconds !== undefined) return nowMs + resetAfterSeconds * 1000;
+  return parseResetValueToAtMs(getHeader(headers, resetAtHeader), nowMs);
+}
+
+function codexLimitCandidate(headers: Map<string, string>, prefix: string, nowMs: number, priority: number): LimitCandidate | undefined {
+  const base = prefix ? `x-codex-${prefix}-` : "x-codex-";
+  const label = sanitizeSingleLine(prefix ? getHeader(headers, `${base}limit-name`) : getHeader(headers, "x-codex-active-limit"));
+  const percentUsed = parseHeaderNumber(getHeader(headers, `${base}primary-over-secondary-limit-percent`));
+  const resetAtMs = resetAtFromCodexHeaders(headers, `${base}primary-reset-after-seconds`, `${base}primary-reset-at`, nowMs);
+
+  if (!label && percentUsed === undefined && resetAtMs === undefined) return undefined;
+  return { label: label || (prefix ? prefix : "codex"), percentUsed, resetAtMs, priority };
+}
+
+function genericLimitCandidate(
+  headers: Map<string, string>,
+  label: string,
+  limitHeader: string,
+  remainingHeader: string,
+  resetHeader: string,
+  nowMs: number,
+  priority: number,
+): LimitCandidate | undefined {
+  const limit = parseHeaderNumber(getHeader(headers, limitHeader));
+  const remaining = parseHeaderNumber(getHeader(headers, remainingHeader));
+  const resetAtMs = parseResetValueToAtMs(getHeader(headers, resetHeader), nowMs);
+  const percentUsed = limit !== undefined && remaining !== undefined && limit > 0
+    ? Math.max(0, Math.min(100, (1 - remaining / limit) * 100))
+    : undefined;
+
+  if (limit === undefined && remaining === undefined && resetAtMs === undefined) return undefined;
+  return { label, limit, remaining, percentUsed, resetAtMs, priority };
+}
+
+function candidateScore(candidate: LimitCandidate): number {
+  const percentScore = candidate.percentUsed === undefined ? -1 : candidate.percentUsed;
+  const resetScore = candidate.resetAtMs === undefined ? 0 : 1;
+  return percentScore * 100 + resetScore * 10 + candidate.priority;
+}
+
+function chooseLimitCandidate(candidates: Array<LimitCandidate | undefined>): LimitCandidate | undefined {
+  return candidates
+    .filter((candidate): candidate is LimitCandidate => Boolean(candidate))
+    .sort((a, b) => candidateScore(b) - candidateScore(a))[0];
+}
+
+export function parseProviderLimitHeaders(headers: Record<string, string> | undefined, nowMs = Date.now()): ProviderLimitSnapshot | undefined {
+  const headerMap = normalizeHeaderMap(headers);
+  if (headerMap.size === 0) return undefined;
+
+  const codex = chooseLimitCandidate([
+    codexLimitCandidate(headerMap, "", nowMs, 20),
+    codexLimitCandidate(headerMap, "bengalfox", nowMs, 10),
+  ]);
+  if (codex) {
+    const { priority: _priority, ...snapshot } = codex;
+    return { ...snapshot, capturedAtMs: nowMs };
+  }
+
+  const generic = chooseLimitCandidate([
+    genericLimitCandidate(headerMap, "req", "x-ratelimit-limit-requests", "x-ratelimit-remaining-requests", "x-ratelimit-reset-requests", nowMs, 20),
+    genericLimitCandidate(headerMap, "tok", "x-ratelimit-limit-tokens", "x-ratelimit-remaining-tokens", "x-ratelimit-reset-tokens", nowMs, 15),
+    genericLimitCandidate(headerMap, "req", "anthropic-ratelimit-requests-limit", "anthropic-ratelimit-requests-remaining", "anthropic-ratelimit-requests-reset", nowMs, 20),
+    genericLimitCandidate(headerMap, "tok", "anthropic-ratelimit-tokens-limit", "anthropic-ratelimit-tokens-remaining", "anthropic-ratelimit-tokens-reset", nowMs, 15),
+    genericLimitCandidate(headerMap, "in", "anthropic-ratelimit-input-tokens-limit", "anthropic-ratelimit-input-tokens-remaining", "anthropic-ratelimit-input-tokens-reset", nowMs, 12),
+    genericLimitCandidate(headerMap, "out", "anthropic-ratelimit-output-tokens-limit", "anthropic-ratelimit-output-tokens-remaining", "anthropic-ratelimit-output-tokens-reset", nowMs, 11),
+    genericLimitCandidate(headerMap, "req", "x-ratelimit-limit", "x-ratelimit-remaining", "x-ratelimit-reset", nowMs, 5),
+  ]);
+  if (!generic) return undefined;
+
+  const { priority: _priority, ...snapshot } = generic;
+  return { ...snapshot, capturedAtMs: nowMs };
+}
+
+export function formatProviderLimitText(snapshot: ProviderLimitSnapshot | undefined, nowMs = Date.now()): string | undefined {
+  if (!snapshot) return undefined;
+  if (snapshot.resetAtMs !== undefined && snapshot.resetAtMs + LIMIT_STALE_GRACE_MS < nowMs) return undefined;
+
+  const parts = ["limit"];
+  const label = sanitizeSingleLine(snapshot.label);
+  if (label) parts.push(label);
+
+  const percent = clampPercent(snapshot.percentUsed);
+  if (percent !== null) {
+    parts.push(`${Math.round(percent)}%`);
+  } else if (snapshot.remaining !== undefined && snapshot.limit !== undefined) {
+    parts.push(`${formatTokens(snapshot.remaining)}/${formatTokens(snapshot.limit)}`);
+  }
+
+  if (snapshot.resetAtMs !== undefined) {
+    const resetText = formatDuration(Math.max(0, snapshot.resetAtMs - nowMs));
+    if (resetText) parts.push(`↺${resetText}`);
+  }
+
+  return parts.length > 1 ? parts.join(" ") : undefined;
 }
 
 export function formatCwdForStatus(cwd: string, home: string | undefined = homedir()): string {
@@ -315,8 +486,9 @@ export function buildStatusLine(state: StatusLineState, width: number, theme: Th
   const left = joinParts([place, age ? color(theme, "dim", age) : undefined, io, context], sep);
 
   const model = modelText(state, theme);
+  const apiLimit = sanitizeSingleLine(state.apiLimitText);
   const cost = costText(state);
-  const right = joinParts([model, cost ? color(theme, "dim", cost) : undefined], sep);
+  const right = joinParts([model, apiLimit ? color(theme, "dim", apiLimit) : undefined, cost ? color(theme, "dim", cost) : undefined], sep);
 
   return fitColumns(left, right, width, theme);
 }
@@ -351,6 +523,7 @@ function collectState(ctx: ClaudeUiContext, footerData?: FooterDataLike): Status
     contextTokens: contextUsage?.tokens,
     contextWindow: contextUsage?.contextWindow ?? model?.contextWindow,
     contextPercent: contextUsage?.percent,
+    apiLimitText: limitsEnabled() ? formatProviderLimitText(latestProviderLimit) : undefined,
     usingSubscription: model ? ctx.modelRegistry?.isUsingOAuth?.(model) : false,
     statuses,
   };
@@ -481,7 +654,23 @@ function installFooter(ctx: ClaudeUiContext): void {
   });
 }
 
+function captureProviderLimit(event: { headers?: Record<string, string> }, ctx: ClaudeUiContext): void {
+  if (!limitsEnabled()) return;
+
+  latestProviderLimit = parseProviderLimitHeaders(event.headers);
+  // There is no public footer invalidation API on the extension context. setStatus()
+  // already requests a TUI render, and clearing a private key keeps this data in
+  // the Claude UI footer instead of adding another extension-status line.
+  ctx.ui.setStatus?.("claude-ui-limits", undefined);
+}
+
 export default function (pi: ExtensionAPI): void {
+  pi.on("after_provider_response", async (event: unknown, rawCtx) => {
+    const ctx = rawCtx as ClaudeUiContext;
+    if (process.env.PI_CLAUDE_UI === "0" || ctx.hasUI === false) return;
+    captureProviderLimit(event as { headers?: Record<string, string> }, ctx);
+  });
+
   pi.on("session_start", async (_event: unknown, rawCtx) => {
     const ctx = rawCtx as ClaudeUiContext;
     if (process.env.PI_CLAUDE_UI === "0" || ctx.hasUI === false) return;

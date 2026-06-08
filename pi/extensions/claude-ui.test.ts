@@ -101,6 +101,54 @@ test("buildModeLine strips ANSI styling from extension statuses", () => {
   ).toBe("voice off");
 });
 
+test("parseProviderLimitHeaders formats Codex usage-limit headers", () => {
+  const now = 1_000_000;
+  const snapshot = mod.parseProviderLimitHeaders(
+    {
+      "x-codex-active-limit": "premium",
+      "x-codex-primary-over-secondary-limit-percent": "42",
+      "x-codex-primary-reset-after-seconds": "3600",
+    },
+    now,
+  );
+
+  expect(snapshot).toMatchObject({ label: "premium", percentUsed: 42, resetAtMs: now + 3_600_000 });
+  expect(mod.formatProviderLimitText(snapshot, now)).toBe("limit premium 42% ↺1h");
+  expect(mod.formatProviderLimitText(snapshot, now + 3_600_000 + 5 * 60_000 + 1)).toBeUndefined();
+});
+
+test("parseProviderLimitHeaders formats common rate-limit headers", () => {
+  const now = 1_000_000;
+  const snapshot = mod.parseProviderLimitHeaders(
+    {
+      "x-ratelimit-limit-requests": "1000",
+      "x-ratelimit-remaining-requests": "250",
+      "x-ratelimit-reset-requests": "2m",
+    },
+    now,
+  );
+
+  expect(snapshot).toMatchObject({ label: "req", percentUsed: 75, resetAtMs: now + 120_000 });
+  expect(mod.formatProviderLimitText(snapshot, now)).toBe("limit req 75% ↺2m");
+});
+
+test("buildStatusLine includes provider usage-limit text", () => {
+  const line = mod.buildStatusLine(
+    {
+      host: "pop-os",
+      cwd: "~/src/pagent",
+      totals: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+      modelId: "gpt-5.5",
+      provider: "openai-codex",
+      thinkingLevel: "medium",
+      apiLimitText: "limit premium 42% ↺1h",
+    },
+    120,
+  );
+
+  expect(line).toContain("limit premium 42% ↺1h");
+});
+
 test("buildStatusLine keeps the rendered footer within the requested width", () => {
   const line = mod.buildStatusLine(
     {
