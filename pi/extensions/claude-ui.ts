@@ -526,12 +526,25 @@ function clampPercent(percent: number | null | undefined): number | null {
   return Math.max(0, Math.min(100, percent));
 }
 
-function renderBar(theme: ThemeLike, percent: number | null | undefined, width = DEFAULT_BAR_WIDTH): string {
+type PercentBarMode = "usage" | "remaining";
+
+function percentColorName(percent: number, mode: PercentBarMode): string {
+  if (mode === "remaining") {
+    return percent <= 20 ? "error" : percent <= 50 ? "warning" : "success";
+  }
+
+  return percent >= 90 ? "error" : percent >= 70 ? "warning" : "success";
+}
+
+function renderPercentBar(theme: ThemeLike, percent: number | null | undefined, mode: PercentBarMode, width = DEFAULT_BAR_WIDTH): string {
   const cleanPercent = clampPercent(percent) ?? 0;
   const filled = Math.max(0, Math.min(width, Math.round((cleanPercent / 100) * width)));
   const empty = width - filled;
-  const colorName = cleanPercent >= 90 ? "error" : cleanPercent >= 70 ? "warning" : "success";
-  return color(theme, colorName, "█".repeat(filled)) + color(theme, "dim", "░".repeat(empty));
+  return color(theme, percentColorName(cleanPercent, mode), "█".repeat(filled)) + color(theme, "dim", "░".repeat(empty));
+}
+
+function renderBar(theme: ThemeLike, percent: number | null | undefined, width = DEFAULT_BAR_WIDTH): string {
+  return renderPercentBar(theme, percent, "usage", width);
 }
 
 function contextText(state: StatusLineState, theme: ThemeLike, width: number): string | undefined {
@@ -569,6 +582,43 @@ function tokenIoText(state: StatusLineState, theme: ThemeLike): string | undefin
   if (state.totals.cacheRead) parts.push(`R${formatTokens(state.totals.cacheRead)}`);
   if (state.totals.cacheWrite) parts.push(`W${formatTokens(state.totals.cacheWrite)}`);
   return parts.length ? color(theme, "dim", parts.join(" ")) : undefined;
+}
+
+function dimText(theme: ThemeLike, text: string): string {
+  return text ? color(theme, "dim", text) : "";
+}
+
+function limitText(state: StatusLineState, theme: ThemeLike, width: number): string | undefined {
+  const text = sanitizeSingleLine(state.apiLimitText);
+  if (!text) return undefined;
+  if (width < 100) return color(theme, "dim", text);
+
+  const mode: PercentBarMode = /\brem\b/i.test(text) ? "remaining" : "usage";
+  const percentPattern = /(\d+(?:\.\d+)?)%/g;
+  let rendered = "";
+  let lastIndex = 0;
+  let matched = false;
+
+  for (const match of text.matchAll(percentPattern)) {
+    const index = match.index ?? 0;
+    const percentText = match[0];
+    const percent = clampPercent(Number(match[1]));
+
+    rendered += dimText(theme, text.slice(lastIndex, index));
+    if (percent === null) {
+      rendered += dimText(theme, percentText);
+    } else {
+      const colorName = percentColorName(percent, mode);
+      rendered += `${renderPercentBar(theme, percent, mode)} ${color(theme, colorName, percentText)}`;
+    }
+
+    lastIndex = index + percentText.length;
+    matched = true;
+  }
+
+  if (!matched) return color(theme, "dim", text);
+  rendered += dimText(theme, text.slice(lastIndex));
+  return rendered;
 }
 
 function joinParts(parts: Array<string | undefined>, separator: string): string {
@@ -612,9 +662,9 @@ export function buildStatusLine(state: StatusLineState, width: number, theme: Th
   const left = joinParts([place, age ? color(theme, "dim", age) : undefined, io, context], sep);
 
   const model = modelText(state, theme);
-  const apiLimit = sanitizeSingleLine(state.apiLimitText);
+  const apiLimit = limitText(state, theme, width);
   const cost = costText(state);
-  const right = joinParts([model, apiLimit ? color(theme, "dim", apiLimit) : undefined, cost ? color(theme, "dim", cost) : undefined], sep);
+  const right = joinParts([model, apiLimit, cost ? color(theme, "dim", cost) : undefined], sep);
 
   return fitColumns(left, right, width, theme);
 }

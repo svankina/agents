@@ -194,7 +194,23 @@ test("buildStatusLine includes provider usage-limit text", () => {
     120,
   );
 
-  expect(line).toContain("limit premium 42% ↺1h");
+  expect(line).toContain("limit premium ████░░░░░░ 42% ↺1h");
+});
+
+test("buildStatusLine renders local limits with remaining bars", () => {
+  const line = mod.buildStatusLine(
+    {
+      host: "pop-os",
+      cwd: "~/src/pagent",
+      totals: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+      modelId: "gpt-5.5",
+      provider: "openai-codex",
+      apiLimitText: "limit codex 5h 63%↺5m W 50% rem",
+    },
+    160,
+  );
+
+  expect(line).toContain("limit codex 5h ██████░░░░ 63%↺5m W █████░░░░░ 50% rem");
 });
 
 test("buildStatusLine keeps the rendered footer within the requested width", () => {
