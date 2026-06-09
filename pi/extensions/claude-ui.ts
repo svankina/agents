@@ -229,6 +229,21 @@ export function formatDuration(ms: number | undefined): string | undefined {
   return `${days}d`;
 }
 
+export function formatLimitDuration(ms: number | undefined): string | undefined {
+  if (!Number.isFinite(ms ?? NaN) || (ms ?? 0) < 0) return undefined;
+
+  const totalMinutes = Math.max(0, Math.floor((ms ?? 0) / 60_000));
+  if (totalMinutes === 0) return "0m";
+
+  const days = Math.floor(totalMinutes / (24 * 60));
+  const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
+  const minutes = totalMinutes % 60;
+
+  if (days > 0) return hours > 0 ? `${days}d${hours}h` : `${days}d`;
+  if (hours > 0) return minutes > 0 ? `${hours}h${minutes}m` : `${hours}h`;
+  return `${minutes}m`;
+}
+
 function limitsEnabled(): boolean {
   return process.env.PI_CLAUDE_UI_LIMITS !== "0";
 }
@@ -392,8 +407,8 @@ export function formatProviderLimitText(snapshot: ProviderLimitSnapshot | undefi
   }
 
   if (snapshot.resetAtMs !== undefined) {
-    const resetText = formatDuration(Math.max(0, snapshot.resetAtMs - nowMs));
-    if (resetText) parts.push(`↺${resetText}`);
+    const resetText = formatLimitDuration(Math.max(0, snapshot.resetAtMs - nowMs));
+    if (resetText) parts.push(`⏰ ${resetText}`);
   }
 
   return parts.length > 1 ? parts.join(" ") : undefined;
@@ -415,7 +430,7 @@ function shortLocalLimitLabel(window: LocalLimitWindow): string {
   const id = sanitizeSingleLine(window.id).toLowerCase();
   const label = sanitizeSingleLine(window.label);
   const lowerLabel = label.toLowerCase();
-  if (id.includes("secondary") || id.includes("seven_day") || lowerLabel.includes("weekly")) return "W";
+  if (id.includes("secondary") || id.includes("seven_day") || lowerLabel.includes("weekly")) return "7d";
   if (id.includes("primary") || id.includes("five_hour") || lowerLabel.includes("5-hour")) return "5h";
   return label.replace(/^gpt-5\.3-codex-spark\s*/i, "spark ") || id || "quota";
 }
@@ -423,18 +438,18 @@ function shortLocalLimitLabel(window: LocalLimitWindow): string {
 function localLimitResetText(window: LocalLimitWindow, nowMs: number): string | undefined {
   const resetAt = Date.parse(String(window.reset_at ?? ""));
   if (!Number.isFinite(resetAt) || resetAt <= nowMs) return undefined;
-  return formatDuration(resetAt - nowMs);
+  return formatLimitDuration(resetAt - nowMs);
 }
 
-function formatLocalLimitWindow(window: LocalLimitWindow, nowMs: number, includeReset: boolean): string | undefined {
+function formatLocalLimitWindow(window: LocalLimitWindow, nowMs: number): string | undefined {
   const remaining = numberFromUnknown(window.remaining_percent);
   const used = numberFromUnknown(window.used_percent);
   const percent = remaining ?? (used === undefined ? undefined : 100 - used);
   const cleanPercent = clampPercent(percent);
   if (cleanPercent === null) return undefined;
 
-  const reset = includeReset ? localLimitResetText(window, nowMs) : undefined;
-  return `${shortLocalLimitLabel(window)} ${Math.round(cleanPercent)}%${reset ? `↺${reset}` : ""}`;
+  const reset = localLimitResetText(window, nowMs);
+  return `${shortLocalLimitLabel(window)} ${Math.round(cleanPercent)}%${reset ? ` ⏰ ${reset}` : ""}`;
 }
 
 function pickLocalWindows(provider: LocalProviderLimits, modelId: string | undefined): LocalLimitWindow[] {
@@ -471,7 +486,7 @@ export function formatLocalLimitsText(
 
   const windows = pickLocalWindows(limits, modelId);
   const parts = windows
-    .map((window, index) => formatLocalLimitWindow(window, nowMs, index === 0))
+    .map((window) => formatLocalLimitWindow(window, nowMs))
     .filter((part): part is string => Boolean(part));
   if (parts.length === 0) return undefined;
 

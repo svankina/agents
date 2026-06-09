@@ -41,6 +41,12 @@ test("formatTokens uses compact suffixes", () => {
   expect(mod.formatTokens(1_200_000)).toBe("1.2M");
 });
 
+test("formatLimitDuration shows the two useful largest units", () => {
+  expect(mod.formatLimitDuration(5 * 60_000)).toBe("5m");
+  expect(mod.formatLimitDuration(101 * 60_000)).toBe("1h41m");
+  expect(mod.formatLimitDuration((3 * 24 + 11) * 60 * 60_000)).toBe("3d11h");
+});
+
 test("getUsageTotals sums assistant usage only", () => {
   const totals = mod.getUsageTotals([
     { type: "message", message: { role: "user", usage: { input: 100 } } },
@@ -132,7 +138,7 @@ test("parseProviderLimitHeaders formats Codex usage-limit headers", () => {
   );
 
   expect(snapshot).toMatchObject({ label: "premium", percentUsed: 42, resetAtMs: now + 3_600_000 });
-  expect(mod.formatProviderLimitText(snapshot, now)).toBe("limit premium 42% ↺1h");
+  expect(mod.formatProviderLimitText(snapshot, now)).toBe("limit premium 42% ⏰ 1h");
   expect(mod.formatProviderLimitText(snapshot, now + 3_600_000 + 5 * 60_000 + 1)).toBeUndefined();
 });
 
@@ -148,7 +154,7 @@ test("parseProviderLimitHeaders formats common rate-limit headers", () => {
   );
 
   expect(snapshot).toMatchObject({ label: "req", percentUsed: 75, resetAtMs: now + 120_000 });
-  expect(mod.formatProviderLimitText(snapshot, now)).toBe("limit req 75% ↺2m");
+  expect(mod.formatProviderLimitText(snapshot, now)).toBe("limit req 75% ⏰ 2m");
 });
 
 test("formatLocalLimitsText formats local limitsd Codex windows", () => {
@@ -172,7 +178,7 @@ test("formatLocalLimitsText formats local limitsd Codex windows", () => {
     now,
   );
 
-  expect(text).toBe("limit codex 5h 63%↺5m W 50% rem");
+  expect(text).toBe("limit codex 5h 63% ⏰ 5m 7d 50% ⏰ 2d15h rem");
 });
 
 test("formatLocalLimitsText selects Spark-specific Codex windows", () => {
@@ -196,7 +202,7 @@ test("formatLocalLimitsText selects Spark-specific Codex windows", () => {
     now,
   );
 
-  expect(text).toBe("limit codex 5h 100%↺5h W 95% rem");
+  expect(text).toBe("limit codex 5h 100% ⏰ 5h 7d 95% ⏰ 4d1h rem");
 });
 
 test("buildStatusLine includes provider usage-limit text", () => {
@@ -208,12 +214,12 @@ test("buildStatusLine includes provider usage-limit text", () => {
       modelId: "gpt-5.5",
       provider: "openai-codex",
       thinkingLevel: "medium",
-      apiLimitText: "limit premium 42% ↺1h",
+      apiLimitText: "limit premium 42% ⏰ 1h",
     },
     120,
   );
 
-  expect(line).toContain("limit premium ████░░░░░░ 42% ↺1h");
+  expect(line).toContain("limit premium ████░░░░░░ 42% ⏰ 1h");
 });
 
 test("buildStatusLine renders local limits with remaining bars", () => {
@@ -224,12 +230,12 @@ test("buildStatusLine renders local limits with remaining bars", () => {
       totals: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
       modelId: "gpt-5.5",
       provider: "openai-codex",
-      apiLimitText: "limit codex 5h 63%↺5m W 50% rem",
+      apiLimitText: "limit codex 5h 63% ⏰ 5m 7d 50% ⏰ 2d15h rem",
     },
     160,
   );
 
-  expect(line).toContain("limit codex 5h ██████░░░░ 63%↺5m W █████░░░░░ 50% rem");
+  expect(line).toContain("limit codex 5h ██████░░░░ 63% ⏰ 5m 7d █████░░░░░ 50% ⏰ 2d15h rem");
 });
 
 test("buildStatusLine keeps the rendered footer within the requested width", () => {
