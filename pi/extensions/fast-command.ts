@@ -6,6 +6,7 @@ const choices = ["on", "off", "toggle", "status"] as const;
 
 type FastModeChoice = (typeof choices)[number];
 type NotifyContext = { hasUI?: boolean; ui: { notify: (message: string, type?: "info" | "warning" | "error") => void } };
+type FastStatusContext = Pick<ExtensionContext, "hasUI" | "ui">;
 
 function notify(ctx: NotifyContext, message: string, type: "info" | "error" = "info") {
   try {
@@ -36,13 +37,20 @@ function isOpenAIFastCandidate(provider: string | undefined, modelId: string | u
   return false;
 }
 
+function status(ctx: FastStatusContext, enabled: boolean): void {
+  if (!ctx.hasUI) return;
+  const color = enabled ? "accent" : "dim";
+  ctx.ui.setStatus("fast", ctx.ui.theme.fg(color, `fast ${enabled ? "on" : "off"}`));
+}
+
 export default function fastCommand(pi: ExtensionAPI) {
   let fastModeEnabled = false;
   let fastModeLoaded = false;
 
-  function refreshFastMode(ctx: Pick<ExtensionContext, "cwd" | "ui">): boolean {
+  function refreshFastMode(ctx: Pick<ExtensionContext, "cwd" | "hasUI" | "ui">): boolean {
     fastModeEnabled = getFastMode(loadFolderAgentConfig(ctx.cwd, ctx.ui));
     fastModeLoaded = true;
+    status(ctx, fastModeEnabled);
     return fastModeEnabled;
   }
 
@@ -79,6 +87,7 @@ export default function fastCommand(pi: ExtensionAPI) {
       }
       fastModeEnabled = enabled;
       fastModeLoaded = true;
+      status(ctx, enabled);
       notify(ctx, `Fast mode ${enabled ? "on" : "off"} for ${ctx.cwd}`, "info");
     },
   });

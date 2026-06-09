@@ -119,6 +119,11 @@ type LocalLimitsSnapshot = {
   fetchedAtMs: number;
 };
 
+type StatusLineStatus = {
+  key: string;
+  text: string;
+};
+
 type StatusLineState = {
   host: string;
   cwd: string;
@@ -135,6 +140,7 @@ type StatusLineState = {
   apiLimitText?: string;
   usingSubscription?: boolean;
   statuses?: string[];
+  statusItems?: StatusLineStatus[];
 };
 
 const WRAPPED_EDITOR = "__piClaudeUiSessionLabelEditorWrapped";
@@ -669,11 +675,44 @@ export function buildStatusLine(state: StatusLineState, width: number, theme: Th
   return fitColumns(left, right, width, theme);
 }
 
+function statusItemsForModeLine(state: StatusLineState): StatusLineStatus[] {
+  const rawItems = state.statusItems?.length
+    ? state.statusItems
+    : (state.statuses ?? []).map((text, index) => ({ key: String(index), text }));
+
+  return rawItems
+    .map((item) => ({ key: sanitizeSingleLine(item.key), text: sanitizeSingleLine(item.text) }))
+    .filter((item) => Boolean(item.text));
+}
+
+function isRightModeStatus(item: StatusLineStatus): boolean {
+  return item.key === "fast" || /^fast\b/i.test(item.text);
+}
+
+function alignRightText(right: string, width: number, theme: ThemeLike): string {
+  const ellipsis = color(theme, "dim", "…");
+  const fittedRight = truncateToWidth(right, width, ellipsis);
+  const pad = " ".repeat(Math.max(0, width - visibleWidth(fittedRight)));
+  return truncateToWidth(pad + fittedRight, width, ellipsis);
+}
+
 export function buildModeLine(state: StatusLineState, width: number, theme: ThemeLike = {}): string | undefined {
-  const statuses = (state.statuses ?? []).map((s) => sanitizeSingleLine(s)).filter(Boolean);
+  const statuses = statusItemsForModeLine(state);
   if (statuses.length === 0) return undefined;
 
-  return truncateToWidth(statuses.join(color(theme, "dim", " · ")), width, color(theme, "dim", "…"));
+  const separator = color(theme, "dim", " · ");
+  const left = statuses
+    .filter((item) => !isRightModeStatus(item))
+    .map((item) => item.text)
+    .join(separator);
+  const right = statuses
+    .filter(isRightModeStatus)
+    .map((item) => item.text)
+    .join(separator);
+
+  if (left && right) return fitColumns(left, right, width, theme);
+  if (right) return alignRightText(right, width, theme);
+  return truncateToWidth(left, width, color(theme, "dim", "…"));
 }
 
 function collectState(ctx: ClaudeUiContext, footerData?: FooterDataLike): StatusLineState {
@@ -682,9 +721,9 @@ function collectState(ctx: ClaudeUiContext, footerData?: FooterDataLike): Status
   const contextUsage = ctx.getContextUsage?.();
   const model = ctx.model;
   const cwd = ctx.sessionManager.getCwd?.() ?? ctx.cwd ?? process.cwd();
-  const statuses = Array.from(footerData?.getExtensionStatuses?.()?.entries() ?? [])
+  const statusItems = Array.from(footerData?.getExtensionStatuses?.()?.entries() ?? [])
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([, text]) => text);
+    .map(([key, text]) => ({ key, text }));
 
   return {
     host: hostname().split(".")[0] || "host",
@@ -703,7 +742,8 @@ function collectState(ctx: ClaudeUiContext, footerData?: FooterDataLike): Status
       ? formatProviderLimitText(latestProviderLimit) ?? formatLocalLimitsText(latestLocalLimits?.payload, model?.provider, model?.id)
       : undefined,
     usingSubscription: model ? ctx.modelRegistry?.isUsingOAuth?.(model) : false,
-    statuses,
+    statuses: statusItems.map((item) => item.text),
+    statusItems,
   };
 }
 

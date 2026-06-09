@@ -101,6 +101,25 @@ test("buildModeLine strips ANSI styling from extension statuses", () => {
   ).toBe("voice off");
 });
 
+test("buildModeLine right-aligns fast status opposite other statuses", () => {
+  const line = mod.buildModeLine(
+    {
+      host: "pop-os",
+      cwd: "~/src/pagent",
+      totals: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+      statusItems: [
+        { key: "voice", text: "voice off" },
+        { key: "fast", text: "fast off" },
+      ],
+    },
+    40,
+  );
+
+  expect(visibleWidth(line ?? "")).toBe(40);
+  expect(line?.startsWith("voice off")).toBe(true);
+  expect(line?.endsWith("fast off")).toBe(true);
+});
+
 test("parseProviderLimitHeaders formats Codex usage-limit headers", () => {
   const now = 1_000_000;
   const snapshot = mod.parseProviderLimitHeaders(
