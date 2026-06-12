@@ -38,6 +38,20 @@ type SessionManagerLike = {
   getSessionName?: () => string | undefined;
 };
 
+type ComponentLike = {
+  render(width: number): string[];
+  invalidate(): void;
+  handleInput?: (data: string) => void;
+  children?: ComponentLike[];
+  [key: string]: unknown;
+};
+
+type BottomAnchorTuiLike = {
+  terminal?: { rows?: number };
+  children?: ComponentLike[];
+  requestRender?: () => void;
+};
+
 type ClaudeUiContext = {
   hasUI?: boolean;
   cwd?: string;
@@ -55,6 +69,11 @@ type ClaudeUiContext = {
           })
         | undefined,
     ) => void;
+    setWidget?: (
+      key: string,
+      content: string[] | ((tui: BottomAnchorTuiLike, theme: ThemeLike) => ComponentLike & { dispose?: () => void }) | undefined,
+      options?: { placement?: "aboveEditor" | "belowEditor" },
+    ) => void;
     setEditorComponent?: (factory: EditorFactory | undefined) => void;
     getEditorComponent?: () => EditorFactory | undefined;
     notify?: (message: string, type?: "info" | "warning" | "error") => void;
@@ -62,12 +81,7 @@ type ClaudeUiContext = {
   };
 };
 
-type EditorLike = {
-  render(width: number): string[];
-  invalidate(): void;
-  handleInput?: (data: string) => void;
-  [key: string]: unknown;
-};
+type EditorLike = ComponentLike;
 
 type EditorThemeLike = ThemeLike & {
   borderColor?: (text: string) => string;
@@ -144,6 +158,7 @@ type StatusLineState = {
 };
 
 const WRAPPED_EDITOR = "__piClaudeUiSessionLabelEditorWrapped";
+const BOTTOM_ANCHOR_WIDGET_KEY = "claude-ui-bottom-anchor";
 const DEFAULT_BAR_WIDTH = 10;
 const LIMIT_STALE_GRACE_MS = 5 * 60 * 1000;
 const DEFAULT_LOCAL_LIMITS_URL = "http://127.0.0.1:8787/api/limits";
@@ -250,6 +265,10 @@ function limitsEnabled(): boolean {
 
 function localLimitsEnabled(): boolean {
   return limitsEnabled() && process.env.PI_CLAUDE_UI_LOCAL_LIMITS !== "0";
+}
+
+function bottomAnchorEnabled(): boolean {
+  return process.env.PI_CLAUDE_UI_BOTTOM_ANCHOR !== "0";
 }
 
 function envNumber(name: string, defaultValue: number): number {
@@ -887,6 +906,73 @@ function installFooter(ctx: ClaudeUiContext): void {
   });
 }
 
+export function computeBottomAnchorBlankLines(terminalRows: number | undefined, fixedLineCount: number): number {
+  const rows = Number.isFinite(terminalRows ?? NaN) ? Math.max(0, Math.floor(terminalRows ?? 0)) : 0;
+  const fixed = Number.isFinite(fixedLineCount) ? Math.max(0, Math.floor(fixedLineCount)) : 0;
+  return Math.max(0, rows - fixed);
+}
+
+function countRenderedLines(component: ComponentLike, width: number, skip: ComponentLike, limit: number): number {
+  if (component === skip || limit <= 0) return 0;
+
+  if (Array.isArray(component.children)) {
+    let total = 0;
+    for (const child of component.children) {
+      total += countRenderedLines(child, width, skip, limit - total);
+      if (total >= limit) return total;
+    }
+    return total;
+  }
+
+  return component.render(width).length;
+}
+
+export class BottomAnchorSpacer implements ComponentLike {
+  private measuring = false;
+  private readonly tui: BottomAnchorTuiLike;
+
+  constructor(tui: BottomAnchorTuiLike) {
+    this.tui = tui;
+  }
+
+  invalidate(): void {}
+
+  render(width: number): string[] {
+    if (this.measuring || width <= 0) return [];
+
+    const rows = this.tui.terminal?.rows;
+    const children = this.tui.children;
+    if (!Array.isArray(children) || computeBottomAnchorBlankLines(rows, 0) === 0) return [];
+
+    this.measuring = true;
+    try {
+      let fixedLines = 0;
+      for (const child of children) {
+        fixedLines += countRenderedLines(child, width, this, computeBottomAnchorBlankLines(rows, fixedLines));
+        if (computeBottomAnchorBlankLines(rows, fixedLines) === 0) return [];
+      }
+
+      const blankLines = computeBottomAnchorBlankLines(rows, fixedLines);
+      return blankLines === 0 ? [] : new Array(blankLines).fill("");
+    } catch {
+      return [];
+    } finally {
+      this.measuring = false;
+    }
+  }
+}
+
+function installBottomAnchor(ctx: ClaudeUiContext): void {
+  if (!bottomAnchorEnabled()) return;
+  if (typeof ctx.ui.setWidget !== "function") return;
+
+  ctx.ui.setWidget(
+    BOTTOM_ANCHOR_WIDGET_KEY,
+    (tui) => new BottomAnchorSpacer(tui),
+    { placement: "aboveEditor" },
+  );
+}
+
 function invalidateFooter(ctx: ClaudeUiContext): void {
   // There is no public footer invalidation API on the extension context. setStatus()
   // already requests a TUI render, and clearing a private key keeps this data in
@@ -954,6 +1040,7 @@ export default function (pi: ExtensionAPI): void {
     if (process.env.PI_CLAUDE_UI === "0" || ctx.hasUI === false) return;
     installSessionLabel(ctx);
     installFooter(ctx);
+    installBottomAnchor(ctx);
     startLocalLimitsPolling(ctx);
   });
 

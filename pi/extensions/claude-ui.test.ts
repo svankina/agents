@@ -205,6 +205,31 @@ test("formatLocalLimitsText selects Spark-specific Codex windows", () => {
   expect(text).toBe("limit codex 5h 100% ⏰ 5h 7d 95% ⏰ 4d1h rem");
 });
 
+test("computeBottomAnchorBlankLines fills only remaining terminal rows", () => {
+  expect(mod.computeBottomAnchorBlankLines(24, 12)).toBe(12);
+  expect(mod.computeBottomAnchorBlankLines(24, 24)).toBe(0);
+  expect(mod.computeBottomAnchorBlankLines(24, 30)).toBe(0);
+  expect(mod.computeBottomAnchorBlankLines(undefined, 12)).toBe(0);
+});
+
+test("BottomAnchorSpacer measures fixed content and skips itself", () => {
+  const tui = {
+    terminal: { rows: 6 },
+    children: [] as Array<{ render(width: number): string[]; invalidate(): void }>,
+  };
+  const spacer = new mod.BottomAnchorSpacer(tui);
+  tui.children = [
+    { render: () => ["header"], invalidate() {} },
+    { render: (width: number) => spacer.render(width), invalidate() {} },
+    { render: () => ["editor", "footer"], invalidate() {} },
+  ];
+
+  expect(spacer.render(80)).toEqual(["", "", ""]);
+
+  tui.terminal.rows = 2;
+  expect(spacer.render(80)).toEqual([]);
+});
+
 test("buildStatusLine includes provider usage-limit text", () => {
   const line = mod.buildStatusLine(
     {
