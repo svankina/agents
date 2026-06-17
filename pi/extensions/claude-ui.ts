@@ -163,12 +163,16 @@ const DEFAULT_BAR_WIDTH = 10;
 const LIMIT_STALE_GRACE_MS = 5 * 60 * 1000;
 const DEFAULT_LOCAL_LIMITS_URL = "http://127.0.0.1:8787/api/limits";
 const DEFAULT_LOCAL_LIMITS_REFRESH_MS = 60_000;
+const DEFAULT_LOCAL_LIMITS_TIMEOUT_MS = 2_000;
+const DEFAULT_LOCAL_LIMITS_REMOTE_REFRESH_MS = 5 * 60_000;
+const DEFAULT_LOCAL_LIMITS_REMOTE_TIMEOUT_MS = 45_000;
 
 let latestProviderLimit: ProviderLimitSnapshot | undefined;
 let latestLocalLimits: LocalLimitsSnapshot | undefined;
 let localLimitsTimer: ReturnType<typeof setInterval> | undefined;
 let localLimitsInflight = false;
 let localLimitsLastFetchMs = 0;
+let localLimitsLastRemoteRefreshMs = 0;
 
 // ANSI/control matching is intentional: these helpers must preserve styling while measuring rendered TUI lines.
 // eslint-disable-next-line no-control-regex
@@ -267,6 +271,10 @@ function localLimitsEnabled(): boolean {
   return limitsEnabled() && process.env.PI_CLAUDE_UI_LOCAL_LIMITS !== "0";
 }
 
+function localLimitsRemoteRefreshEnabled(): boolean {
+  return localLimitsEnabled() && process.env.PI_CLAUDE_UI_LOCAL_LIMITS_REMOTE_REFRESH !== "0";
+}
+
 function bottomAnchorEnabled(): boolean {
   return process.env.PI_CLAUDE_UI_BOTTOM_ANCHOR !== "0";
 }
@@ -280,8 +288,31 @@ function localLimitsUrl(): string {
   return process.env.PI_CLAUDE_UI_LIMITS_URL?.trim() || DEFAULT_LOCAL_LIMITS_URL;
 }
 
+function localLimitsFetchUrl(remoteRefresh: boolean): string {
+  const url = localLimitsUrl();
+  if (!remoteRefresh) return url;
+
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set("refresh", "1");
+    return parsed.toString();
+  } catch {
+    return `${url}${url.includes("?") ? "&" : "?"}refresh=1`;
+  }
+}
+
 function localLimitsRefreshMs(): number {
   return envNumber("PI_CLAUDE_UI_LIMITS_REFRESH_MS", DEFAULT_LOCAL_LIMITS_REFRESH_MS);
+}
+
+function localLimitsRemoteRefreshMs(): number {
+  return envNumber("PI_CLAUDE_UI_LOCAL_LIMITS_REMOTE_REFRESH_MS", DEFAULT_LOCAL_LIMITS_REMOTE_REFRESH_MS);
+}
+
+function localLimitsTimeoutMs(remoteRefresh: boolean): number {
+  const envName = remoteRefresh ? "PI_CLAUDE_UI_LOCAL_LIMITS_REMOTE_TIMEOUT_MS" : "PI_CLAUDE_UI_LOCAL_LIMITS_TIMEOUT_MS";
+  const defaultValue = remoteRefresh ? DEFAULT_LOCAL_LIMITS_REMOTE_TIMEOUT_MS : DEFAULT_LOCAL_LIMITS_TIMEOUT_MS;
+  return envNumber(envName, defaultValue);
 }
 
 function normalizeHeaderMap(headers: Record<string, string> | undefined): Map<string, string> {
@@ -454,9 +485,14 @@ function shortLocalLimitLabel(window: LocalLimitWindow): string {
   return label.replace(/^gpt-5\.3-codex-spark\s*/i, "spark ") || id || "quota";
 }
 
+function localLimitResetAtMs(window: LocalLimitWindow | undefined): number | undefined {
+  const resetAt = Date.parse(String(window?.reset_at ?? ""));
+  return Number.isFinite(resetAt) ? resetAt : undefined;
+}
+
 function localLimitResetText(window: LocalLimitWindow, nowMs: number): string | undefined {
-  const resetAt = Date.parse(String(window.reset_at ?? ""));
-  if (!Number.isFinite(resetAt) || resetAt <= nowMs) return undefined;
+  const resetAt = localLimitResetAtMs(window);
+  if (resetAt === undefined || resetAt <= nowMs) return undefined;
   return formatLimitDuration(resetAt - nowMs);
 }
 
@@ -491,6 +527,43 @@ function pickLocalWindows(provider: LocalProviderLimits, modelId: string | undef
   return windows.slice(0, 2);
 }
 
+function selectedLocalPrimaryWindow(
+  payload: LocalLimitsPayload | undefined,
+  provider: string | undefined,
+  modelId: string | undefined,
+): LocalLimitWindow | undefined {
+  const providerKey = providerKeyForLimits(provider, modelId);
+  if (!payload?.providers || !providerKey) return undefined;
+
+  const limits = payload.providers[providerKey];
+  if (!limits?.available) return undefined;
+
+  const windows = pickLocalWindows(limits, modelId);
+  return windows.find((window) => shortLocalLimitLabel(window) === "5h") ?? windows[0];
+}
+
+function localLimitsHaveFuturePrimaryReset(
+  payload: LocalLimitsPayload | undefined,
+  provider: string | undefined,
+  modelId: string | undefined,
+  nowMs: number,
+): boolean {
+  const resetAt = localLimitResetAtMs(selectedLocalPrimaryWindow(payload, provider, modelId));
+  return resetAt !== undefined && resetAt > nowMs;
+}
+
+function localLimitsNeedRemoteRefresh(
+  payload: LocalLimitsPayload | undefined,
+  provider: string | undefined,
+  modelId: string | undefined,
+  nowMs: number,
+): boolean {
+  const primary = selectedLocalPrimaryWindow(payload, provider, modelId);
+  if (!primary) return true;
+  const resetAt = localLimitResetAtMs(primary);
+  return resetAt === undefined || resetAt <= nowMs;
+}
+
 export function formatLocalLimitsText(
   payload: LocalLimitsPayload | undefined,
   provider: string | undefined,
@@ -511,6 +584,23 @@ export function formatLocalLimitsText(
 
   const label = sanitizeSingleLine(limits.provider) || providerKey;
   return `limit ${label} ${parts.join(" ")} rem`;
+}
+
+export function formatApiLimitText(
+  localPayload: LocalLimitsPayload | undefined,
+  provider: string | undefined,
+  modelId: string | undefined,
+  providerSnapshot: ProviderLimitSnapshot | undefined,
+  nowMs = Date.now(),
+): string | undefined {
+  const localText = formatLocalLimitsText(localPayload, provider, modelId, nowMs);
+  const providerText = formatProviderLimitText(providerSnapshot, nowMs);
+
+  if (localText && localLimitsHaveFuturePrimaryReset(localPayload, provider, modelId, nowMs)) {
+    return localText;
+  }
+
+  return providerText ?? localText;
 }
 
 export function formatCwdForStatus(cwd: string, home: string | undefined = homedir()): string {
@@ -773,7 +863,7 @@ function collectState(ctx: ClaudeUiContext, footerData?: FooterDataLike): Status
     contextWindow: contextUsage?.contextWindow ?? model?.contextWindow,
     contextPercent: contextUsage?.percent,
     apiLimitText: limitsEnabled()
-      ? formatProviderLimitText(latestProviderLimit) ?? formatLocalLimitsText(latestLocalLimits?.payload, model?.provider, model?.id)
+      ? formatApiLimitText(latestLocalLimits?.payload, model?.provider, model?.id, latestProviderLimit)
       : undefined,
     usingSubscription: model ? ctx.modelRegistry?.isUsingOAuth?.(model) : false,
     statuses: statusItems.map((item) => item.text),
@@ -987,20 +1077,30 @@ function captureProviderLimit(event: { headers?: Record<string, string> }, ctx: 
   invalidateFooter(ctx);
 }
 
-async function refreshLocalLimits(ctx: ClaudeUiContext, force = false): Promise<void> {
+async function refreshLocalLimits(ctx: ClaudeUiContext, force = false, remoteRefresh = false): Promise<void> {
   if (!localLimitsEnabled() || localLimitsInflight) return;
 
   const now = Date.now();
   const refreshMs = localLimitsRefreshMs();
-  if (!force && now - localLimitsLastFetchMs < refreshMs) return;
+  if (!force && !remoteRefresh && now - localLimitsLastFetchMs < refreshMs) return;
+
+  let shouldRemoteRefresh = remoteRefresh && localLimitsRemoteRefreshEnabled();
+  if (shouldRemoteRefresh) {
+    const remoteRefreshMs = localLimitsRemoteRefreshMs();
+    if (now - localLimitsLastRemoteRefreshMs < remoteRefreshMs) {
+      shouldRemoteRefresh = false;
+    } else {
+      localLimitsLastRemoteRefreshMs = now;
+    }
+  }
 
   localLimitsInflight = true;
   localLimitsLastFetchMs = now;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 2_000);
+  const timeout = setTimeout(() => controller.abort(), localLimitsTimeoutMs(shouldRemoteRefresh));
 
   try {
-    const response = await fetch(localLimitsUrl(), { signal: controller.signal });
+    const response = await fetch(localLimitsFetchUrl(shouldRemoteRefresh), { signal: controller.signal });
     if (!response.ok) return;
     const payload = (await response.json()) as LocalLimitsPayload;
     if (!payload?.providers) return;
@@ -1015,14 +1115,29 @@ async function refreshLocalLimits(ctx: ClaudeUiContext, force = false): Promise<
   }
 }
 
+function shouldRefreshLocalLimitsRemotely(ctx: ClaudeUiContext): boolean {
+  if (!localLimitsRemoteRefreshEnabled()) return false;
+
+  const now = Date.now();
+  if (now - localLimitsLastRemoteRefreshMs < localLimitsRemoteRefreshMs()) return false;
+  return localLimitsNeedRemoteRefresh(latestLocalLimits?.payload, ctx.model?.provider, ctx.model?.id, now);
+}
+
+async function pollLocalLimits(ctx: ClaudeUiContext, forceCached = false): Promise<void> {
+  await refreshLocalLimits(ctx, forceCached, false);
+  if (shouldRefreshLocalLimitsRemotely(ctx)) {
+    await refreshLocalLimits(ctx, true, true);
+  }
+}
+
 function startLocalLimitsPolling(ctx: ClaudeUiContext): void {
   if (!localLimitsEnabled()) return;
 
-  void refreshLocalLimits(ctx, true);
+  void pollLocalLimits(ctx, true);
   if (localLimitsTimer) return;
 
   localLimitsTimer = setInterval(() => {
-    void refreshLocalLimits(ctx);
+    void pollLocalLimits(ctx);
   }, localLimitsRefreshMs());
   const timerWithUnref = localLimitsTimer as { unref?: () => void };
   timerWithUnref.unref?.();

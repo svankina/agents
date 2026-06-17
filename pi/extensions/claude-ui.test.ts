@@ -205,6 +205,46 @@ test("formatLocalLimitsText selects Spark-specific Codex windows", () => {
   expect(text).toBe("limit codex 5h 100% ⏰ 5h 7d 95% ⏰ 4d1h rem");
 });
 
+test("formatApiLimitText prefers local windows when the 5h reset is current", () => {
+  const now = Date.parse("2026-06-08T08:39:00Z");
+  const payload = {
+    providers: {
+      codex: {
+        provider: "codex",
+        available: true,
+        windows: [
+          { id: "primary", label: "5-hour", remaining_percent: 63, reset_at: "2026-06-08T08:44:00Z" },
+          { id: "secondary", label: "Weekly", remaining_percent: 50, reset_at: "2026-06-11T00:26:20Z" },
+        ],
+      },
+    },
+  };
+  const providerSnapshot = { label: "premium", percentUsed: 42, resetAtMs: now + 3_600_000, capturedAtMs: now };
+
+  expect(mod.formatApiLimitText(payload, "openai-codex", "gpt-5.5", providerSnapshot, now)).toBe(
+    "limit codex 5h 63% ⏰ 5m 7d 50% ⏰ 2d15h rem",
+  );
+});
+
+test("formatApiLimitText falls back to provider headers when the local 5h reset is stale", () => {
+  const now = Date.parse("2026-06-08T08:39:00Z");
+  const payload = {
+    providers: {
+      codex: {
+        provider: "codex",
+        available: true,
+        windows: [
+          { id: "primary", label: "5-hour", remaining_percent: 63, reset_at: "2026-06-08T08:30:00Z" },
+          { id: "secondary", label: "Weekly", remaining_percent: 50, reset_at: "2026-06-11T00:26:20Z" },
+        ],
+      },
+    },
+  };
+  const providerSnapshot = { label: "premium", percentUsed: 42, resetAtMs: now + 3_600_000, capturedAtMs: now };
+
+  expect(mod.formatApiLimitText(payload, "openai-codex", "gpt-5.5", providerSnapshot, now)).toBe("limit premium 42% ⏰ 1h");
+});
+
 test("computeBottomAnchorBlankLines fills only remaining terminal rows", () => {
   expect(mod.computeBottomAnchorBlankLines(24, 12)).toBe(12);
   expect(mod.computeBottomAnchorBlankLines(24, 24)).toBe(0);

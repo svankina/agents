@@ -65,8 +65,12 @@ Disable with `PI_CLAUDE_UI=0`, or selectively with `PI_CLAUDE_UI_FOOTER=0` /
 `PI_CLAUDE_UI_SESSION_LABEL=0` / `PI_CLAUDE_UI_LIMITS=0`. The limits display
 uses provider response headers when available and also polls the local limitsd
 service at `PI_CLAUDE_UI_LIMITS_URL` (default `http://127.0.0.1:8787/api/limits`)
-so quota still appears while Codex is using WebSocket transport; set
-`PI_CLAUDE_UI_LOCAL_LIMITS=0` to disable the local-service poll.
+so quota still appears while Codex is using WebSocket transport. Current local
+limitsd windows are preferred because they include 5h/7d reset countdowns; when
+that cached primary reset is missing or expired, the footer asks limitsd for a
+throttled one-shot `?refresh=1` update (opt out with
+`PI_CLAUDE_UI_LOCAL_LIMITS_REMOTE_REFRESH=0`). Set `PI_CLAUDE_UI_LOCAL_LIMITS=0`
+to disable the local-service poll.
 
 **`voice/`** — push-to-talk voice input and optional text-to-speech rewriting of
 assistant replies. `index.ts` is the Pi extension; `helper.py` is a long-lived JSONL
