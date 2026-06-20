@@ -1,0 +1,17 @@
+{
+  "name": "agents",
+  "owner": {
+    "name": "svankina"
+  },
+  "metadata": {
+    "description": "svankina personal omp plugins (skills, prompts), installable per-folder via project scope"
+  },
+  "plugins": [
+    {
+      "name": "personal-skills",
+      "source": "./pi",
+      "description": "Personal skill library (worktree-workflow, claude-design, knowledge-map, terminal-fix, ...). Install with --scope project to gate it to a folder.",
+      "category": "productivity"
+    }
+  ]
+}
