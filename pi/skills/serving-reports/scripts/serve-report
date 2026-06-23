@@ -1,0 +1,245 @@
+#!/usr/bin/env bash
+# serve-report — one shared HTTP server for every agent's reports/sites.
+#
+# Instead of each Claude/agent instance spawning its own `python3 -m http.server`,
+# they all publish into one persistent server rooted at a shared public dir and
+# get back a clickable http:// URL. The server is started on first use and reused
+# forever after (idempotent, race-safe via flock).
+#
+# Usage:
+#   serve-report <path> [--name NAME] [--copy]   Publish a file or dir, print URL
+#   serve-report list                            List published reports
+#   serve-report status                          Show server state
+#   serve-report url                             Print the root URL
+#   serve-report open <slug>                     Print URL for one slug
+#   serve-report rm <slug>                       Unpublish one report
+#   serve-report gc                              Remove dead (broken) entries
+#   serve-report stop                            Stop the shared server
+#   serve-report restart                         Stop then start fresh
+#
+# Flags:
+#   --name NAME   Friendly slug base (default: source basename)
+#   --copy        Snapshot the source (default: symlink, so updates stay live)
+#
+# Env:
+#   SERVE_REPORT_PORT   Preferred port (default 8787; scans upward if taken)
+#   SERVE_REPORT_HOME   State dir   (default ~/.local/share/claude-serve)
+
+set -euo pipefail
+
+STATE="${SERVE_REPORT_HOME:-$HOME/.local/share/claude-serve}"
+PUBLIC="$STATE/public"
+PIDFILE="$STATE/server.pid"
+PORTFILE="$STATE/server.port"
+LOG="$STATE/server.log"
+LOCK="$STATE/.lock"
+PREF_PORT="${SERVE_REPORT_PORT:-8787}"
+HOST="127.0.0.1"
+
+mkdir -p "$PUBLIC"
+
+die() { echo "serve-report: $*" >&2; exit 1; }
+
+# --- server lifecycle -------------------------------------------------------
+
+server_pid() { [[ -f "$PIDFILE" ]] && cat "$PIDFILE" 2>/dev/null || true; }
+server_port() { [[ -f "$PORTFILE" ]] && cat "$PORTFILE" 2>/dev/null || true; }
+
+# True if pid is alive and is our http.server.
+pid_alive() {
+  local pid="$1"
+  [[ -n "$pid" ]] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  grep -qa 'http.server' "/proc/$pid/cmdline" 2>/dev/null || return 1
+}
+
+server_up() {
+  local pid port
+  pid="$(server_pid)"; port="$(server_port)"
+  pid_alive "$pid" || return 1
+  [[ -n "$port" ]] || return 1
+  curl -fsS -o /dev/null --max-time 2 "http://$HOST:$port/" 2>/dev/null
+}
+
+port_free() {
+  # Free == nothing accepts a TCP connection on this loopback port.
+  # (curl can't tell: a non-HTTP listener refuses curl yet still owns the port.)
+  ! timeout 1 bash -c "exec 3<>/dev/tcp/$HOST/$1" 2>/dev/null
+}
+
+pick_port() {
+  local p="$PREF_PORT"
+  for _ in $(seq 0 50); do
+    if port_free "$p"; then echo "$p"; return 0; fi
+    p=$((p + 1))
+  done
+  die "no free port found in range $PREF_PORT-$((PREF_PORT + 50))"
+}
+
+start_server() {
+  # Serialize start across concurrent agents.
+  exec 9>"$LOCK"
+  flock 9
+  if server_up; then return 0; fi
+  local port
+  port="$(pick_port)"
+  setsid python3 -m http.server "$port" --bind "$HOST" --directory "$PUBLIC" \
+    >"$LOG" 2>&1 </dev/null &
+  local pid=$!
+  echo "$pid" >"$PIDFILE"
+  echo "$port" >"$PORTFILE"
+  # Wait for it to answer.
+  for _ in $(seq 0 30); do
+    if server_up; then flock -u 9; return 0; fi
+    sleep 0.1
+  done
+  die "server failed to start; see $LOG"
+}
+
+ensure_server() {
+  server_up && return 0
+  start_server
+}
+
+stop_server() {
+  local pid; pid="$(server_pid)"
+  if pid_alive "$pid"; then
+    kill "$pid" 2>/dev/null || true
+    for _ in $(seq 0 20); do pid_alive "$pid" || break; sleep 0.1; done
+    pid_alive "$pid" && kill -9 "$pid" 2>/dev/null || true
+  fi
+  rm -f "$PIDFILE" "$PORTFILE"
+}
+
+root_url() { echo "http://localhost:$(server_port)/"; }
+
+# --- slug helpers -----------------------------------------------------------
+
+sanitize() {
+  # lowercase, non-alnum -> '-', squeeze, trim. Fallback to 'report'.
+  local s
+  s="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' \
+        | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-+/-/g')"
+  [[ -n "$s" ]] || s="report"
+  printf '%s' "$s"
+}
+
+rand6() { cut -c1-6 /proc/sys/kernel/random/uuid 2>/dev/null | tr -d '-' || date +%s | tail -c6; }
+
+# --- commands ---------------------------------------------------------------
+
+cmd_publish() {
+  local src="" name="" mode="link"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --name) name="$2"; shift 2 ;;
+      --name=*) name="${1#*=}"; shift ;;
+      --copy) mode="copy"; shift ;;
+      --link) mode="link"; shift ;;
+      -*) die "unknown flag: $1" ;;
+      *) [[ -z "$src" ]] && src="$1" || die "unexpected arg: $1"; shift ;;
+    esac
+  done
+  [[ -n "$src" ]] || die "nothing to publish (give a file or dir path)"
+  [[ -e "$src" ]] || die "no such path: $src"
+  src="$(readlink -f -- "$src")"
+
+  ensure_server
+
+  # Extension always comes from the real source file (so MIME stays correct
+  # even when --name overrides the slug stem). The stem comes from --name or
+  # the source basename, with any matching extension stripped before we re-add it.
+  local srcbase ext stem slug link
+  srcbase="$(basename -- "$src")"
+  if [[ -f "$src" && "$srcbase" == *.* ]]; then ext=".${srcbase##*.}"; else ext=""; fi
+  if [[ -n "$name" ]]; then stem="$name"; else stem="$srcbase"; fi
+  [[ -n "$ext" && "$stem" == *"$ext" ]] && stem="${stem%"$ext"}"
+  slug="$(sanitize "$stem")-$(rand6)$ext"
+  link="$PUBLIC/$slug"
+
+  if [[ "$mode" == "copy" ]]; then
+    cp -rL -- "$src" "$link"
+  else
+    ln -s -- "$src" "$link"
+  fi
+
+  local url="http://localhost:$(server_port)/$slug"
+  [[ -d "$src" ]] && url="$url/"
+  echo "$url"
+}
+
+cmd_list() {
+  local port; port="$(server_port)"
+  shopt -s nullglob dotglob
+  local any=0
+  for e in "$PUBLIC"/*; do
+    any=1
+    local n; n="$(basename -- "$e")"
+    local tgt="" mark=""
+    if [[ -L "$e" ]]; then
+      tgt="$(readlink -f -- "$e" 2>/dev/null || true)"
+      [[ -e "$e" ]] || mark=" [DEAD]"
+      tgt=" -> ${tgt:-$(readlink -- "$e")}"
+    fi
+    local suffix=""; [[ -d "$e" ]] && suffix="/"
+    printf 'http://localhost:%s/%s%s%s%s\n' "${port:-?}" "$n" "$suffix" "$tgt" "$mark"
+  done
+  [[ "$any" == 1 ]] || echo "(no reports published yet)"
+}
+
+cmd_status() {
+  if server_up; then
+    echo "status : running"
+    echo "pid    : $(server_pid)"
+    echo "port   : $(server_port)"
+    echo "url    : $(root_url)"
+  else
+    echo "status : stopped"
+  fi
+  echo "public : $PUBLIC"
+  echo "log    : $LOG"
+  local c; c="$(find "$PUBLIC" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)"
+  echo "reports: $c"
+}
+
+cmd_rm() {
+  [[ -n "${1:-}" ]] || die "usage: serve-report rm <slug>"
+  local e="$PUBLIC/$1"
+  [[ -e "$e" || -L "$e" ]] || die "no such report: $1"
+  rm -rf -- "$e"
+  echo "removed $1"
+}
+
+cmd_gc() {
+  shopt -s nullglob dotglob
+  local n=0
+  for e in "$PUBLIC"/*; do
+    if [[ -L "$e" && ! -e "$e" ]]; then rm -f -- "$e"; n=$((n + 1)); fi
+  done
+  echo "removed $n dead entr$([[ $n == 1 ]] && echo y || echo ies)"
+}
+
+cmd_open() {
+  [[ -n "${1:-}" ]] || die "usage: serve-report open <slug>"
+  [[ -e "$PUBLIC/$1" || -L "$PUBLIC/$1" ]] || die "no such report: $1"
+  local suffix=""; [[ -d "$PUBLIC/$1" ]] && suffix="/"
+  echo "http://localhost:$(server_port)/$1$suffix"
+}
+
+# --- dispatch ---------------------------------------------------------------
+
+cmd="${1:-}"
+case "$cmd" in
+  ""|-h|--help|help)
+    sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
+    ;;
+  list)    shift; cmd_list "$@" ;;
+  status)  shift; cmd_status "$@" ;;
+  url)     shift; ensure_server; root_url ;;
+  open)    shift; cmd_open "$@" ;;
+  rm)      shift; cmd_rm "$@" ;;
+  gc)      shift; cmd_gc "$@" ;;
+  stop)    shift; stop_server; echo "stopped" ;;
+  restart) shift; stop_server; ensure_server; echo "restarted: $(root_url)" ;;
+  *)       cmd_publish "$@" ;;   # default: treat args as a publish request
+esac
