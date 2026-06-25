@@ -34,11 +34,24 @@ PORTFILE="$STATE/server.port"
 LOG="$STATE/server.log"
 LOCK="$STATE/.lock"
 PREF_PORT="${SERVE_REPORT_PORT:-8787}"
-HOST="127.0.0.1"
+HOST="127.0.0.1"                        # loopback; used for local health checks
+BIND="${SERVE_REPORT_BIND:-0.0.0.0}"    # listen addr: all interfaces (tailnet + LAN)
 
 mkdir -p "$PUBLIC"
 
 die() { echo "serve-report: $*" >&2; exit 1; }
+
+# Best externally-clickable host for emitted URLs: tailscale IP, then LAN IP,
+# then localhost. Override with SERVE_REPORT_HOST.
+public_host() {
+  if [[ -n "${SERVE_REPORT_HOST:-}" ]]; then printf '%s' "$SERVE_REPORT_HOST"; return; fi
+  local ip
+  ip="$(tailscale ip -4 2>/dev/null | head -1)"
+  if [[ -n "$ip" ]]; then printf '%s' "$ip"; return; fi
+  ip="$(ip route get 1.1.1.1 2>/dev/null | sed -n 's/.*src \([0-9.]*\).*/\1/p' | head -1)"
+  if [[ -n "$ip" ]]; then printf '%s' "$ip"; return; fi
+  printf 'localhost'
+}
 
 # --- server lifecycle -------------------------------------------------------
 
@@ -83,7 +96,7 @@ start_server() {
   if server_up; then return 0; fi
   local port
   port="$(pick_port)"
-  setsid python3 -m http.server "$port" --bind "$HOST" --directory "$PUBLIC" \
+  setsid python3 -m http.server "$port" --bind "$BIND" --directory "$PUBLIC" \
     >"$LOG" 2>&1 </dev/null &
   local pid=$!
   echo "$pid" >"$PIDFILE"
@@ -111,7 +124,7 @@ stop_server() {
   rm -f "$PIDFILE" "$PORTFILE"
 }
 
-root_url() { echo "http://localhost:$(server_port)/"; }
+root_url() { echo "http://$(public_host):$(server_port)/"; }
 
 # --- slug helpers -----------------------------------------------------------
 
@@ -163,13 +176,13 @@ cmd_publish() {
     ln -s -- "$src" "$link"
   fi
 
-  local url="http://localhost:$(server_port)/$slug"
+  local url="http://$(public_host):$(server_port)/$slug"
   [[ -d "$src" ]] && url="$url/"
   echo "$url"
 }
 
 cmd_list() {
-  local port; port="$(server_port)"
+  local port host; port="$(server_port)"; host="$(public_host)"
   shopt -s nullglob dotglob
   local any=0
   for e in "$PUBLIC"/*; do
@@ -182,7 +195,7 @@ cmd_list() {
       tgt=" -> ${tgt:-$(readlink -- "$e")}"
     fi
     local suffix=""; [[ -d "$e" ]] && suffix="/"
-    printf 'http://localhost:%s/%s%s%s%s\n' "${port:-?}" "$n" "$suffix" "$tgt" "$mark"
+    printf 'http://%s:%s/%s%s%s%s\n' "$host" "${port:-?}" "$n" "$suffix" "$tgt" "$mark"
   done
   [[ "$any" == 1 ]] || echo "(no reports published yet)"
 }
@@ -223,7 +236,7 @@ cmd_open() {
   [[ -n "${1:-}" ]] || die "usage: serve-report open <slug>"
   [[ -e "$PUBLIC/$1" || -L "$PUBLIC/$1" ]] || die "no such report: $1"
   local suffix=""; [[ -d "$PUBLIC/$1" ]] && suffix="/"
-  echo "http://localhost:$(server_port)/$1$suffix"
+  echo "http://$(public_host):$(server_port)/$1$suffix"
 }
 
 # --- dispatch ---------------------------------------------------------------

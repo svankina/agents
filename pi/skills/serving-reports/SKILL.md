@@ -18,6 +18,12 @@ forever after — idempotent and race-safe (flock-serialized; never more than on
 server). Every agent "hooks in" by publishing its own slug route under that one
 server.
 
+The server binds **all interfaces (`0.0.0.0`)** and emits the most
+externally-clickable URL it can: the **tailscale IP** if up, else the **LAN
+IP**, else `localhost`. So the link works from the user's other devices over
+tailscale (or the local LAN), not just this machine. Reports are therefore
+reachable by anything on the tailnet/LAN — don't serve secrets.
+
 ## Publish something (the one command you need)
 
 ```bash
@@ -45,11 +51,11 @@ serve-report <path> [--name NAME] [--copy]
 ```bash
 # A generated HTML report (lives in a temp dir you may clean up later)
 serve-report /tmp/analysis.html --name analysis
-# -> http://localhost:8787/analysis-3f9a2b.html
+# -> http://<tailscale-ip>:8787/analysis-3f9a2b.html
 
 # A whole static site / report folder
 serve-report ./build/site --name release-notes
-# -> http://localhost:8787/release-notes-9c1d04/
+# -> http://<tailscale-ip>:8787/release-notes-9c1d04/
 
 # A frozen snapshot that outlives the source
 serve-report ./out/chart.png --name q3-chart --copy
@@ -99,5 +105,6 @@ serve-report restart       # stop + start fresh
   report).
 - **Server log:** `~/.local/share/claude-serve/server.log`.
 - **Port:** prefers `8787` and scans upward if busy (`SERVE_REPORT_PORT` to
-  override). Bound to `127.0.0.1` — local only. State dir overridable via
-  `SERVE_REPORT_HOME`.
+  override). Binds `0.0.0.0` (override `SERVE_REPORT_BIND`); the emitted URL host
+  is tailscale IP → LAN IP → `localhost` (override `SERVE_REPORT_HOST`). State
+  dir overridable via `SERVE_REPORT_HOME`.
