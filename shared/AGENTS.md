@@ -7,7 +7,7 @@ each agent's generated file.
 ## How these files are maintained
 
 The global instruction files of every agent on this machine
-(`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.config/pi/AGENTS.md`,
+(`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.pi/agent/AGENTS.md`,
 `~/.omp/agent/AGENTS.md`) are GENERATED from `~/src/agents` by `agents-sync`.
 To change standing instructions: edit `~/src/agents/shared/AGENTS.md` (shared)
 or `~/src/agents/<agent>/local.md` (agent-specific), then run

@@ -20,7 +20,7 @@ def test_targets_paths(tmp_path):
     paths = {t.agent: t.path for t in cfg.targets()}
     assert paths["claude"] == cfg.home / ".claude" / "CLAUDE.md"
     assert paths["codex"] == cfg.home / ".codex" / "AGENTS.md"
-    assert paths["pi"] == cfg.home / ".config" / "pi" / "AGENTS.md"
+    assert paths["pi"] == cfg.home / ".pi" / "agent" / "AGENTS.md"
     assert paths["omp"] == cfg.home / ".omp" / "agent" / "AGENTS.md"
 
 

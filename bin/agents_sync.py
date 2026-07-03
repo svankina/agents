@@ -50,7 +50,7 @@ class Config:
         paths = {
             "claude": self.home / ".claude" / "CLAUDE.md",
             "codex": self.home / ".codex" / "AGENTS.md",
-            "pi": self.home / ".config" / "pi" / "AGENTS.md",
+            "pi": self.home / ".pi" / "agent" / "AGENTS.md",
             "omp": self.home / ".omp" / "agent" / "AGENTS.md",
         }
         return [Target(a, paths[a], self.repo / a / "local.md") for a in AGENTS]

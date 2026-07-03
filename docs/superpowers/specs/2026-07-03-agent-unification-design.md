@@ -21,7 +21,7 @@ per-project files.
   — the Pi copy has a `scripts/` dir the Claude copy lacks).
 - Two repos share the mandate: `~/src/pagent` (infra scripts + canonical
   `~/AGENTS.md` symlink) and `~/src/agents` (per-agent resources).
-- `~/.codex/AGENTS.md` and `~/.config/pi/AGENTS.md` are near-identical files
+- `~/.codex/AGENTS.md` and `~/.pi/agent/AGENTS.md` are near-identical files
   maintained by a third mechanism (fetcher plugin managed blocks).
 
 ## Verified constraints
@@ -32,7 +32,7 @@ per-project files.
   it…" — both `@AGENTS.md` import and symlink are documented options.
 - **Codex** reads `~/.codex/AGENTS.md` (user) + repo `AGENTS.md`; skills from
   `~/.codex/skills/` and `.codex/skills/`. No include syntax.
-- **Pi** reads `~/.config/pi/AGENTS.md` (user) + repo `AGENTS.md`.
+- **Pi** reads `~/.pi/agent/AGENTS.md` (user) + repo `AGENTS.md`.
 - **omp** loads context files through a provider registry (own `.omp` dirs,
   `~/.codex/AGENTS.md`, `.claude/` CLAUDE.md, GEMINI.md, opencode, Copilot…)
   and **dedupes per level by provider priority** (key: `user` or
@@ -75,7 +75,7 @@ Each agent's **global** file is generated as: banner + `shared/AGENTS.md` +
 |---|---|
 | `~/.claude/CLAUDE.md` | shared + claude/local.md |
 | `~/.codex/AGENTS.md` | shared + codex/local.md |
-| `~/.config/pi/AGENTS.md` | shared + pi/local.md |
+| `~/.pi/agent/AGENTS.md` | shared + pi/local.md |
 | `~/.omp/agent/AGENTS.md` | shared + omp/local.md |
 
 Rules:

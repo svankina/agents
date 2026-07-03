@@ -732,7 +732,7 @@ This task is editorial, not code. Sources (read each in full before writing):
 
 1. `# Shared agent instructions (all agents on this machine)` — 2-sentence intro naming the four agents.
 2. `## How these files are maintained` — NEW text:
-   > The global instruction files of every agent on this machine (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.config/pi/AGENTS.md`, `~/.omp/agent/AGENTS.md`) are GENERATED from `~/src/agents` by `agents-sync`. To change standing instructions: edit `~/src/agents/shared/AGENTS.md` (shared) or `~/src/agents/<agent>/local.md` (agent-specific), then run `~/src/agents/bin/agents-sync sync`. Never edit the generated files directly — `agents-sync check` flags drift and `sync` will refuse to clobber it silently. Shared skills live in `~/src/agents/shared/skills/` and are symlinked into each agent's skills dir by the same tool. Per-project convention: repos have `AGENTS.md` as the source file and `CLAUDE.md` as a symlink to it.
+   > The global instruction files of every agent on this machine (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.pi/agent/AGENTS.md`, `~/.omp/agent/AGENTS.md`) are GENERATED from `~/src/agents` by `agents-sync`. To change standing instructions: edit `~/src/agents/shared/AGENTS.md` (shared) or `~/src/agents/<agent>/local.md` (agent-specific), then run `~/src/agents/bin/agents-sync sync`. Never edit the generated files directly — `agents-sync check` flags drift and `sync` will refuse to clobber it silently. Shared skills live in `~/src/agents/shared/skills/` and are symlinked into each agent's skills dir by the same tool. Per-project convention: repos have `AGENTS.md` as the source file and `CLAUDE.md` as a symlink to it.
 3. `## Explicit changes` — S1 line 2 verbatim.
 4. `## Sudo / privileged commands` — merged from S1 §"Sudo handoff workflow" steps 1–3 and 5–8 + subagent paragraph (S1 line 19, generalized: drop "Pi subagents run with extensions disabled" rationale, keep the bubble-up rule) + S1 line 21 (blocking `psudo --wait` form for terminal agents) + S2 §"Subagents must NOT call sudo" (docker-no-sudo note included). Omit S1 step 4 and line 17 (`request_sudo_handoff` — Pi-only, goes to `pi/local.md`).
 5. `## Delivering artifacts` — S2 §"Delivering artifacts" verbatim + S1 line 84 (verify URLs before sharing) + S1 line 86 (always show actual diffs in chat).
@@ -882,7 +882,7 @@ Run from the **canonical checkout** `~/src/agents` (not the worktree). This is t
 
 **Files:**
 - Modify: `~/AGENTS.md`, `~/CLAUDE.md` (become managed symlinks)
-- Modify: `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.config/pi/AGENTS.md` (become generated), create `~/.omp/agent/AGENTS.md`
+- Modify: `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.pi/agent/AGENTS.md` (become generated), create `~/.omp/agent/AGENTS.md`
 - Trash: `~/.claude/skills/serving-reports/`, `~/.claude/skills/crisp-writing/` (superseded real dirs)
 - Modify: `~/src/pagent/home/AGENTS.md` (pointer stub) + commit in pagent
 
@@ -899,7 +899,7 @@ git branch -d agent-unification
 
 ```bash
 mkdir -p /tmp/agent-unification-backup
-for f in ~/.claude/CLAUDE.md ~/.codex/AGENTS.md ~/.config/pi/AGENTS.md ~/CLAUDE.md; do
+for f in ~/.claude/CLAUDE.md ~/.codex/AGENTS.md ~/.pi/agent/AGENTS.md ~/CLAUDE.md; do
   cp -aL "$f" /tmp/agent-unification-backup/$(echo "$f" | tr / _) 2>/dev/null || true
 done
 ls -la /tmp/agent-unification-backup/
@@ -928,7 +928,7 @@ Expected: `check` prints `clean`, `exit=0`; second sync writes nothing, `second-
 
 ```bash
 head -3 ~/.claude/CLAUDE.md          # banner + shared core
-grep -c "fetcher:begin" ~/.codex/AGENTS.md ~/.config/pi/AGENTS.md   # 1 each
+grep -c "fetcher:begin" ~/.codex/AGENTS.md ~/.pi/agent/AGENTS.md   # 1 each
 ls -la ~/AGENTS.md ~/CLAUDE.md       # symlinks: repo home/AGENTS.md; AGENTS.md
 ls -la ~/.claude/skills/ ~/.codex/skills/ ~/.omp/agent/skills/      # skill symlinks present
 ```
