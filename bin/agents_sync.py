@@ -8,6 +8,7 @@ in the existing target preserved at the end. See
 docs/superpowers/specs/2026-07-03-agent-unification-design.md.
 """
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -104,6 +105,55 @@ def target_state(t: Target, expected: str) -> str:
     if current.startswith(BANNER_PREFIX):
         return "drifted"
     return "foreign"
+
+
+def desired_skill_links(cfg: Config) -> list[tuple[Path, Path]]:
+    links = []
+    if cfg.shared_skills.is_dir():
+        for skill in sorted(p for p in cfg.shared_skills.iterdir() if p.is_dir()):
+            for dest in cfg.skill_dests():
+                links.append((dest / skill.name, skill))
+    return links
+
+
+def link_state(link: Path, target: Path, repo: Path) -> str:
+    if not link.is_symlink():
+        if link.exists():
+            return "conflict"
+        return "missing"
+    raw = os.readlink(link)
+    try:
+        resolved = link.resolve(strict=True)
+    except OSError:
+        resolved = None
+    want = target if target.is_absolute() else (link.parent / target)
+    if resolved is not None and resolved == want.resolve():
+        return "clean"
+    if raw.startswith(str(repo)):
+        return "stale"
+    return "conflict"
+
+
+def apply_link(link: Path, target: Path) -> None:
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if link.is_symlink():
+        link.unlink()
+    os.symlink(target, link)
+
+
+def stale_repo_links(cfg: Config) -> list[Path]:
+    valid = {link for link, _ in desired_skill_links(cfg)}
+    out = []
+    for dest in cfg.skill_dests():
+        if not dest.is_dir():
+            continue
+        for entry in sorted(dest.iterdir()):
+            if entry in valid or not entry.is_symlink():
+                continue
+            raw = os.readlink(entry)
+            if raw.startswith(str(cfg.shared_skills)) and not entry.exists():
+                out.append(entry)
+    return out
 
 
 if __name__ == "__main__":
