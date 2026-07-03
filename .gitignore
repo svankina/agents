@@ -17,3 +17,4 @@ pi/skills/browser-harness/
 *.disabled
 *.swp
 .DS_Store
+.worktrees/
