@@ -8,8 +8,11 @@ in the existing target preserved at the end. See
 docs/superpowers/specs/2026-07-03-agent-unification-design.md.
 """
 
+import argparse
+import difflib
 import os
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -156,5 +159,93 @@ def stale_repo_links(cfg: Config) -> list[Path]:
     return out
 
 
+def _iter_target_items(cfg: Config):
+    for t in cfg.targets():
+        exp = expected_content(cfg, t)
+        yield t, exp, target_state(t, exp)
+
+
+def _iter_link_items(cfg: Config):
+    for link, target in desired_skill_links(cfg) + cfg.home_links():
+        yield link, target, link_state(link, target, cfg.repo)
+
+
+def cmd_check(cfg: Config) -> int:
+    bad = 0
+    for t, _exp, state in _iter_target_items(cfg):
+        if state != "clean":
+            print(f"[{state}] {t.path}")
+            bad += 1
+    for link, target, state in _iter_link_items(cfg):
+        if state != "clean":
+            print(f"[{state}] {link} -> {target}")
+            bad += 1
+    for orphan in stale_repo_links(cfg):
+        print(f"[orphan] {orphan}")
+        bad += 1
+    if bad == 0:
+        print("clean")
+    return 1 if bad else 0
+
+
+def cmd_diff(cfg: Config) -> int:
+    for t, exp, state in _iter_target_items(cfg):
+        if state == "clean":
+            continue
+        current = t.path.read_text() if t.path.exists() else ""
+        sys.stdout.writelines(difflib.unified_diff(
+            current.splitlines(keepends=True), exp.splitlines(keepends=True),
+            fromfile=str(t.path), tofile=f"generated:{t.agent}"))
+    return 0
+
+
+def cmd_sync(cfg: Config, force: bool) -> int:
+    blocked = 0
+    for t, exp, state in _iter_target_items(cfg):
+        if state == "clean":
+            continue
+        if state in ("drifted", "foreign") and not force:
+            print(f"[blocked:{state}] {t.path} — re-run with --force after "
+                  f"reviewing (agents-sync diff)")
+            blocked += 1
+            continue
+        t.path.parent.mkdir(parents=True, exist_ok=True)
+        t.path.write_text(exp)
+        print(f"[wrote] {t.path}")
+    for link, target, state in _iter_link_items(cfg):
+        if state == "clean":
+            continue
+        if state == "conflict":
+            print(f"[conflict] {link} exists and is not ours — resolve "
+                  f"manually (trash-put it), then re-run")
+            blocked += 1
+            continue
+        if state == "stale" and not force:
+            print(f"[blocked:stale] {link} — re-run with --force")
+            blocked += 1
+            continue
+        apply_link(link, target)
+        print(f"[linked] {link} -> {target}")
+    for orphan in stale_repo_links(cfg):
+        orphan.unlink()
+        print(f"[pruned] {orphan}")
+    return 2 if blocked else 0
+
+
+def main(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog="agents-sync", description=__doc__)
+    p.add_argument("command", choices=["sync", "check", "diff"])
+    p.add_argument("--force", action="store_true")
+    p.add_argument("--repo", type=Path, default=Path.home() / "src" / "agents")
+    p.add_argument("--home", type=Path, default=Path.home())
+    args = p.parse_args(argv)
+    cfg = Config(repo=args.repo.resolve(), home=args.home.resolve())
+    if args.command == "check":
+        return cmd_check(cfg)
+    if args.command == "diff":
+        return cmd_diff(cfg)
+    return cmd_sync(cfg, force=args.force)
+
+
 if __name__ == "__main__":
-    raise SystemExit(0)
+    raise SystemExit(main(sys.argv[1:]))
