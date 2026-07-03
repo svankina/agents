@@ -25,3 +25,20 @@ A minimal Pi SSE probe with an `after_provider_response` extension showed ChatGP
 ## 2026-06-23 serving-reports skill (shared HTTP server)
 
 Added `pi/skills/serving-reports/` so all Pi agents publish deliverables into one shared, always-on HTTP server instead of each spawning its own `python3 -m http.server`. The server is a single `ThreadingHTTPServer` (concurrent) rooted at `~/.local/share/claude-serve/public/`, started lazily and reused (flock-serialized, idempotent); each agent gets a slug route via `serve-report <path> [--name] [--copy]`. It binds `0.0.0.0` (override `SERVE_REPORT_BIND`) and emits the most clickable host — tailscale IP → LAN IP → `localhost` (override `SERVE_REPORT_HOST`) — so links open from the user's other devices over tailscale/LAN; reports are thus reachable across the tailnet/LAN (don't serve secrets). Canonical script bundled at `pi/skills/serving-reports/scripts/serve-report` and installed on PATH at `~/.local/bin/serve-report` (keep both identical). Default port 8787 (scans upward; live instance currently 8789). The standing instruction lives in `~/AGENTS.md` (→ `~/src/pagent/home/AGENTS.md`) under User Preferences. Mirrors the Claude skill at `~/.claude/skills/serving-reports/` (that copy's doc still says localhost-only — stale re: the new 0.0.0.0 binding).
+
+## 2026-07-03 agent-unification verification results
+
+- `agents-sync` installed; all four generated targets verified live:
+  Claude Code, Codex, omp, Pi each reflect the shared core + own deltas.
+- omp reads `~/.omp/agent/AGENTS.md` (its own provider won the user-level
+  priority race over `~/.codex/AGENTS.md`, as designed).
+- **Pi reads `~/.pi/agent/AGENTS.md`** (agentDir), NOT `~/.config/pi/AGENTS.md`
+  — that old path is dead (nothing reads it; trashed 2026-07-03). The fetcher
+  plugin block was re-seeded into the real path and survives regeneration.
+- Pi non-interactive probe flag is `pi -p` / `--print`.
+- Pi skills chain: `~/.pi/agent/skills` → `~/src/pagent/.pi/skills` →
+  `~/src/agents/pi/skills`; shared skills symlink through to
+  `shared/skills/` and SKILL.md resolves through all hops.
+- Fetcher blocks preserved in `~/.codex/AGENTS.md` and `~/.pi/agent/AGENTS.md`.
+- Drift round-trip on real install: hand-edit → check flags drifted → plain
+  sync blocks (exit 2) → sync --force repairs → check clean.
