@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Warn-and-block when installed agent files drifted from sources (or were never synced).
+root="$(git rev-parse --show-toplevel)"
+if ! "$root/bin/agents-sync" check >/dev/null 2>&1; then
+  echo "agents-sync check failed: installed files drifted or are missing." >&2
+  echo "Run: bin/agents-sync diff   then   bin/agents-sync sync  (--force if reviewed)" >&2
+  echo "Bypass with: git commit --no-verify" >&2
+  exit 1
+fi
