@@ -189,13 +189,17 @@ def cmd_check(cfg: Config) -> int:
 
 
 def cmd_diff(cfg: Config) -> int:
-    for t, exp, state in _iter_target_items(cfg):
-        if state == "clean":
-            continue
-        current = t.path.read_text() if t.path.exists() else ""
-        sys.stdout.writelines(difflib.unified_diff(
-            current.splitlines(keepends=True), exp.splitlines(keepends=True),
-            fromfile=str(t.path), tofile=f"generated:{t.agent}"))
+    try:
+        for t, exp, state in _iter_target_items(cfg):
+            if state == "clean":
+                continue
+            current = t.path.read_text() if t.path.exists() else ""
+            sys.stdout.writelines(difflib.unified_diff(
+                current.splitlines(keepends=True), exp.splitlines(keepends=True),
+                fromfile=str(t.path), tofile=f"generated:{t.agent}"))
+    except BrokenPipeError:  # e.g. `agents-sync diff | head`
+        import os as _os
+        _os.dup2(_os.open(_os.devnull, _os.O_WRONLY), sys.stdout.fileno())
     return 0
 
 
