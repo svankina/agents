@@ -42,3 +42,15 @@ Added `pi/skills/serving-reports/` so all Pi agents publish deliverables into on
 - Fetcher blocks preserved in `~/.codex/AGENTS.md` and `~/.pi/agent/AGENTS.md`.
 - Drift round-trip on real install: hand-edit → check flags drifted → plain
   sync blocks (exit 2) → sync --force repairs → check clean.
+
+## 2026-07-06 omp claude-usage-footer: thinking level in model segment
+
+`~/.omp/agent/extensions/claude-usage-footer/index.ts` is the omp port of Pi's
+`pi/extensions/claude-ui.ts` footer. Ported the thinking-level suffix: the model
+segment now renders `<model> <level>` (muted) via `pi.getThinkingLevel()`,
+suppressing `off`/`inherit`/undefined — same gating as claude-ui.ts:703. With
+`defaultThinkingLevel: auto`, omp's `session.thinkingLevel` is the per-turn
+*resolved* level (undefined until the turn is classified). Do NOT enable the
+built-in status line for this (`statusLine.leftSegments: [model]`) — that draws a
+second bar on the editor border; everything lives in this one extension footer.
+omp extensions load at session start, so footer changes need an omp restart.
