@@ -377,6 +377,11 @@ in i3 (`~/src/dotfiles/config/i3/config`) to `Print` (full screen),
 capture is both saved to that directory and copied to the clipboard as
 `image/png` — no prompts.
 
+Phone-shared screenshots/files from the Android Homer share target land in
+`~/shared/`, flat and timestamp-prefixed (`YYYYMMDD-HHMMSS_<original-name>`).
+When the user says they shared/sent a screenshot or file from the phone, check
+`~/shared/` first (`ls -t ~/shared | head`) before asking them to upload it again.
+
 ## User preferences
 
 The user prefers to do minimal work. If there's something you can run safely,
