@@ -116,6 +116,10 @@ screenshots for UI pages). Do not share a URL based only on assuming a server
 started; if verification is not possible, say that clearly along with what
 was attempted.
 
+Put the deliverable URL at the **bottom of the response**, after the summary,
+evidence, and verification details. The user should never need to scroll back
+up to find what was made.
+
 When reporting code or file changes in chat, show the actual code changes
 every time. Use a traditional fenced `diff` by default so the changed lines
 are visible; a concise summary may be included in addition, but not instead
