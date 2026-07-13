@@ -386,6 +386,23 @@ Phone-shared screenshots/files from the Android Homer share target land in
 When the user says they shared/sent a screenshot or file from the phone, check
 `~/shared/` first (`ls -t ~/shared | head`) before asking them to upload it again.
 
+## Android notifications
+
+All agents on this machine can send Sravan an Android notification through
+Homer:
+
+```bash
+homer-notify --title "Need approval" \
+  --body "The deployment is waiting for sudo approval." \
+  --source <agent-name> --priority urgent
+```
+
+Use this only for genuinely important events or when Sravan must act to unblock
+the task. Never notify for routine progress, routine completion, or information
+already visible in the active session. The command returns success only after
+Homer durably accepts and audits the notification; if it fails, report that
+failure in the session instead of claiming the user was notified.
+
 ## User preferences
 
 The user prefers to do minimal work. If there's something you can run safely,
