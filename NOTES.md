@@ -43,9 +43,10 @@ Added `pi/skills/serving-reports/` so all Pi agents publish deliverables into on
 - Drift round-trip on real install: hand-edit → check flags drifted → plain
   sync blocks (exit 2) → sync --force repairs → check clean.
 
-## 2026-07-06 omp claude-usage-footer: thinking level in model segment
+## 2026-07-06 omp subscription-usage-footer: thinking level in model segment
 
-`~/.omp/agent/extensions/claude-usage-footer/index.ts` is the omp port of Pi's
+`~/src/omp/extensions/subscription-usage-footer/index.ts`, exposed through the
+`~/src/agents/omp/extensions/subscription-usage-footer` symlink, is the omp port of Pi's
 `pi/extensions/claude-ui.ts` footer. Ported the thinking-level suffix: the model
 segment now renders `<model> <level>` (muted) via `pi.getThinkingLevel()`,
 suppressing `off`/`inherit`/undefined — same gating as claude-ui.ts:703. With
