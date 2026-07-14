@@ -50,7 +50,6 @@ shared/
   AGENTS.md            # unified core instructions (single source of truth)
   skills/              # canonical copy of each shared skill
     serving-reports/
-    crisp-writing/
 home/
   AGENTS.md            # home-dir-specific notes only (NOT the core)
 claude/local.md        # per-agent deltas; existing claude/commands/ stays
@@ -111,10 +110,9 @@ Claude Code and omp walk up from cwd and load `~/CLAUDE.md` / `~/AGENTS.md`
   **per-skill symlinks** into `~/.claude/skills/`, `~/.codex/skills/`, and
   `~/.omp/agent/skills/`; Pi discovers skills from the repo path it already
   uses (`~/src/agents/pi/skills`) — shared skills get symlinks there too.
-- Reconciliation: `serving-reports` — take the Pi copy (superset, has
-  `scripts/`) as canonical, fold in any Claude-copy deltas, move to
-  `shared/skills/`. `crisp-writing` moves from `~/.claude/skills/` to
-  `shared/skills/` (all agents benefit).
+- Reconciliation: take the Pi copy of `serving-reports` (the superset, which
+  has `scripts/`) as canonical, fold in any Claude-copy deltas, and move it
+  to `shared/skills/`.
 - Per-agent skills stay put: `slice-for-ender3` remains a project-repo symlink
   in `~/.claude/skills/` (or is added to shared later); Pi-only skills stay in
   `pi/skills/`. omp `managed-skills` (auto-learned) are untouched.
@@ -142,7 +140,7 @@ AGENTS.md + symlink + .gitignore entries in a new repo (not in v1).
    Conflicts resolve to the most recently updated guidance; the psudo
    workflow keeps the generic core + per-agent mechanisms in local.md files.
 2. Populate `<agent>/local.md` with the agent-specific residue.
-3. Move/reconcile skills into `shared/skills/` (serving-reports, crisp-writing).
+3. Move/reconcile `serving-reports` into `shared/skills/`.
 4. Implement `bin/agents-sync`; run it; verify targets.
 5. Repoint `~/AGENTS.md` → `~/src/agents/home/AGENTS.md`; replace `~/CLAUDE.md`
    with symlink → `~/AGENTS.md`. (Old files are git-tracked or trashed via

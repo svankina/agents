@@ -368,8 +368,8 @@ def test_desired_skill_links_covers_all_dests(tmp_path):
 
 def test_link_state_transitions(tmp_path):
     cfg = make_cfg(tmp_path)
-    src = add_skill(cfg, "crisp-writing")
-    link = cfg.home / ".claude" / "skills" / "crisp-writing"
+    src = add_skill(cfg, "example-skill")
+    link = cfg.home / ".claude" / "skills" / "example-skill"
     assert a.link_state(link, src, cfg.repo) == "missing"
     a.apply_link(link, src)
     assert a.link_state(link, src, cfg.repo) == "clean"
@@ -723,7 +723,6 @@ This task is editorial, not code. Sources (read each in full before writing):
 **Files:**
 - Rewrite: `shared/AGENTS.md`, `home/AGENTS.md`, `claude/local.md`, `codex/local.md`, `pi/local.md`, `omp/local.md`
 - Move: `pi/skills/serving-reports/` → `shared/skills/serving-reports/` (git mv; canonical copy — it supersedes `~/.claude/skills/serving-reports`, verified by diff on 2026-07-03)
-- Copy: `~/.claude/skills/crisp-writing/` → `shared/skills/crisp-writing/`
 
 **Interfaces:**
 - Produces: the final source content that Task 7 installs. No code.
@@ -790,11 +789,10 @@ block in the generated file; do not add web-fetch guidance here.)
 ```bash
 cd ~/src/agents/.worktrees/agent-unification
 git mv pi/skills/serving-reports shared/skills/serving-reports
-cp -r ~/.claude/skills/crisp-writing shared/skills/crisp-writing
 git add shared/skills
 ```
 
-Do NOT move `~/.claude/skills/crisp-writing-workspace` (working data, not a skill), `slice-for-ender3` (already a symlink into `~/src/3dp`), or the other `pi/skills/*` (Pi-only for now).
+Do NOT move `slice-for-ender3` (already a symlink into `~/src/3dp`) or the other `pi/skills/*` (Pi-only for now).
 
 - [ ] **Step 5: Verify composition renders sanely**
 
@@ -883,7 +881,7 @@ Run from the **canonical checkout** `~/src/agents` (not the worktree). This is t
 **Files:**
 - Modify: `~/AGENTS.md`, `~/CLAUDE.md` (become managed symlinks)
 - Modify: `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.pi/agent/AGENTS.md` (become generated), create `~/.omp/agent/AGENTS.md`
-- Trash: `~/.claude/skills/serving-reports/`, `~/.claude/skills/crisp-writing/` (superseded real dirs)
+- Trash: `~/.claude/skills/serving-reports/` (superseded real directory)
 - Modify: `~/src/pagent/home/AGENTS.md` (pointer stub) + commit in pagent
 
 - [ ] **Step 1: Merge the worktree branch**
@@ -908,7 +906,7 @@ ls -la /tmp/agent-unification-backup/
 - [ ] **Step 3: Clear known conflicts**
 
 ```bash
-trash-put ~/.claude/skills/serving-reports ~/.claude/skills/crisp-writing
+trash-put ~/.claude/skills/serving-reports
 trash-put ~/CLAUDE.md          # regular file; becomes a symlink
 trash-put ~/AGENTS.md          # old symlink into pagent; sync recreates it
 ```

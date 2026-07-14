@@ -23,8 +23,8 @@ def test_desired_skill_links_covers_all_dests(tmp_path):
 
 def test_link_state_transitions(tmp_path):
     cfg = make_cfg(tmp_path)
-    src = add_skill(cfg, "crisp-writing")
-    link = cfg.home / ".claude" / "skills" / "crisp-writing"
+    src = add_skill(cfg, "example-skill")
+    link = cfg.home / ".claude" / "skills" / "example-skill"
     assert a.link_state(link, src, cfg.repo) == "missing"
     a.apply_link(link, src)
     assert a.link_state(link, src, cfg.repo) == "clean"
