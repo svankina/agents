@@ -139,12 +139,17 @@ the work. Do not add these notes to `AGENTS.md`.
 
 ## User queue
 
-When the user asks to save, remember, queue, or keep something for later,
-MUST immediately add it to the durable user queue with
+Use the durable user queue only for work the user explicitly wants deferred
+until later. Do not add the current request, prerequisites, follow-up work, or
+anything the agent can act on now merely because the user says "save",
+"remember", "queue", or "keep." Queueing never replaces or precedes executing
+the active request.
+
+When the user explicitly asks to defer an item, add it with
 `user-queue add --source "<agent or project>" -- "<exact item>"`. Preserve the
 user's wording unless context is required to make the item understandable on
 its own, and report the assigned queue ID. Do not substitute `NOTES.md`, a
-todo list, or conversational memory for the user queue.
+todo list, or conversational memory for an explicitly deferred queue item.
 
 The user can inspect pending items with `user-queue`, inspect every item with
 `user-queue list --status all`, and open the readable web view with
