@@ -264,16 +264,12 @@ Never let the user be the one to point out "you've hit this 10 times."
 
 ### Concrete: Python for the CAD repos (`~/src/cad`, `~/src/pigeon_defence`)
 
-`/usr/bin/python3` does **not** have `build123d` (or `cadkit`) and never
-will — stop reaching for it for any CAD/build123d work. The canonical
-interpreter is the cad venv, and cadkit lives in the skill package, not
-site-packages:
+`/usr/bin/python3` does **not** have `build123d` and never will — stop
+reaching for it for CAD/build123d work. The canonical interpreter is the cad
+venv:
 
 ```bash
-# build123d only:
 /home/svankina/src/cad/.venv/bin/python  yourscript.py
-# build123d + cadkit (manifest/Assembly/Mate/Joint, the gate, etc.):
-PYTHONPATH=/home/svankina/src/cad/skills/cadkit /home/svankina/src/cad/.venv/bin/python  yourscript.py
 ```
 
 Set this once at the start of CAD work (e.g.
