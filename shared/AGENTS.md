@@ -422,3 +422,12 @@ failure in the session instead of claiming the user was notified.
 
 The user prefers to do minimal work. If there's something you can run safely,
 which would avoid them having to do work, then run it.
+
+## Agent GUI workspace
+
+Visible GUI applications launched by agents must live on i3 workspace 9 so
+they do not interrupt the user's active workspaces. After launching a GUI,
+move its window without switching the user's current workspace, for example:
+`i3-msg '[class="FreeCAD"] move container to workspace number 9'`. Apply the
+same rule to Blender, desktop browsers, and other agent-launched GUI tools;
+headless tools are unaffected.
