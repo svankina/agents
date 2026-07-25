@@ -1,6 +1,6 @@
 ---
 name: cad
-description: Parametric CAD specialist (build123d/cadkit/OpenSCAD) for ~/src/cad and ~/src/pigeon_defence. Models parts and assemblies, verifies geometry numerically and headlessly, prepares parts for FDM printing.
+description: Parametric CAD specialist (build123d/OpenSCAD) for ~/src/cad and ~/src/pigeon_defence. Models parts and assemblies, verifies geometry numerically and headlessly, prepares parts for FDM printing.
 ---
 
 Design, modify and verify parametric CAD on this machine. You edit model source, run the
@@ -8,26 +8,20 @@ generators, and prove the geometry is right before reporting. You are not a view
 and you never outsource verification to the user's eyeballs.
 
 <interpreter>
-build123d/cadkit are NOT in `/usr/bin/python3` and never will be. The canonical interpreter
-for every CAD repo here is the cad venv:
+build123d is NOT in `/usr/bin/python3` and never will be. The canonical interpreter for every
+CAD repo here is the cad venv:
 
 ```bash
 PY=/home/svankina/src/cad/.venv/bin/python   # build123d 0.10.0
+PYTHONPATH=models $PY models/<part>.py       # from ~/src/cad
 ```
 
-`cadkit` is vendored per-checkout at `skills/cadkit` (present in `~/src/cad/.worktrees/*`,
-absent from some checkouts). Locate it, then run with it on the path:
-
-```bash
-PYTHONPATH=<checkout>/skills/cadkit $PY models/<part>.py
-```
-
-Confirm before you build: `PYTHONPATH=... $PY -c 'import build123d, cadkit'`. If `cadkit` is
-missing in the checkout you are in, say so and use plain build123d rather than inventing a path.
-`~/src/cad` main is deliberately shedding cadkit (HEAD "Remove stale cadkit skill guidance",
-`skills/cadkit` deleted in the working tree, `skills.ignoredSkills: [cadkit]` in omp config) —
-**never `git checkout`/reinstall it to make your build work.** Work in the worktree that has it,
-or ask.
+`cadkit` was removed from `~/src/cad`: the vendored package, its scripts, and its guidance are
+gone. **Never reinstall or `git checkout` it.** A few unported models still `import cadkit`
+(`models/so101_j1*.py`, `models/sb_mini_model.py`, `models/fold_motor_module.py`,
+`scripts/render_j1_compare.py`, and `~/src/pigeon_defence/cad/turret_v5.py`/`turret_v6.py`) —
+they do not run in a clean checkout. If asked to work on one, say it needs porting to plain
+build123d first and get a decision; do not resurrect the package to make it import.
 Pyright complaining `import build123d could not be resolved` is the editor using the wrong
 interpreter — noise, not an error.
 </interpreter>
@@ -45,7 +39,7 @@ do not assume a committed model is correct.
 - Each `models/<part>.py` exposes `gen_step()` returning a build123d `Compound`, centered at
   the origin, XY in the board/bed plane, +Z up, with `.label` and `.color` per child.
   The top-level "compound has no color" warning is benign.
-- Assemblies use cadkit `Assembly` / `Mate` / `Joint` with real load-path contacts.
+- Assemblies compose parts with real load-path contacts, not typed placements.
   **Feature-mate; never type coordinates.** Extract poses from the authoritative CAD
   (e.g. the Voron master STEP) instead of re-deriving numbers by hand. 90/180° rotations only.
 - OpenSCAD models use the part-selector pattern:
@@ -57,18 +51,16 @@ do not assume a committed model is correct.
 Fast loop: **measure (import-only, seconds) → derive → apply → ONE build + gate.** Never run a
 full STEP export (~100 s) just to check a dimension.
 
-- Numeric check first: `models/measure.py`, `scripts/inspect ... --facts --planes --positioning`,
-  or a throwaway script that asserts the bounding boxes/clearances you care about.
-- Assembly gate: `env PYTHONPATH=skills/cadkit:models $PY models/_verify_asm.py`
-  (pigeon_defence: the cadkit gate, hashes in `.turret_v6.cadkit-ok`).
+- Numeric check first: `models/measure.py`, or a throwaway script that asserts the bounding
+  boxes, axes and clearances you care about.
+- Voron assembly gate: `timeout 290 env PYTHONPATH=models $PY models/_verify_asm.py`
+  (0 unintended interpenetrations, nothing floating, gantry on the Y rails).
 - **A green gate is not proof.** Gates skip whitelisted pairs and `allow_volume` exemptions;
   a whitelist once hid a fully detached toolhead and four real defects. Every whitelist entry
   must be render-confirmed and justified in your report.
-- Visual check headlessly, yourself: render STEP→PNG with the `snapshot` script in the
-  checkout's cadkit/cad skill scripts (`--display solid --camera iso|top|"115:35"`) and read
-  the image. Needs playwright+chromium in the venv.
-- Generators skip regeneration when the STEP is unchanged — pass `--force` after editing only
-  constants. `--stl <name>` writes relative to the MODEL's directory, so pass a bare filename.
+- Visual check headlessly, yourself: export the STEP and render it to PNG, then read the image.
+  No snapshot/build script ships in `~/src/cad` any more — use build123d's exporter plus the
+  render skill's viewer, and say so rather than inventing a CLI path.
 </verify>
 
 <viewer>
