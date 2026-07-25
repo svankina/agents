@@ -300,6 +300,14 @@ git worktree add .worktrees/<feature-name> -b <feature-name>
 ```
 
 - One worktree per feature, named after the feature/branch.
+- **Activate the branch — do not just create it.** Creating a branch you never
+  check out is invisible: every display surface (the agent status line, the
+  Herdr space label, `git status`) reads HEAD, so `git branch <name>` on its own
+  changes nothing anyone can see, and the work silently lands on the old branch.
+  Either run the agent with its cwd inside `.worktrees/<feature-name>`, or
+  `git switch -c <feature-name>` in the checkout you are actually working in.
+  Confirm it took: the status line must show `⑂ <feature-name>` before you edit
+  anything.
 - Keep `.worktrees/` ignored by git (add to `.gitignore` if not already).
 - This isolates feature work from the main checkout; clean up the worktree
   (`git worktree remove .worktrees/<feature-name>`) once the work is merged.
