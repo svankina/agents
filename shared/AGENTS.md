@@ -14,6 +14,11 @@ or `~/src/agents/<agent>/local.md` (agent-specific), then run
 `~/src/agents/bin/agents-sync sync`. Never edit the generated files directly —
 `agents-sync check` flags drift and `sync` will refuse to clobber it silently.
 
+Durable facts about the user — preferences, environment, systems — go in
+`~/src/agents/shared/USER.md`, which is concatenated in between the shared
+instructions and the agent-specific delta. Keep instructions here and facts
+there.
+
 Shared skills live in `~/src/agents/shared/skills/` and are symlinked into
 each agent's skills dir by the same tool.
 
@@ -479,11 +484,6 @@ the task. Never notify for routine progress, routine completion, or information
 already visible in the active session. The command returns success only after
 Homer durably accepts and audits the notification; if it fails, report that
 failure in the session instead of claiming the user was notified.
-
-## User preferences
-
-The user prefers to do minimal work. If there's something you can run safely,
-which would avoid them having to do work, then run it.
 
 ## Agent GUI workspace
 

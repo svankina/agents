@@ -8,6 +8,7 @@ def make_cfg(tmp_path: Path) -> a.Config:
     home = tmp_path / "home"
     (repo / "shared").mkdir(parents=True)
     (repo / "shared" / "AGENTS.md").write_text("# Shared core\nBody.\n")
+    (repo / "shared" / "USER.md").write_text("# About the user\nFacts.\n")
     for agent in a.AGENTS:
         (repo / agent).mkdir()
         (repo / agent / "local.md").write_text(f"# {agent} delta\n")
@@ -34,6 +35,25 @@ def test_compose_banner_shared_local_order(tmp_path):
 def test_compose_skips_empty_local():
     out = a.compose("omp", "SHARED\n", "   \n", [])
     assert "SHARED" in out and out.count("\n\n") <= 2
+
+
+def test_compose_puts_user_between_shared_and_local():
+    body = a.compose("claude", "SHARED\n", "LOCAL\n", [], "USER\n").split("-->\n", 1)[1]
+    assert body.index("SHARED") < body.index("USER") < body.index("LOCAL")
+
+
+def test_expected_content_includes_user_md(tmp_path):
+    cfg = make_cfg(tmp_path)
+    t = [x for x in cfg.targets() if x.agent == "pi"][0]
+    exp = a.expected_content(cfg, t)
+    assert exp.index("# Shared core") < exp.index("# About the user") < exp.index("# pi delta")
+
+
+def test_expected_content_without_user_md(tmp_path):
+    cfg = make_cfg(tmp_path)
+    cfg.user_md.unlink()
+    t = [x for x in cfg.targets() if x.agent == "pi"][0]
+    assert "# About the user" not in a.expected_content(cfg, t)
 
 
 def test_extract_foreign_blocks_roundtrip():
