@@ -329,22 +329,20 @@ the same config) every time is a workflow bug on *my* side. When it recurs:
 3. Only then continue the task.
 Never let the user be the one to point out "you've hit this 10 times."
 
-### Concrete: Python for the CAD repos (`~/src/cad`, `~/src/pigeon_defence`)
+### Concrete: Python for CAD projects
 
-`/usr/bin/python3` does **not** have `build123d` and never will — stop
-reaching for it for CAD/build123d work. The canonical interpreter is the cad
-venv:
+`/usr/bin/python3` does **not** have `build123d` and never will — use the
+project-local virtual environment for CAD/build123d work:
 
 ```bash
-/home/svankina/src/cad/.venv/bin/python  yourscript.py
+.venv/bin/python yourscript.py
 ```
 
-Set this once at the start of CAD work (e.g.
-`PY=/home/svankina/src/cad/.venv/bin/python`) and use `$PY` thereafter.
-Pyright/LSP flagging `import build123d` as "could not be resolved" is the
-same root cause (editor using the wrong interpreter) — it is harmless noise,
-not a real error; silence it with a `pyrightconfig.json` pointing
-`venvPath`/`venv` at that venv rather than re-noticing it each time.
+Set this once from the project root at the start of CAD work (for example,
+`PY=.venv/bin/python`) and use `$PY` thereafter. Pyright/LSP flagging
+`import build123d` as "could not be resolved" means the editor is using the
+wrong interpreter; configure `pyrightconfig.json` with `venvPath`/`venv` for
+that project rather than re-noticing it each time.
 
 ## Killing a Codex subagent (`codex-agent`) — `stop` is NOT enough
 
