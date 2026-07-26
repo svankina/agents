@@ -55,3 +55,28 @@ suppressing `off`/`inherit`/undefined — same gating as claude-ui.ts:703. With
 built-in status line for this (`statusLine.leftSegments: [model]`) — that draws a
 second bar on the editor border; everything lives in this one extension footer.
 omp extensions load at session start, so footer changes need an omp restart.
+
+## 2026-07-27 — `/mod` is an extension, never a core patch
+
+`/mod` (pin a model as this directory's default in `<cwd>/.omp/settings.json`)
+lives in `omp/extensions/mod-directory-model.ts`, loaded via the
+`extensions: [~/src/agents/omp/extensions]` entry in `~/.omp/agent/config.yml`.
+
+It was first written as a patch to omp core in `~/src/tools/oh-my-pi`
+(`f1c471fc1`, `37c01a6c5`) — `omp update` to npm 17.1.4 replaced the whole
+`dist/cli.js` and the command vanished. Those commits are reverted; anything
+that can be an extension must be one, or the next update eats it.
+
+Extension API facts worth remembering (omp 17.x):
+- `pi.registerCommand(name, { description, handler })` — handler gets
+  `(args, ctx: ExtensionCommandContext)` and runs in print mode too, so a
+  command with an argument form is testable headlessly:
+  `omp -p "/mod opus"`.
+- `ctx.models.list() / .current() / .resolve(spec)` — authenticated models and
+  core's own matching (accepts `provider/id`, bare id, `@role`).
+- `ctx.ui.select(title, options, { initialIndex, helpText })` — the built-in
+  selector already does type-to-search; it returns the chosen *label*.
+- `pi.setModel(model)` switches the live session; `ctx.hasUI` is false in
+  print/RPC mode, so guard picker-only paths.
+- Project settings (`<cwd>/.omp/settings.json`) beat `~/.omp/agent/config.yml`,
+  and are only read from the *cwd* — not from repo-root ancestors.
