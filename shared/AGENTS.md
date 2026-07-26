@@ -486,6 +486,32 @@ already visible in the active session. The command returns success only after
 Homer durably accepts and audits the notification; if it fails, report that
 failure in the session instead of claiming the user was notified.
 
+## Compute fairness — heavy jobs go through `fair-run`
+
+This machine is shared by the user and multiple concurrent agents. Any
+CPU/RAM-heavy process an agent launches — Blender, renders, video encodes,
+big compiles (`make -j`, `cargo build`), simulations, batch conversions —
+MUST be wrapped in `fair-run`:
+
+```bash
+fair-run -- blender -b scene.blend -a
+fair-run --cpus 4 -- make -j4
+```
+
+`fair-run` (in `~/.local/bin`, source `~/src/agents/bin/fair-run`) puts the
+command in a systemd user scope capped at 50% of cores and 50% of RAM by
+default, with low CPU weight and nice/ionice, so it always yields to the
+user and other agents under contention. No sudo needed. Override with
+`--cpus N`, `--mem SIZE`, `--weight W` when a job genuinely needs more, but
+never above ~75% of cores.
+
+Rules of thumb:
+- Never launch more than one unwrapped multi-core job; when in doubt, wrap.
+- Cap explicit parallelism too (`-j`, `--threads`) at half the cores —
+  `fair-run` throttles fairly, but fewer threads also means less memory.
+- Subagents inherit this rule; tell them explicitly when dispatching work
+  that will spawn heavy processes.
+
 ## Agent GUI workspace
 
 Visible GUI applications launched by agents must live on i3 workspace 9 so

@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# fair-run — run a CPU/memory-hungry command without starving other agents or the user.
+#
+# Wraps the command in a systemd user scope (no sudo needed; the cpu/memory/pids
+# controllers are delegated to the user slice on this machine) with:
+#   - CPUQuota   : hard cap, default 50% of all cores
+#   - CPUWeight  : low weight (20 vs default 100) so it yields under contention
+#   - MemoryHigh : soft cap, default 50% of RAM (throttles instead of OOMing the box)
+# plus nice(10) + ionice(best-effort, low prio) inside the scope.
+#
+# Usage:
+#   fair-run [--cpus N] [--weight W] [--mem SIZE] [--name NAME] -- command [args...]
+#
+# Examples:
+#   fair-run -- blender -b scene.blend -a
+#   fair-run --cpus 4 -- make -j4
+#
+# Falls back to plain nice/ionice if systemd-run is unavailable.
+
+set -euo pipefail
+
+total_cores=$(nproc)
+cpus=$(( total_cores / 2 ))
+(( cpus >= 1 )) || cpus=1
+weight=20
+mem="50%"
+name="fair-$$"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --cpus)   cpus="$2"; shift 2 ;;
+        --weight) weight="$2"; shift 2 ;;
+        --mem)    mem="$2"; shift 2 ;;
+        --name)   name="$2"; shift 2 ;;
+        --)       shift; break ;;
+        -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) echo "fair-run: unknown option '$1' (use -- before the command)" >&2; exit 2 ;;
+    esac
+done
+
+[[ $# -gt 0 ]] || { echo "fair-run: no command given" >&2; exit 2; }
+
+state=$(systemctl --user is-system-running 2>/dev/null || true)
+if command -v systemd-run >/dev/null 2>&1 && [[ "$state" == running || "$state" == degraded ]]; then
+    exec systemd-run --user --quiet --collect --scope \
+        --unit "$name" \
+        -p "CPUQuota=$(( cpus * 100 ))%" \
+        -p "CPUWeight=$weight" \
+        -p "MemoryHigh=$mem" \
+        -p TasksMax=4096 \
+        -- nice -n 10 ionice -c2 -n7 "$@"
+fi
+
+echo "fair-run: systemd user session unavailable, falling back to nice/ionice only" >&2
+exec nice -n 10 ionice -c2 -n7 "$@"
