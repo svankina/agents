@@ -1,0 +1,191 @@
+#!/usr/bin/env python3
+"""agent-gui — launch a GUI app onto the agent workspace (i3 workspace 9).
+
+Agents must not drop windows into whatever workspace the user is looking at.
+Doing that by hand means launching, guessing the window class, and firing an
+`i3-msg [class="..."] move container to workspace number 9` that silently does
+nothing when the class guess is wrong. This does it by identity instead:
+
+  1. snapshot the con_ids already on the i3 tree,
+  2. launch the command detached (its own session, output to a log file),
+  3. poll for a NEW window belonging to the launched process tree,
+  4. move exactly that container to the agent workspace, without switching to it.
+
+Usage:
+  agent-gui [--workspace N] [--timeout SECS] [--match SUBSTR] [--log PATH]
+            [--focus] -- <command> [args...]
+
+Examples:
+  agent-gui -- freecad model.FCStd
+  agent-gui --match blender -- flatpak run org.blender.Blender
+
+Options:
+  --workspace N   target workspace (default $AGENT_GUI_WORKSPACE or 9)
+  --timeout SECS  how long to wait for the window (default 30)
+  --match SUBSTR  also accept a new window whose class/title contains SUBSTR;
+                  needed for launchers that hand off to another process tree
+                  (flatpak, single-instance apps)
+  --focus         switch to the workspace afterwards (default: do not disturb)
+  --log PATH      where to send the app's stdout/stderr (default a temp file)
+
+Prints the app pid, the log path, and the window that was moved. Exit codes:
+0 moved, 2 usage error, 3 launched but no window found before the timeout
+(the app keeps running; move it yourself with i3-msg).
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+
+DEFAULT_WS = os.environ.get("AGENT_GUI_WORKSPACE", "9")
+
+
+def i3(*args: str) -> str:
+    return subprocess.run(
+        ["i3-msg", *args], check=True, capture_output=True, text=True
+    ).stdout
+
+
+def tree() -> dict:
+    return json.loads(i3("-t", "get_tree"))
+
+
+def windows(node: dict, out: list | None = None) -> list[dict]:
+    """Every node that owns a window, flattened."""
+    out = [] if out is None else out
+    if node.get("window") is not None or node.get("app_id"):
+        out.append(node)
+    for key in ("nodes", "floating_nodes"):
+        for child in node.get(key, ()):
+            windows(child, out)
+    return out
+
+
+def descendants(root_pid: int) -> set[int]:
+    """root_pid plus every live descendant, read straight from /proc."""
+    children: dict[int, list[int]] = {}
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/stat", "rb") as fh:
+                data = fh.read()
+        except OSError:
+            continue
+        # comm can contain spaces/parens; ppid is the field after the last ')'.
+        try:
+            ppid = int(data[data.rindex(b")") + 2 :].split()[1])
+        except (ValueError, IndexError):
+            continue
+        children.setdefault(ppid, []).append(int(entry))
+
+    seen = {root_pid}
+    stack = [root_pid]
+    while stack:
+        for kid in children.get(stack.pop(), ()):
+            if kid not in seen:
+                seen.add(kid)
+                stack.append(kid)
+    return seen
+
+
+def describe(node: dict) -> str:
+    props = node.get("window_properties") or {}
+    label = props.get("class") or node.get("app_id") or "?"
+    title = node.get("name") or ""
+    return f'{label} "{title}"'.strip()
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(prog="agent-gui", add_help=False)
+    ap.add_argument("--workspace", default=DEFAULT_WS)
+    ap.add_argument("--timeout", type=float, default=30.0)
+    ap.add_argument("--match")
+    ap.add_argument("--log")
+    ap.add_argument("--focus", action="store_true")
+    ap.add_argument("-h", "--help", action="store_true")
+    ap.add_argument("command", nargs=argparse.REMAINDER)
+    args = ap.parse_args(argv)
+
+    if args.help:
+        print(__doc__.strip())
+        return 0
+
+    cmd = args.command
+    if cmd and cmd[0] == "--":
+        cmd = cmd[1:]
+    if not cmd:
+        print("agent-gui: no command given (use -- before the command)", file=sys.stderr)
+        return 2
+
+    try:
+        before = {n["id"] for n in windows(tree())}
+    except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+        print(f"agent-gui: i3 not reachable ({exc}); running the command as-is",
+              file=sys.stderr)
+        os.execvp(cmd[0], cmd)
+
+    if args.log:
+        log_path = args.log
+        log = open(log_path, "ab")
+    else:
+        fd, log_path = tempfile.mkstemp(prefix=f"agent-gui-{os.path.basename(cmd[0])}-",
+                                        suffix=".log")
+        log = os.fdopen(fd, "ab")
+
+    with log:
+        try:
+            proc = subprocess.Popen(
+                cmd, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        except OSError as exc:
+            print(f"agent-gui: cannot launch {cmd[0]}: {exc}", file=sys.stderr)
+            return 2
+
+    print(f"agent-gui: launched pid {proc.pid}, log {log_path}", file=sys.stderr)
+
+    deadline = time.monotonic() + args.timeout
+    target = None
+    while time.monotonic() < deadline:
+        time.sleep(0.4)
+        fresh = [n for n in windows(tree()) if n["id"] not in before]
+        if fresh:
+            pids = descendants(proc.pid)
+            target = next((n for n in fresh if n.get("pid") in pids), None)
+            if target is None and args.match:
+                needle = args.match.lower()
+                target = next(
+                    (n for n in fresh if needle in describe(n).lower()), None
+                )
+            if target is None and len(fresh) == 1 and proc.poll() is None:
+                target = fresh[0]  # only one new window on screen; it is ours
+        if target:
+            break
+        if proc.poll() is not None and not fresh:
+            print(f"agent-gui: {cmd[0]} exited (status {proc.returncode}) "
+                  f"without opening a window; see {log_path}", file=sys.stderr)
+            return 3
+
+    if target is None:
+        print(f"agent-gui: no window found within {args.timeout:g}s; "
+              f"{cmd[0]} (pid {proc.pid}) is still running", file=sys.stderr)
+        return 3
+
+    i3("-q", f'[con_id={target["id"]}]',
+       f"move container to workspace number {args.workspace}")
+    if args.focus:
+        i3("-q", f"workspace number {args.workspace}")
+
+    print(f"agent-gui: moved {describe(target)} to workspace {args.workspace}",
+          file=sys.stderr)
+    print(target["id"])
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""agents-sync: generate per-agent global instruction files and skill symlinks
-from the single source of truth in ~/src/agents.
+"""agents-sync: generate per-agent global instruction files, skill symlinks and
+shared agent commands from the single source of truth in ~/src/agents.
 
 Each target is composed as: banner + shared/AGENTS.md + shared/USER.md +
 <agent>/local.md, with foreign managed blocks
@@ -72,6 +72,19 @@ class Config:
         return [
             (self.home / "AGENTS.md", self.repo / "home" / "AGENTS.md"),
             (self.home / "CLAUDE.md", Path("AGENTS.md")),  # relative link
+        ]
+
+    def bin_links(self) -> list[tuple[Path, Path]]:
+        """Executables in repo/bin -> ~/.local/bin, so a new command is a
+        new file plus `agents-sync sync`, never a hand-rolled symlink."""
+        src = self.repo / "bin"
+        if not src.is_dir():
+            return []
+        dest = self.home / ".local" / "bin"
+        return [
+            (dest / p.name, p)
+            for p in sorted(src.iterdir())
+            if p.is_file() and os.access(p, os.X_OK) and p.suffix != ".py"
         ]
 
 
@@ -173,7 +186,7 @@ def _iter_target_items(cfg: Config):
 
 
 def _iter_link_items(cfg: Config):
-    for link, target in desired_skill_links(cfg) + cfg.home_links():
+    for link, target in desired_skill_links(cfg) + cfg.home_links() + cfg.bin_links():
         yield link, target, link_state(link, target, cfg.repo)
 
 

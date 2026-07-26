@@ -6,6 +6,12 @@ commands — kept outside the working Pi resource checkout (`~/src/pagent`). Rem
 live agent dirs, or copied into `~/src/pagent`.
 
 ## Layout
+- `bin/` — machine-wide agent commands, symlinked into `~/.local/bin` by
+  `agents-sync sync`: `agents-sync` (instruction/skill/command sync),
+  `agent-worktree` (per-feature git worktrees), `agent-gui` (launch a GUI onto
+  i3 workspace 9), `fair-run` (CPU/RAM-capped heavy jobs). Anything executable
+  and non-`.py` dropped here is installed on the next sync — prefer a command
+  here over more etiquette prose in `shared/AGENTS.md`.
 - `pi/extensions/` — Pi (`@earendil-works/pi-coding-agent`) extensions, one self-contained
   `.ts` per file. **Full catalog + env vars in `pi/extensions/README.md`** — read it before
   touching any extension. Most behaviour is **off by default**, gated behind an env var.

@@ -22,6 +22,12 @@ there.
 Shared skills live in `~/src/agents/shared/skills/` and are symlinked into
 each agent's skills dir by the same tool.
 
+Shared agent commands live in `~/src/agents/bin/` (`agent-worktree`,
+`agent-gui`, `fair-run`, …) and are symlinked into `~/.local/bin` by the same
+tool. Prefer teaching a recurring procedure to a command there over writing
+more etiquette here: drop an executable in `bin/`, run `agents-sync sync`, and
+every agent on the machine has it.
+
 Per-project convention: repos have `AGENTS.md` as the source file and
 `CLAUDE.md` as a symlink to it (`ln -s AGENTS.md CLAUDE.md`).
 
@@ -297,28 +303,27 @@ performs this cleanup automatically.
 
 ## New feature work → use a worktree
 
-When starting work on a **new feature**, do it in a git worktree placed under
-a `.worktrees/` subfolder of the repo, rather than working directly on the
-main checkout.
+New feature work happens in a per-feature git worktree, never directly on the
+main checkout. Use `agent-worktree` rather than raw `git worktree` — it picks
+the main checkout even when called from inside another worktree, keeps
+`.worktrees/` out of git, reuses an existing branch instead of erroring, and
+fails loudly if HEAD did not end up on the feature branch.
 
 ```bash
-# from the repo root
-git worktree add .worktrees/<feature-name> -b <feature-name>
-# then work inside .worktrees/<feature-name>
+agent-worktree new <feature-name>   # prints the worktree path on stdout
+agent-worktree list                 # main checkout + every feature worktree
+agent-worktree where                # what branch/worktree am I on right now?
+agent-worktree rm <feature-name> [--force] [--delete-branch]
 ```
 
+- Work with your cwd set to the printed path: `cd "$(agent-worktree new foo)"`.
+  A branch you created but never checked out is invisible — the status line,
+  the Herdr space label and `git status` all read HEAD, and the work silently
+  lands on the old branch. `agent-worktree new` refuses to return until HEAD is
+  on the feature branch; confirm the status line shows `⑂ <feature-name>`
+  before editing anything.
 - One worktree per feature, named after the feature/branch.
-- **Activate the branch — do not just create it.** Creating a branch you never
-  check out is invisible: every display surface (the agent status line, the
-  Herdr space label, `git status`) reads HEAD, so `git branch <name>` on its own
-  changes nothing anyone can see, and the work silently lands on the old branch.
-  Either run the agent with its cwd inside `.worktrees/<feature-name>`, or
-  `git switch -c <feature-name>` in the checkout you are actually working in.
-  Confirm it took: the status line must show `⑂ <feature-name>` before you edit
-  anything.
-- Keep `.worktrees/` ignored by git (add to `.gitignore` if not already).
-- This isolates feature work from the main checkout; clean up the worktree
-  (`git worktree remove .worktrees/<feature-name>`) once the work is merged.
+- Remove it with `agent-worktree rm <name>` once the work is merged.
 
 ## Stop band-aiding a recurring error — fix the workflow at the root
 
@@ -346,27 +351,6 @@ Set this once from the project root at the start of CAD work (for example,
 `import build123d` as "could not be resolved" means the editor is using the
 wrong interpreter; configure `pyrightconfig.json` with `venvPath`/`venv` for
 that project rather than re-noticing it each time.
-
-## Killing a Codex subagent (`codex-agent`) — `stop` is NOT enough
-
-`codex-agent start` launches the run under `setsid` (its own session) and
-records the **wrapper shell's** PID. `codex-agent stop <id>` only `kill`s
-that wrapper — **the detached `codex exec` child survives and keeps
-running**, including firing `psudo`/sudo prompts and editing files, long
-after you think you stopped it.
-
-To ACTUALLY kill a Codex run:
-1. `codex-agent stop <id>`   # best-effort; kills the wrapper only
-2. Kill the real `codex exec` process(es) by run id (most reliable):
-   `pkill -9 -f "agent-runs/<id>"`
-   (equivalently, kill the whole process group: `kill -9 -- -<pid>` where pid
-   is from `~/.codex/agent-runs/<id>.meta`).
-3. **Verify** nothing survives: `pgrep -af "agent-runs/<id>"` → empty.
-4. Clear any **pending `psudo`** request it spawned: `pgrep -af psudo` and
-   kill the matching request, or the user will keep getting prompts.
-
-When stopping a Codex run, scope the kill to that run's id — do NOT kill
-unrelated `codex exec` processes (other tasks may be running concurrently).
 
 ## Shell aliases & functions
 
@@ -512,11 +496,20 @@ Rules of thumb:
 - Subagents inherit this rule; tell them explicitly when dispatching work
   that will spawn heavy processes.
 
-## Agent GUI workspace
+## Agent GUI workspace — launch with `agent-gui`
 
 Visible GUI applications launched by agents must live on i3 workspace 9 so
-they do not interrupt the user's active workspaces. After launching a GUI,
-move its window without switching the user's current workspace, for example:
-`i3-msg '[class="FreeCAD"] move container to workspace number 9'`. Apply the
-same rule to Blender, desktop browsers, and other agent-launched GUI tools;
-headless tools are unaffected.
+they do not interrupt the user's active workspaces. Launch them through
+`agent-gui`, which snapshots the i3 tree, starts the command detached, finds
+the new window *by process identity* and moves that container to workspace 9
+without stealing focus:
+
+```bash
+agent-gui -- freecad model.FCStd
+agent-gui --match blender -- flatpak run org.blender.Blender  # hand-off launchers
+```
+
+Do not hand-roll `i3-msg '[class="…"] move container to workspace number 9'` —
+a wrong class guess silently leaves the window in the user's face. Applies to
+FreeCAD, Blender, desktop browsers and any other agent-launched GUI; headless
+tools are unaffected.
