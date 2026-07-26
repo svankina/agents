@@ -190,11 +190,14 @@ Use the nearest `NOTES.md` for accumulated local facts, investigation
 summaries, diagnostics, and other durable-but-non-instructional notes. Keep
 `AGENTS.md` limited to standing instructions and workflow preferences.
 
-When a task may depend on saved local facts, read the nearest `NOTES.md`
-before re-investigating. If I ask you a question, and you spent some time
-looking up the answer, distill the useful knowledge into that folder's
-`NOTES.md` file (create it if needed) so future agents won't have to repeat
-the work. Do not add these notes to `AGENTS.md`.
+`NOTES.md` files are append-only logs and some are large (tens of KB) — never
+read one whole into context on spec. When a task may depend on saved local
+facts, **search** the nearest `NOTES.md` for the topic and read only the
+matching entries; skip it entirely if the task is self-evident. If I ask you a
+question, and you spent some time looking up the answer, distill the useful
+knowledge into that folder's `NOTES.md` file (create it if needed) so future
+agents won't have to repeat the work. Keep entries short and dated, prune ones
+that are stale or superseded, and do not add these notes to `AGENTS.md`.
 
 ## User queue
 
