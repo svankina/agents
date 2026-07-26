@@ -32,7 +32,8 @@ live agent dirs, or copied into `~/src/pagent`.
   Append findings there; keep run-time rules in the extensions/prompts themselves.
 
 ## Gotchas
-- Active development branch here is `shared-report-server` (not `master`).
+- Work lands on `master`; feature work goes in a worktree under `.worktrees/` (see the
+  branch-activation rule in the global instructions).
 - `pi/skills/browser-harness/` is **gitignored** — it's a symlink mirror into an external
   `~/src/browser-harness` checkout packaged as a skill in `~/src/pagent`. Don't expect its
   contents tracked here.
