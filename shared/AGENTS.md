@@ -28,6 +28,13 @@ tool. Prefer teaching a recurring procedure to a command there over writing
 more etiquette here: drop an executable in `bin/`, run `agents-sync sync`, and
 every agent on the machine has it.
 
+Shared slash commands live in `~/src/agents/shared/commands/*.md` and are
+symlinked into `~/.claude/commands/` and `~/.omp/agent/commands/` by the same
+tool, so `/name` works in either harness. One exists today: `/karen` takes over
+a coding agent that is failing in another tmux pane — it reads the pane with
+`karen-context`, diagnoses the failure itself, fixes the cause, and briefs the
+agent to carry on with its original task.
+
 Per-project convention: repos have `AGENTS.md` as the source file and
 `CLAUDE.md` as a symlink to it (`ln -s AGENTS.md CLAUDE.md`).
 

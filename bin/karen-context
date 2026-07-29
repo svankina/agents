@@ -1,0 +1,348 @@
+#!/usr/bin/env python3
+"""karen-context: everything a manager needs about one failing agent pane.
+
+`/karen` runs this first. It resolves the pane the user pointed at, then prints
+that pane's identity, the conversation it is having, and the screen it is
+failing on -- in one shot, so the manager never has to guess which agent it was
+sent to. Picking the wrong pane is the one mistake a manager cannot take back,
+so resolution is deterministic and refuses rather than guesses: an ambiguous
+target prints the candidates and exits 2.
+
+Reads only. It never types into a pane, never kills anything, and never touches
+the agent's checkout -- that is the manager's job, with the user watching.
+
+    karen-context                 # the one blocked agent, if there is exactly one
+    karen-context %12             # by pane id
+    karen-context agents:2.1      # by tmux label
+    karen-context triage          # by cwd or agent name
+    karen-context --lines 800 %12 # more scrollback
+
+Facts come from triage (`triage status --json`, `triage record`), which already
+owns pane identification and the transcript-to-pane inference.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+HOME = Path.home()
+
+# Fallback when triage is not on PATH: the checkout it is normally linked from.
+TRIAGE_FALLBACK = HOME / "src" / "triage" / "bin" / "triage"
+
+# Where each agent keeps its transcripts, and how deep under it a *resumable*
+# conversation sits -- subagent logs live further down the same tree, and reading
+# one would hand the manager a subagent's task instead of the pane's. Both are
+# triage's (resurrect.AGENTS); None means the layout is not depth-shaped.
+STORES = {
+    "claude": (HOME / ".claude" / "projects", 2),
+    "codex": (HOME / ".codex" / "sessions", None),
+    "omp": (HOME / ".omp" / "agent" / "sessions", 2),
+    "pi": (HOME / ".pi" / "agent" / "sessions", 2),
+}
+
+# Enough of a transcript to reach the records that name it.
+HEADER_BYTES = 64 * 1024
+
+# The status triage gives an agent that has stopped and wants something. It is
+# the only status worth auto-selecting: "working" is the normal case and "done"
+# is a finished agent, so guessing at either would send a manager at a pane the
+# user did not mean.
+BLOCKED = "blocked"
+
+# How many conversations to offer when the pane cannot be pinned to one.
+CANDIDATES = 5
+
+
+def die(message: str, code: int = 1) -> int:
+    print(f"karen-context: {message}", file=sys.stderr)
+    return code
+
+
+def triage_bin() -> str | None:
+    found = shutil.which("triage")
+    if found:
+        return found
+    return str(TRIAGE_FALLBACK) if TRIAGE_FALLBACK.is_file() else None
+
+
+def run(argv: list[str], *, check: bool = True) -> str:
+    out = subprocess.run(argv, capture_output=True, text=True, check=False)
+    if check and out.returncode != 0:
+        raise RuntimeError(f"{' '.join(argv)} failed: {out.stderr.strip() or out.returncode}")
+    return out.stdout
+
+
+def views(triage: str) -> list[dict]:
+    return json.loads(run([triage, "status", "--json"]) or "[]")
+
+
+def matches(target: str, panes: list[dict]) -> list[dict]:
+    """Every pane the target could mean, most specific interpretation first.
+
+    Exact before fuzzy: a pane id or a full tmux label is an answer, so a
+    substring that would also hit other panes must not turn it into a question.
+    """
+    lowered = target.lower()
+    for pick in (
+        lambda v: v["pane"] == target,
+        lambda v: v["label"] == target,
+        lambda v: v["agent"] == lowered,
+        lambda v: lowered in v["label"].lower(),
+        lambda v: lowered in v["path"].lower(),
+    ):
+        found = [v for v in panes if pick(v)]
+        if found:
+            return found
+    return []
+
+
+def listing(panes: list[dict]) -> str:
+    if not panes:
+        return "  (no agent is running in any tmux pane)"
+    return "\n".join(
+        f"  {v['pane']:5} {v['label']:16} {v['agent']:8} {v['status']:8} {v['path']}"
+        for v in panes
+    )
+
+
+def fact(pane: str, fmt: str) -> str:
+    # display-message runs its format through strftime, so keep literal '%' out
+    # of it -- the pane id goes in -t, never in the template.
+    return run(["tmux", "display-message", "-p", "-t", pane, fmt], check=False).strip()
+
+
+def decoration(token: str) -> bool:
+    """Is this leading token chrome rather than part of the name?
+
+    A spinner frame ("⠧"), a program sigil ("π", "✳") or a state marker (">").
+    Anything carrying a letter or a digit is the name -- which is where this
+    differs from triage's detect.session_name(): its test is `not
+    token.isalnum()`, so a session called `pane_refresh` or `agent-gui` is
+    stripped away to nothing there.
+    """
+    return not any(c.isalnum() for c in token) or (len(token) == 1 and not token.isascii())
+
+
+def pane_name(title: str, agent: str) -> str:
+    """The name the agent gave its own conversation, out of its OSC title.
+
+    Every agent that advertises one puts it behind its own decoration ("π ⠧
+    workspacer", "✳ Fixing the parser", "⠋ … - amp - <thread>"). Read here rather
+    than imported from triage because that is a separate checkout, and the cost
+    of failing to read a name is only a wider list of candidate conversations.
+    """
+    parts = [p for p in title.split(" - ") if p.strip().casefold() != agent.casefold()]
+    tokens = " - ".join(parts).split()
+    while tokens and decoration(tokens[0]):
+        tokens.pop(0)
+    name = " ".join(tokens)
+    return "" if name.casefold() == agent.casefold() else name
+
+
+def header(path: Path) -> tuple[str, str]:
+    """(cwd, name) out of a transcript's opening records.
+
+    Four agents, four shapes, one read. Two subtleties, both learned from real
+    transcripts: the working directory is taken from the *first* record that
+    carries one, because later tool records carry their own; and the name comes
+    from the standalone `title` record, which the agent rewrites in place (that is
+    what its `pad` is for) and is therefore current, in preference to the opening
+    `session` record, which still holds whatever the session was called first.
+    """
+    try:
+        with path.open("rb") as handle:
+            blob = handle.read(HEADER_BYTES)
+    except OSError:
+        return "", ""
+    cwd = current = first = ""
+    for line in blob.split(b"\n")[:-1]:
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(record, dict):
+            continue
+        if not cwd and isinstance(record.get("cwd"), str):
+            cwd = record["cwd"]
+        name = record.get("title")
+        if not isinstance(name, str):
+            continue
+        if record.get("type") == "title":
+            current = name
+        elif record.get("type") in ("session", "title_change"):
+            first = name
+    return cwd, current or first
+
+
+def by_name(agent: str, cwd: str, name: str) -> list[Path]:
+    """Conversations in `cwd` that `agent` calls `name`, newest first.
+
+    This is the one identification that is not an inference: the agent writes the
+    same string into its OSC title and into its transcript, so a name that hits
+    exactly one conversation *is* this pane's conversation -- which is more than
+    triage can say, since its record is keyed by cwd rather than by pane.
+    """
+    store, depth = STORES.get(agent, (None, None))
+    if store is None or not name or not store.is_dir():
+        return []
+    hits = []
+    for path in store.rglob("*.jsonl"):
+        if depth is not None and len(path.relative_to(store).parts) != depth:
+            continue
+        where, found = header(path)
+        if where == cwd and found.casefold() == name.casefold():
+            hits.append(path)
+    return sorted(hits, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def resolve(agent: str, ref: str) -> Path | None:
+    direct = Path(ref)
+    if direct.is_absolute():
+        return direct if direct.is_file() else None
+    store, _ = STORES.get(agent, (None, None))
+    if store is None or not store.is_dir():
+        return None
+    return next(iter(sorted(store.rglob(f"*{ref}*.jsonl"))), None)
+
+
+def recorded(triage: str, view: dict) -> list[Path]:
+    """Conversations that could be this pane's, newest first.
+
+    `triage record` re-does the match now rather than trusting a snapshot the
+    panel wrote minutes ago. It is keyed by agent, cwd and tmux session rather
+    than by pane -- which transcript belongs to which pane is an inference there,
+    with no lifecycle hook to settle it -- so several agents of one kind in one
+    project legitimately come back as several candidates.
+    """
+    run([triage, "record"], check=False)
+    state = Path(os.environ.get("XDG_STATE_HOME") or HOME / ".local" / "state")
+    try:
+        blob = json.loads((state / "triage" / "agents.json").read_text(encoding="utf8"))
+    except (OSError, ValueError):
+        return []
+    found: list[Path] = []
+    for entry in blob.get("agents") or []:
+        if not isinstance(entry, dict) or not entry.get("ref"):
+            continue
+        if (entry.get("agent"), entry.get("cwd"), entry.get("session")) != (
+            view["agent"], view["path"], view["session"],
+        ):
+            continue
+        path = resolve(entry["agent"], entry["ref"])
+        if path is not None and path not in found:
+            found.append(path)
+    return sorted(found, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def transcripts(triage: str, view: dict, title: str) -> tuple[list[Path], str]:
+    """The pane's conversation and how sure we are, or the candidates.
+
+    The pane's own title settles it whenever the agent advertises a name. Failing
+    that -- an agent that names nothing, or a name shared by two conversations --
+    fall back to triage's record, which is a shortlist for the cwd rather than an
+    answer for the pane, and say which of the two you are being given.
+    """
+    name = pane_name(title, view["agent"])
+    hits = by_name(view["agent"], view["path"], name)
+    if hits:
+        extra = "" if len(hits) == 1 else f", newest of {len(hits)}"
+        return hits[:CANDIDATES], f"matched by session name {name!r}{extra}"
+    found = recorded(triage, view)
+    if len(found) == 1:
+        return found, "the only conversation triage matched to this pane"
+    return found[:CANDIDATES], (
+        f"{len(found)} conversations match this pane, newest first -- confirm "
+        "against the screen below"
+    )
+
+
+def report(view: dict, facts: str, title: str, found: list[Path], note: str, text: str) -> None:
+    rule = view.get("rule") or "-"
+    print(
+        f"target      {view['pane']}  {view['label']}  {view['agent']}  "
+        f"{view['status']}  (rule {rule}, {view.get('elapsed', 0)}s in state)"
+    )
+    print(f"cwd         {view['path']}")
+    if facts:
+        print(f"running     {facts}")
+    if title:
+        print(f"pane title  {title}")
+    if not found:
+        print("transcript  none -- triage could not match a conversation to this pane")
+    else:
+        print(f"transcript  {found[0]}  [{note}]")
+        for extra in found[1:]:
+            print(f"            {extra}")
+    print(f"\n--- pane {view['pane']}: recent screen and scrollback, oldest first ---")
+    print(text)
+    print(f"--- end of pane {view['pane']} ---")
+
+
+def screen(pane: str, lines: int) -> str:
+    # Negative -S reaches into the scrollback on purpose: the traceback a manager
+    # needs has usually scrolled off the visible screen already. (It is also why
+    # triage's own detector uses -S 0 instead -- it must not see that far back.)
+    return run(
+        ["tmux", "capture-pane", "-p", "-J", "-S", f"-{lines}", "-E", "-", "-t", pane],
+        check=False,
+    ).rstrip("\n")
+
+
+def main(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog="karen-context", description=__doc__.splitlines()[0])
+    p.add_argument("target", nargs="?", default="",
+                   help="pane id, tmux label, agent name or cwd fragment")
+    p.add_argument("--lines", type=int, default=400,
+                   help="how much scrollback to print (default 400)")
+    args = p.parse_args(argv)
+
+    triage = triage_bin()
+    if triage is None:
+        return die("triage is not on PATH and ~/src/triage/bin/triage is missing")
+    if not shutil.which("tmux"):
+        return die("tmux is not on PATH")
+    try:
+        panes = views(triage)
+    except (RuntimeError, ValueError) as exc:
+        return die(str(exc))
+
+    if args.target:
+        found = matches(args.target, panes)
+        if not found:
+            print(f"karen-context: nothing matches {args.target!r}. Agent panes:",
+                  file=sys.stderr)
+            print(listing(panes), file=sys.stderr)
+            return 2
+        if len(found) > 1:
+            print(f"karen-context: {args.target!r} matches {len(found)} panes; name one:",
+                  file=sys.stderr)
+            print(listing(found), file=sys.stderr)
+            return 2
+        view = found[0]
+    else:
+        stuck = [v for v in panes if v["status"] == BLOCKED]
+        if len(stuck) != 1:
+            print(f"karen-context: no target given and {len(stuck)} agents are "
+                  "blocked; name one:", file=sys.stderr)
+            print(listing(panes), file=sys.stderr)
+            return 2
+        view = stuck[0]
+
+    pane = view["pane"]
+    title = fact(pane, "#{pane_title}")
+    facts = fact(pane, "#{pane_current_command} #{pane_width}x#{pane_height}"
+                       "#{?pane_dead, DEAD,}")
+    found, note = transcripts(triage, view, title)
+    report(view, facts, title, found, note, screen(pane, args.lines))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

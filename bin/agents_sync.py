@@ -51,6 +51,10 @@ class Config:
     def shared_skills(self) -> Path:
         return self.repo / "shared" / "skills"
 
+    @property
+    def shared_commands(self) -> Path:
+        return self.repo / "shared" / "commands"
+
     def targets(self) -> list[Target]:
         paths = {
             "claude": self.home / ".claude" / "CLAUDE.md",
@@ -66,6 +70,15 @@ class Config:
             self.home / ".codex" / "skills",
             self.home / ".omp" / "agent" / "skills",
             self.repo / "pi" / "skills",
+        ]
+
+    def command_dests(self) -> list[Path]:
+        """Where a slash command has to land to be found. omp's native provider
+        reads its own dir and cannot be switched off; the claude dir is what
+        Claude Code reads, and omp's claude provider picks it up there too."""
+        return [
+            self.home / ".claude" / "commands",
+            self.home / ".omp" / "agent" / "commands",
         ]
 
     def home_links(self) -> list[tuple[Path, Path]]:
@@ -139,6 +152,17 @@ def desired_skill_links(cfg: Config) -> list[tuple[Path, Path]]:
     return links
 
 
+def desired_command_links(cfg: Config) -> list[tuple[Path, Path]]:
+    """shared/commands/*.md -> every agent's command dir, so a new slash command
+    is a new file plus `agents-sync sync`, never a hand-rolled symlink."""
+    links = []
+    if cfg.shared_commands.is_dir():
+        for cmd in sorted(p for p in cfg.shared_commands.iterdir() if p.suffix == ".md"):
+            for dest in cfg.command_dests():
+                links.append((dest / cmd.name, cmd))
+    return links
+
+
 def link_state(link: Path, target: Path, repo: Path) -> str:
     if not link.is_symlink():
         if link.exists():
@@ -165,17 +189,23 @@ def apply_link(link: Path, target: Path) -> None:
 
 
 def stale_repo_links(cfg: Config) -> list[Path]:
-    valid = {link for link, _ in desired_skill_links(cfg)}
+    """Links we made for a skill or command the repo no longer has."""
+    groups = (
+        (cfg.skill_dests(), cfg.shared_skills, desired_skill_links(cfg)),
+        (cfg.command_dests(), cfg.shared_commands, desired_command_links(cfg)),
+    )
     out = []
-    for dest in cfg.skill_dests():
-        if not dest.is_dir():
-            continue
-        for entry in sorted(dest.iterdir()):
-            if entry in valid or not entry.is_symlink():
+    for dests, source, wanted in groups:
+        valid = {link for link, _ in wanted}
+        for dest in dests:
+            if not dest.is_dir():
                 continue
-            raw = os.readlink(entry)
-            if raw.startswith(str(cfg.shared_skills)) and not entry.exists():
-                out.append(entry)
+            for entry in sorted(dest.iterdir()):
+                if entry in valid or not entry.is_symlink():
+                    continue
+                raw = os.readlink(entry)
+                if raw.startswith(str(source)) and not entry.exists():
+                    out.append(entry)
     return out
 
 
@@ -186,7 +216,8 @@ def _iter_target_items(cfg: Config):
 
 
 def _iter_link_items(cfg: Config):
-    for link, target in desired_skill_links(cfg) + cfg.home_links() + cfg.bin_links():
+    for link, target in (desired_skill_links(cfg) + desired_command_links(cfg)
+                         + cfg.home_links() + cfg.bin_links()):
         yield link, target, link_state(link, target, cfg.repo)
 
 

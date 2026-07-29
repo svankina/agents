@@ -67,3 +67,42 @@ def test_home_links_relative_claude_md(tmp_path):
     assert links[cfg.home / "CLAUDE.md"] == Path("AGENTS.md")
     a.apply_link(cfg.home / "CLAUDE.md", Path("AGENTS.md"))
     assert os.readlink(cfg.home / "CLAUDE.md") == "AGENTS.md"
+
+
+def add_command(cfg, name):
+    cfg.shared_commands.mkdir(parents=True, exist_ok=True)
+    path = cfg.shared_commands / f"{name}.md"
+    path.write_text(f"---\ndescription: {name}\n---\nBody.\n")
+    return path
+
+
+def test_desired_command_links_covers_all_dests(tmp_path):
+    cfg = make_cfg(tmp_path)
+    src = add_command(cfg, "karen")
+    links = a.desired_command_links(cfg)
+    assert [link for link, _ in links] == [d / "karen.md" for d in cfg.command_dests()]
+    assert all(target == src for _, target in links)
+
+
+def test_command_links_ignore_non_markdown(tmp_path):
+    cfg = make_cfg(tmp_path)
+    add_command(cfg, "karen")
+    (cfg.shared_commands / "notes.txt").write_text("not a command\n")
+    assert {link.name for link, _ in a.desired_command_links(cfg)} == {"karen.md"}
+
+
+def test_stale_repo_links_prunes_removed_command(tmp_path):
+    cfg = make_cfg(tmp_path)
+    src = add_command(cfg, "gone")
+    link = cfg.command_dests()[0] / "gone.md"
+    a.apply_link(link, src)
+    src.unlink()
+    assert a.stale_repo_links(cfg) == [link]
+
+
+def test_iter_link_items_includes_commands(tmp_path):
+    cfg = make_cfg(tmp_path)
+    add_command(cfg, "karen")
+    seen = {link: state for link, _, state in a._iter_link_items(cfg)}
+    for dest in cfg.command_dests():
+        assert seen[dest / "karen.md"] == "missing"
