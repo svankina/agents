@@ -181,10 +181,14 @@ def link_state(link: Path, target: Path, repo: Path) -> str:
     return "conflict"
 
 
-def apply_link(link: Path, target: Path) -> None:
+def apply_link(link: Path, target: Path, repo: Path) -> None:
     link.parent.mkdir(parents=True, exist_ok=True)
     if link.is_symlink():
         link.unlink()
+    # In-repo links get committed to a public repo: keep them relative so they
+    # neither leak absolute paths nor break on other machines.
+    if str(link).startswith(str(repo) + os.sep):
+        target = Path(os.path.relpath(target, link.parent))
     os.symlink(target, link)
 
 
@@ -204,7 +208,8 @@ def stale_repo_links(cfg: Config) -> list[Path]:
                 if entry in valid or not entry.is_symlink():
                     continue
                 raw = os.readlink(entry)
-                if raw.startswith(str(source)) and not entry.exists():
+                points_to = raw if os.path.isabs(raw) else os.path.join(str(entry.parent), raw)
+                if os.path.normpath(points_to).startswith(str(source)) and not entry.exists():
                     out.append(entry)
     return out
 
@@ -279,7 +284,7 @@ def cmd_sync(cfg: Config, force: bool) -> int:
             print(f"[blocked:stale] {link} — re-run with --force")
             blocked += 1
             continue
-        apply_link(link, target)
+        apply_link(link, target, cfg.repo)
         print(f"[linked] {link} -> {target}")
     for orphan in stale_repo_links(cfg):
         orphan.unlink()
