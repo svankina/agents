@@ -80,3 +80,33 @@ Extension API facts worth remembering (omp 17.x):
   print/RPC mode, so guard picker-only paths.
 - Project settings (`<cwd>/.omp/settings.json`) beat `~/.omp/agent/config.yml`,
   and are only read from the *cwd* — not from repo-root ancestors.
+
+## 2026-07-30 X11 window capture: what actually works on this box
+
+Investigated for `agent-shot` (measured on `:1`, i3 4.x + `compton`):
+
+- **i3 unmaps every window on a workspace that is not currently visible.**
+  `xwininfo -id <win>` reports `Map State: IsUnviewable`; there is only one
+  output (`HDMI-A-0`), so any window on a hidden workspace has no pixels
+  anywhere in X.
+- **`maim -i <window>` lies about those windows.** It grabs the root
+  framebuffer at the window's rectangle, so capturing a hidden-workspace window
+  returns the *visible* workspace instead — exit code 0, no warning. Measured:
+  capture of hidden Mattermost vs. capture of the visible terminal differed by
+  53k of 8.1M pixels (cursor/clock only).
+- **`import -window <id>` (ImageMagick) is the honest engine.** It reads the
+  window's own drawable: with a compositor it returns the window's real content
+  even when something overlaps it, and on an unviewable window it fails loudly
+  (`unable to read X window image … Resource temporarily unavailable`).
+  Verified on `:99`: an xmessage floated on top of an xterm changed the xterm
+  capture by 220 pixels (the blinking cursor), i.e. the overlay did not bleed in.
+- **There is no non-disruptive way to capture a hidden-workspace window** on a
+  single-output X display. Hence `agent-display`: `Xvfb :99` + a private i3 +
+  `compton`, where agent windows are always mapped and always capturable.
+- Gotchas building that: (1) an i3 config without the literal comment
+  `# i3 config file (v4)` is run through `i3-migrate-config-to-v4`; (2) `I3SOCK`
+  is inherited from the user's session and overrides `DISPLAY`, so any `i3`/
+  `i3-msg` aimed at another display must have it unset — otherwise you drive the
+  user's window manager; (3) `compton` has no `--display` flag, pin it with
+  `DISPLAY` in the environment; (4) i3's tree omits `pid` for many windows, so
+  fall back to `_NET_WM_PID` via `xprop`.

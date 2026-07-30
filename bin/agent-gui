@@ -13,11 +13,12 @@ nothing when the class guess is wrong. This does it by identity instead:
 
 Usage:
   agent-gui [--workspace N] [--timeout SECS] [--match SUBSTR] [--log PATH]
-            [--focus] -- <command> [args...]
+            [--headless] [--focus] -- <command> [args...]
 
 Examples:
   agent-gui -- freecad model.FCStd
   agent-gui --match blender -- flatpak run org.blender.Blender
+  agent-gui --headless -- freecad model.FCStd   # agent display, screenshottable
 
 Options:
   --workspace N   target workspace (default $AGENT_GUI_WORKSPACE or 9)
@@ -25,6 +26,11 @@ Options:
   --match SUBSTR  also accept a new window whose class/title contains SUBSTR;
                   needed for launchers that hand off to another process tree
                   (flatpak, single-instance apps)
+  --headless      launch on the off-screen agent display (agent-display) instead
+                  of the user's screen. Use this whenever you intend to
+                  screenshot the app: a window parked on hidden workspace 9 is
+                  unmapped and cannot be captured, one on the agent display
+                  always can (`agent-shot --class …`).
   --focus         switch to the workspace afterwards (default: do not disturb)
   --log PATH      where to send the app's stdout/stderr (default a temp file)
 
@@ -36,18 +42,29 @@ Prints the app pid, the log path, and the window that was moved. Exit codes:
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
+from pathlib import Path
 
 DEFAULT_WS = os.environ.get("AGENT_GUI_WORKSPACE", "9")
+ENV = dict(os.environ)  # --headless rewrites DISPLAY here, for i3 and the app
 
 
 def i3(*args: str) -> str:
     return subprocess.run(
-        ["i3-msg", *args], check=True, capture_output=True, text=True
+        ["i3-msg", *args], check=True, capture_output=True, text=True, env=ENV
     ).stdout
+
+
+def agent_display() -> str | None:
+    """Bring up (or reuse) the off-screen agent display; returns e.g. ':99'."""
+    cmd = shutil.which("agent-display") or str(Path(__file__).with_name("agent-display"))
+    p = subprocess.run([cmd, "start"], capture_output=True, text=True)
+    sys.stderr.write(p.stderr)
+    return p.stdout.strip() or None
 
 
 def tree() -> dict:
@@ -106,6 +123,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--timeout", type=float, default=30.0)
     ap.add_argument("--match")
     ap.add_argument("--log")
+    ap.add_argument("--headless", action="store_true")
     ap.add_argument("--focus", action="store_true")
     ap.add_argument("-h", "--help", action="store_true")
     ap.add_argument("command", nargs=argparse.REMAINDER)
@@ -122,12 +140,22 @@ def main(argv: list[str]) -> int:
         print("agent-gui: no command given (use -- before the command)", file=sys.stderr)
         return 2
 
+    if args.headless:
+        display = agent_display()
+        if display is None:
+            print("agent-gui: could not start the agent display; "
+                  "run `agent-display status`", file=sys.stderr)
+            return 3
+        ENV["DISPLAY"] = display
+        ENV.pop("WAYLAND_DISPLAY", None)
+        ENV.pop("I3SOCK", None)  # else i3-msg talks to the user's i3
+
     try:
         before = {n["id"] for n in windows(tree())}
     except (FileNotFoundError, subprocess.CalledProcessError) as exc:
         print(f"agent-gui: i3 not reachable ({exc}); running the command as-is",
               file=sys.stderr)
-        os.execvp(cmd[0], cmd)
+        os.execvpe(cmd[0], cmd, ENV)
 
     if args.log:
         log_path = args.log
@@ -141,7 +169,7 @@ def main(argv: list[str]) -> int:
         try:
             proc = subprocess.Popen(
                 cmd, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                start_new_session=True,
+                start_new_session=True, env=ENV,
             )
         except OSError as exc:
             print(f"agent-gui: cannot launch {cmd[0]}: {exc}", file=sys.stderr)
@@ -176,13 +204,21 @@ def main(argv: list[str]) -> int:
               f"{cmd[0]} (pid {proc.pid}) is still running", file=sys.stderr)
         return 3
 
+    if args.headless:
+        print(f"agent-gui: {describe(target)} is on the agent display "
+              f'{ENV["DISPLAY"]} — capture it with '
+              f'`agent-shot --con-id {target["id"]}`', file=sys.stderr)
+        print(target["id"])
+        return 0
+
     i3("-q", f'[con_id={target["id"]}]',
        f"move container to workspace number {args.workspace}")
     if args.focus:
         i3("-q", f"workspace number {args.workspace}")
 
-    print(f"agent-gui: moved {describe(target)} to workspace {args.workspace}",
-          file=sys.stderr)
+    print(f"agent-gui: moved {describe(target)} to workspace {args.workspace}; "
+          f"it is not visible, so it cannot be screenshotted — relaunch with "
+          f"--headless if you need pixels", file=sys.stderr)
     print(target["id"])
     return 0
 

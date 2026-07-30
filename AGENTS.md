@@ -9,7 +9,10 @@ live agent dirs, or copied into `~/src/pagent`.
 - `bin/` — machine-wide agent commands, symlinked into `~/.local/bin` by
   `agents-sync sync`: `agents-sync` (instruction/skill/command sync),
   `agent-worktree` (per-feature git worktrees), `agent-gui` (launch a GUI onto
-  i3 workspace 9), `fair-run` (CPU/RAM-capped heavy jobs). Anything executable
+  i3 workspace 9, or `--headless` onto the agent display), `agent-shot`
+  (screenshot one window by identity, never the user's screen), `agent-display`
+  (off-screen Xvfb+i3 display for agent GUI work),
+  `fair-run` (CPU/RAM-capped heavy jobs). Anything executable
   and non-`.py` dropped here is installed on the next sync — prefer a command
   here over more etiquette prose in `shared/AGENTS.md`.
 - `pi/extensions/` — Pi (`@earendil-works/pi-coding-agent`) extensions, one self-contained
