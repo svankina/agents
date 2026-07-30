@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
-import {
+import safeQuit, {
 	inspectRepository,
 	messageText,
 	readLinuxProcessIdentity,
@@ -78,6 +78,17 @@ describe("inspectRepository", () => {
 		expect(ahead.ready).toBe(false);
 		expect(ahead.issues.some(issue => issue.includes("1 commit(s) ahead"))).toBe(true);
 	});
+});
+
+test("registers /sq as the short safequit command", () => {
+	const commandNames: string[] = [];
+	safeQuit({
+		setLabel: () => {},
+		registerCommand: (name: string) => commandNames.push(name),
+		on: () => {},
+	} as unknown as Parameters<typeof safeQuit>[0]);
+
+	expect(commandNames).toEqual(["safequit", "sq"]);
 });
 
 test("messageText reads only text content", () => {

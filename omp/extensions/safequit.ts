@@ -226,15 +226,17 @@ function captureParentShell(ctx: ExtensionCommandContext): LinuxProcessIdentity 
 	return parent;
 }
 
+export const SAFEQUIT_COMMAND_NAMES = ["safequit", "sq"] as const;
+
 export default function safeQuit(api: ExtensionAPI): void {
 	let armed: ArmedSafeQuit | undefined;
 
 	api.setLabel("Safe quit");
-	api.registerCommand("safequit", {
+	const command = {
 		description: "Finish, commit, push, exit OMP, and close this terminal",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			if (args.trim()) {
-				ctx.ui.notify("Usage: /safequit", "error");
+				ctx.ui.notify("Usage: /safequit or /sq", "error");
 				return;
 			}
 			if (!ctx.hasUI) {
@@ -259,7 +261,8 @@ export default function safeQuit(api: ExtensionAPI): void {
 			ctx.ui.notify("Safe quit complete: closing OMP and this terminal", "info");
 			ctx.shutdown();
 		},
-	});
+	};
+	for (const name of SAFEQUIT_COMMAND_NAMES) api.registerCommand(name, command);
 
 	api.on("session_stop", async (event, ctx) => {
 		if (!armed) return;
