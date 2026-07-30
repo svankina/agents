@@ -1,0 +1,7 @@
+{
+  "name": "cad-viewer-bundle",
+  "private": true,
+  "dependencies": {
+    "three": "^0.166.0"
+  }
+}

@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+"""serve-cad — publish CAD models in an interactive 3D viewer (pan/orbit/zoom).
+
+The CAD counterpart of serve-report: stages a self-contained three.js viewer
+next to your model file(s) and publishes the directory through the shared
+serve-report server. Prints one clickable http:// URL on stdout.
+
+Usage:
+  serve-cad <model>... [--name NAME] [--title TITLE]
+
+Models:
+  .stl .glb .gltf .obj   served as-is (.gltf external buffers are copied too)
+  .scad                  auto-rendered to STL via openscad, if installed
+  .step/.stp/.3mf/...    convert first (the SKILL.md shows how)
+
+Flags:
+  --name NAME    slug stem for the URL (default: "<first-model-stem>-cad")
+  --title TITLE  heading shown in the viewer (default: name)
+
+Env:
+  SERVE_CAD_HOME    stage dir root (default ~/.local/share/cad-viewer)
+  SERVE_CAD_ASSETS  viewer assets dir (default: ../assets/viewer relative to
+                    this script's resolved location)
+
+Install as a SYMLINK (not a copy) so the viewer assets resolve:
+  ln -s <skill>/scripts/serve-cad ~/.local/bin/serve-cad
+"""
+
+import json
+import re
+import shutil
+import subprocess
+import sys
+import urllib.request
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+VIEWER_EXTS = {".stl", ".glb", ".gltf", ".obj"}
+WARN_MB = 40
+
+CONVERT_HINTS = {
+    ".step": "mesh it first: .venv/bin/python -c \"from build123d import *; "
+             "from build123d.exporters3d import export_stl; "
+             "export_stl(import_step('part.step'), 'part.stl')\"",
+    ".stp": "same as .step — mesh via build123d, then serve the .stl",
+    ".3mf": "convert to STL (e.g. build123d import_3mf -> export_stl), then serve",
+    ".fcstd": "export STL/GLB from FreeCAD headless, then serve",
+    ".f3d": "export STL from Fusion, then serve",
+}
+
+
+def die(msg: str) -> "NoReturn":
+    print(f"serve-cad: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def note(msg: str) -> None:
+    print(f"serve-cad: {msg}", file=sys.stderr)
+
+
+def assets_dir() -> Path:
+    import os
+    env = os.environ.get("SERVE_CAD_ASSETS")
+    if env:
+        return Path(env)
+    return Path(__file__).resolve().parent.parent / "assets" / "viewer"
+
+
+def state_dir() -> Path:
+    import os
+    return Path(os.environ.get("SERVE_CAD_HOME", Path.home() / ".local/share/cad-viewer"))
+
+
+def sanitize(stem: str) -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", stem.lower()).strip("-")
+    return re.sub(r"-+", "-", s) or "model"
+
+
+def convert_scad(src: Path, out_dir: Path) -> Path:
+    openscad = shutil.which("openscad")
+    if not openscad:
+        die(f"{src.name}: openscad not on PATH; render it to STL yourself first")
+    out = out_dir / (src.stem + ".stl")
+    note(f"rendering {src.name} with openscad…")
+    res = subprocess.run([openscad, "-o", str(out), str(src)], capture_output=True, text=True)
+    if res.returncode != 0 or not out.exists():
+        die(f"openscad failed on {src.name}:\n{res.stderr.strip()}")
+    return out
+
+
+def gltf_deps(src: Path) -> list[tuple[Path, str]]:
+    """External buffers/images referenced by a .gltf, as (path, relative-uri)."""
+    try:
+        doc = json.loads(src.read_text())
+    except (ValueError, OSError) as e:
+        die(f"{src.name}: not a readable glTF JSON ({e})")
+    deps = []
+    for section in ("buffers", "images"):
+        for item in doc.get(section, []):
+            uri = item.get("uri", "")
+            if uri and not uri.startswith("data:"):
+                dep = src.parent / uri
+                if not dep.exists():
+                    die(f"{src.name} references missing file: {uri}")
+                deps.append((dep, uri))
+    return deps
+
+
+def stage_models(paths: list[str], stage: Path) -> list[dict]:
+    entries = []
+    used = set()
+    for arg in paths:
+        src = Path(arg)
+        if not src.exists():
+            die(f"no such file: {arg}")
+        ext = src.suffix.lower()
+        if ext == ".scad":
+            src = convert_scad(src.resolve(), stage)
+            ext = ".stl"
+        elif ext not in VIEWER_EXTS:
+            hint = CONVERT_HINTS.get(ext, "supported: .stl .glb .gltf .obj .scad")
+            die(f"can't view {src.name} directly — {hint}")
+
+        base = sanitize(src.stem) + ext
+        n = 2
+        while base in used:
+            base, n = f"{sanitize(src.stem)}-{n}{ext}", n + 1
+        used.add(base)
+
+        dst = stage / base
+        if src.resolve() != dst.resolve():
+            shutil.copyfile(src, dst)
+            if src.parent == stage:
+                src.unlink()  # renamed .scad render; drop the temp
+        for dep, uri in gltf_deps(src) if ext == ".gltf" else []:
+            target = stage / uri
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(dep, target)
+
+        mb = dst.stat().st_size / 1048576
+        if mb > WARN_MB:
+            note(f"warning: {base} is {mb:.0f} MB — re-export with a coarser "
+                 f"tolerance for a snappier viewer")
+        entries.append({"file": base, "label": src.stem, "bytes": dst.stat().st_size})
+    return entries
+
+
+def verify(url: str) -> None:
+    try:
+        with urllib.request.urlopen(url, timeout=8) as res:
+            body = res.read(4096).decode("utf-8", "replace")
+        if "CAD viewer" not in body:
+            die(f"published, but {url} does not serve the viewer shell")
+    except OSError as e:
+        die(f"published, but {url} is not reachable: {e}")
+
+
+def main(argv: list[str]) -> None:
+    models, name, title = [], None, None
+    args = iter(argv)
+    for a in args:
+        if a in ("-h", "--help", "help"):
+            print(__doc__.strip())
+            return
+        elif a == "--name":
+            name = next(args, None) or die("--name needs a value")
+        elif a.startswith("--name="):
+            name = a.split("=", 1)[1]
+        elif a == "--title":
+            title = next(args, None) or die("--title needs a value")
+        elif a.startswith("--title="):
+            title = a.split("=", 1)[1]
+        elif a.startswith("-"):
+            die(f"unknown flag: {a}")
+        else:
+            models.append(a)
+    if not models:
+        die("nothing to serve (give one or more model files; --help for usage)")
+    if not shutil.which("serve-report"):
+        die("serve-report not on PATH — install it (see skill://serving-reports)")
+
+    assets = assets_dir()
+    if not (assets / "index.html").exists() or not (assets / "app.js").exists():
+        die(f"viewer assets missing at {assets} — install serve-cad as a symlink "
+            f"into the skill checkout, or set SERVE_CAD_ASSETS")
+
+    name = name or sanitize(Path(models[0]).stem) + "-cad"
+    title = title or name
+    stage = state_dir() / "views" / f"{sanitize(name)}-{uuid.uuid4().hex[:6]}"
+    stage.mkdir(parents=True)
+
+    shutil.copyfile(assets / "index.html", stage / "index.html")
+    shutil.copyfile(assets / "app.js", stage / "app.js")
+    entries = stage_models(models, stage)
+    (stage / "manifest.json").write_text(json.dumps({
+        "title": title,
+        "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "models": entries,
+    }, indent=1))
+
+    res = subprocess.run(["serve-report", str(stage), "--name", name],
+                         capture_output=True, text=True)
+    if res.returncode != 0:
+        die(f"serve-report failed: {res.stderr.strip()}")
+    url = res.stdout.strip()
+    verify(url)
+    note(f"staged at {stage}")
+    print(url)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

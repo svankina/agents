@@ -1,0 +1,15 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "cad-viewer-bundle",
+      "dependencies": {
+        "three": "^0.166.0",
+      },
+    },
+  },
+  "packages": {
+    "three": ["three@0.166.1", "", {}, "sha512-LtuafkKHHzm61AQA1be2MAYIw1IjmhOUxhBa0prrLpEMWbV7ijvxCRHjSgHPGp2493wLBzwKV46tA9nivLEgKg=="],
+  }
+}

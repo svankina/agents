@@ -191,6 +191,10 @@ serve-report <path-to-file-or-dir> [--name NAME]
   `rm`/`gc`.
 - Full usage lives in the `serving-reports` skill
   (`skill://serving-reports`).
+- **CAD models get the same treatment:** `serve-cad part.stl` publishes an
+  interactive orbit/pan/zoom viewer through the same server — never deliver a
+  part as a raw `.stl` path or a static render. Full usage:
+  `skill://serving-cad-files`.
 
 Before presenting any URL to the user, verify it works and shows the expected
 content. Use an appropriate check for the URL type (for example, `curl`/HTTP
