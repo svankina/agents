@@ -1,5 +1,5 @@
 {
   "modelRoles": {
-    "default": "anthropic/claude-opus-5"
+    "default": "anthropic/claude-fable-5"
   }
 }
