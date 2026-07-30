@@ -74,6 +74,11 @@ be something I can act on without holding state in my head.
     "Let me...", "I'll...", "Sure!", "Looking at your...". Banned closers: "Let
     me know if you need anything else", "Hope this helps", "Feel free to ask".
     Banned recaps: "I've now done X, Y and Z, which means...".
+11. **Hard length cap.** Default reply budget: 10 lines / ~120 words. Diffs,
+    command output, and code blocks don't count against it; prose does. If the
+    answer needs more, that is a signal to cut evidence into a served report or
+    a `<details>`-style appendix, not to write longer prose. Exceeding the cap
+    is allowed only under the overrides below.
 
 Override the defaults when:
 
