@@ -8,7 +8,7 @@ import {
 	messageText,
 	readLinuxProcessIdentity,
 	spawnTerminalCloser,
-} from "./safequit";
+} from "../extensions/safequit";
 
 const temporaryDirectories: string[] = [];
 
