@@ -110,3 +110,13 @@ Investigated for `agent-shot` (measured on `:1`, i3 4.x + `compton`):
   user's window manager; (3) `compton` has no `--display` flag, pin it with
   `DISPLAY` in the environment; (4) i3's tree omits `pid` for many windows, so
   fall back to `_NET_WM_PID` via `xprop`.
+
+## 2026-07-30 — omp extension directories load test files
+
+`~/.omp/agent/config.yml` points `extensions` at
+`~/src/agents/omp/extensions`. Omp 17.2.0 treats every direct `.ts`/`.js` file
+in that directory as an extension entry point; it does not exclude
+`*.test.ts`. Keep Bun tests outside configured extension directories.
+Otherwise startup imports `bun:test` in the normal runtime and warns, for
+example, `Cannot use afterEach() outside of the test runner`. Reproduce with
+`omp models openai-codex`; `--no-extensions` removes the warning.
