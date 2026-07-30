@@ -88,6 +88,9 @@ serve-report restart       # stop + start fresh
   only when the artifact must survive its source being removed.
 - The user dislikes raw Markdown as a deliverable: render reports/summaries as
   self-contained, styled HTML and serve *that*, not a `.md` file.
+- Report **content** rules (verdict first, no fluff, collapse detail) live in
+  the `writing-reports` skill (`skill://writing-reports`) — read it before
+  composing the report, not after.
 
 ## Install / where things live
 

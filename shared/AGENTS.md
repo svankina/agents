@@ -158,6 +158,12 @@ actually look good: real typography, spacing, a clear visual hierarchy,
 color-coded tables/status where it helps — not a bare `<pre>` dump of
 Markdown.
 
+**Reports get straight to the point.** Verdict/answer in the first screen,
+key numbers as a table, one next action — then evidence collapsed in
+`<details>` blocks. No intro/background, no "executive summary" section, no
+conclusion recap, no methodology up front. Full content rules:
+`skill://writing-reports`.
+
 When presenting the user with a deliverable (a generated file, report,
 diagram, build artifact, screenshot, HTML page, etc.), do **not** just point
 at a local filesystem path, and do **not** start your own HTTP server. There
