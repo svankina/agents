@@ -1,9 +1,9 @@
 /*
- * `/safequit` — finish the active task, verify Git is safe, exit OMP, then
- * close the interactive shell (and therefore its terminal tab/pane).
- *
- * The shell is signalled only after OMP has exited and only when its Linux
- * process identity still matches the direct parent captured by the command.
+ * `/safequit` — finish the active task, verify Git is safe, tell the
+ * safequit-manager we are done, then exit OMP. The manager (bin/safequit-manager)
+ * waits for OMP to exit and kills the tmux pane — or the captured shell — only
+ * while its Linux process identity still matches what was captured here. It
+ * logs every decision, so a terminal that stayed open has a reason on record.
  */
 
 import { execFile } from "node:child_process";
@@ -168,47 +168,48 @@ export function readLinuxProcessIdentity(pid: number): LinuxProcessIdentity | un
 	}
 }
 
+/** Locate the safequit-manager binary: explicit env, PATH, then the repo sibling. */
+export function managerBinary(): string {
+	const explicit = process.env.SAFEQUIT_MANAGER_BIN;
+	if (explicit) return explicit;
+	const onPath = Bun.which("safequit-manager");
+	if (onPath) return onPath;
+	return new URL("../../bin/safequit-manager", import.meta.url).pathname;
+}
+
 /**
- * Spawn a detached watcher which HUPs the captured shell only after OMP exits.
- * Exported so the process lifecycle can be exercised without terminating OMP.
+ * Tell the safequit manager this agent is done. The manager waits for OMP to
+ * exit, then kills the tmux pane (or the shell) — the manager owns the kill,
+ * logs its decision, and never signals a recycled pid.
  */
-export function spawnTerminalCloser(
+export async function notifyManager(
 	ompPid: number,
 	parent: LinuxProcessIdentity,
 	timeoutMs = SHELL_CLOSE_TIMEOUT_MS,
-): number {
-	const script = `
-const fs = require("node:fs");
-const ompPid = ${Math.trunc(ompPid)};
-const shellPid = ${Math.trunc(parent.pid)};
-const expectedStartTime = ${JSON.stringify(parent.startTime)};
-const deadline = Date.now() + ${Math.trunc(timeoutMs)};
-function identity(pid) {
-  try {
-    const stat = fs.readFileSync("/proc/" + pid + "/stat", "utf8");
-    return stat.slice(stat.lastIndexOf(") ") + 2).trim().split(/\\s+/)[19];
-  } catch { return undefined; }
-}
-const timer = setInterval(() => {
-  if (identity(ompPid) !== undefined) {
-    if (Date.now() >= deadline) { clearInterval(timer); process.exit(0); }
-    return;
-  }
-  clearInterval(timer);
-  if (identity(shellPid) === expectedStartTime) {
-    try { process.kill(shellPid, "SIGHUP"); } catch {}
-  }
-  process.exit(0);
-}, 50);
-`;
-	const watcher = Bun.spawn([process.execPath, "-e", script], {
-		detached: true,
-		stdin: "ignore",
-		stdout: "ignore",
-		stderr: "ignore",
-	});
-	watcher.unref();
-	return watcher.pid;
+): Promise<boolean> {
+	const self = readLinuxProcessIdentity(ompPid);
+	if (!self) return false;
+	const args = [
+		managerBinary(),
+		"done",
+		"--agent-pid", String(ompPid),
+		"--agent-start", self.startTime,
+		"--shell-pid", String(parent.pid),
+		"--shell-start", parent.startTime,
+		"--timeout", String(Math.max(1, Math.round(timeoutMs / 1000))),
+	];
+	const pane = process.env.TMUX_PANE;
+	const tmuxSocket = process.env.TMUX?.split(",")[0];
+	if (pane) {
+		args.push("--pane", pane);
+		if (tmuxSocket) args.push("--tmux-socket", tmuxSocket);
+	}
+	try {
+		const client = Bun.spawn(args, { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+		return (await client.exited) === 0;
+	} catch {
+		return false;
+	}
 }
 
 function captureParentShell(ctx: ExtensionCommandContext): LinuxProcessIdentity | undefined {
@@ -258,8 +259,11 @@ export default function safeQuit(api: ExtensionAPI): void {
 			api.sendUserMessage(WRAP_UP_PROMPT);
 			if (!(await completion.promise)) return;
 
-			spawnTerminalCloser(process.pid, parent);
-			ctx.ui.notify("Safe quit complete: closing OMP and this terminal", "info");
+			if (await notifyManager(process.pid, parent)) {
+				ctx.ui.notify("Safe quit complete: the manager will close this terminal once OMP exits", "info");
+			} else {
+				ctx.ui.notify("Safe quit: safequit-manager is unreachable; OMP exits but this terminal stays open", "warning");
+			}
 			ctx.shutdown();
 		},
 	};

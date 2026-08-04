@@ -7,7 +7,7 @@ import safeQuit, {
 	inspectRepository,
 	messageText,
 	readLinuxProcessIdentity,
-	spawnTerminalCloser,
+	notifyManager,
 } from "../extensions/safequit";
 
 const temporaryDirectories: string[] = [];
@@ -105,10 +105,16 @@ test("messageText reads only text content", () => {
 });
 
 test(
-	"terminal closer waits for OMP and then signals the same shell process",
+	"the manager is told when the agent is done and then kills the same shell process",
 	async () => {
-		// This integration test exercises the watcher's real /proc polling and awaits
-		// process exits directly; fake timers cannot drive the detached Bun process.
+		// End to end through the real binary: `done` auto-starts the daemon on a
+		// scratch socket, the daemon waits for the fake OMP to exit, then
+		// escalates signals against the fake shell it captured.
+		const scratch = temporaryDirectory();
+		process.env.SAFEQUIT_MANAGER_SOCKET = path.join(scratch, "manager.sock");
+		process.env.SAFEQUIT_MANAGER_LOG = path.join(scratch, "manager.log");
+		delete process.env.TMUX_PANE;
+
 		const shell = spawn("bash", ["-c", "trap 'exit 0' HUP; read -r _"], {
 			stdio: ["pipe", "ignore", "ignore"],
 		});
@@ -121,13 +127,15 @@ test(
 		shell.once("exit", () => resolve());
 
 		try {
-			spawnTerminalCloser(omp.pid, parent, 2_000);
+			expect(await notifyManager(omp.pid, parent, 10_000)).toBe(true);
 			omp.stdin.end();
 			await promise;
 		} finally {
 			shell.kill("SIGKILL");
 			omp.kill("SIGKILL");
+			delete process.env.SAFEQUIT_MANAGER_SOCKET;
+			delete process.env.SAFEQUIT_MANAGER_LOG;
 		}
 	},
-	5_000,
+	15_000,
 );
