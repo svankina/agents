@@ -32,6 +32,7 @@ Before stopping:
 - run the specific verification that proves the changed behavior;
 - commit all intended changes with a clear commit message;
 - push the current branch, setting its upstream when needed;
+- stop every process, service, watcher, GUI, and background job you launched — but never shared infrastructure: the tmux server, any tmux session, window, or pane, other agents' processes, systemd services you did not start this session, or the triage panel;
 - leave no intended changes uncommitted.
 
 End the final response with ${SAFEQUIT_READY_MARKER} on its own line only when the task is complete. If a blocker prevents completion, explain it and end with ${SAFEQUIT_BLOCKED_MARKER} instead. Do not emit either marker anywhere else.`;
