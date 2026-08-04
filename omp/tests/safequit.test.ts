@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 import safeQuit, {
 	inspectRepository,
+	SAFEQUIT_WRAP_UP_PROMPT,
 	messageText,
 	readLinuxProcessIdentity,
 	spawnTerminalCloser,
@@ -89,6 +90,12 @@ test("registers /sq as the short safequit command", () => {
 	} as unknown as Parameters<typeof safeQuit>[0]);
 
 	expect(commandNames).toEqual(["safequit", "sq"]);
+});
+
+test("wrap-up prompt requires cleanup of every process the agent launched", () => {
+	expect(SAFEQUIT_WRAP_UP_PROMPT).toContain(
+		"stop every process, service, watcher, GUI, and background job you launched",
+	);
 });
 
 test("messageText reads only text content", () => {

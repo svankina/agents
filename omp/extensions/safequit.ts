@@ -25,11 +25,12 @@ const SUPPORTED_SHELLS: Record<string, true> = {
 	zsh: true,
 };
 
-const WRAP_UP_PROMPT = `Safe quit is armed. Finish the current task completely now.
+export const SAFEQUIT_WRAP_UP_PROMPT = `Safe quit is armed. Finish the current task completely now.
 
 Before stopping:
 - satisfy every active request and todo;
 - run the specific verification that proves the changed behavior;
+- stop every process, service, watcher, GUI, and background job you launched;
 - commit all intended changes with a clear commit message;
 - push the current branch, setting its upstream when needed;
 - leave no intended changes uncommitted.
@@ -254,7 +255,7 @@ export default function safeQuit(api: ExtensionAPI): void {
 			const completion = Promise.withResolvers<boolean>();
 			armed = { attempts: 0, cwd: ctx.cwd, parent, finish: completion.resolve };
 			ctx.ui.notify("Safe quit armed: finishing the task, then checking commit and push state", "info");
-			api.sendUserMessage(WRAP_UP_PROMPT);
+			api.sendUserMessage(SAFEQUIT_WRAP_UP_PROMPT);
 			if (!(await completion.promise)) return;
 
 			spawnTerminalCloser(process.pid, parent);
