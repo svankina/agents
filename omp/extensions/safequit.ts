@@ -30,7 +30,7 @@ export const SAFEQUIT_WRAP_UP_PROMPT = `Safe quit is armed. Finish the current t
 Before stopping:
 - satisfy every active request and todo;
 - run the specific verification that proves the changed behavior;
-- stop every process, service, watcher, GUI, and background job you launched;
+- stop every process, service, watcher, GUI, and background job you launched — but never shared infrastructure: the tmux server, any tmux session, window, or pane, other agents' processes, systemd services you did not start this session, or the triage panel;
 - commit all intended changes with a clear commit message;
 - push the current branch, setting its upstream when needed;
 - leave no intended changes uncommitted.
