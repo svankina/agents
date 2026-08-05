@@ -1,0 +1,12 @@
+[Unit]
+Description=omp auth broker (shared credential vault for omp named profiles)
+After=network.target
+
+[Service]
+Environment=PATH=/home/svankina/.bun/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/svankina/.bun/bin/omp auth-broker serve --bind=127.0.0.1:8766
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

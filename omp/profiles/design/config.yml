@@ -1,0 +1,93 @@
+providers: 
+  webSearchExclude: 
+    - anthropic
+  webSearchOrder: 
+    - exa
+    - perplexity
+    - gemini
+    - anthropic
+    - codex
+    - xai
+    - zai
+    - tinyfish
+    - jina
+    - kagi
+    - tavily
+    - firecrawl
+    - brave
+    - kimi
+    - parallel
+    - synthetic
+    - searxng
+    - startpage
+    - duckduckgo
+    - ecosia
+    - google
+    - mojeek
+    - public
+symbolPreset: unicode
+theme: 
+  dark: titanium
+setupVersion: 1
+modelRoles: 
+  default: anthropic/claude-fable-5:medium
+  smol: openai-codex/gpt-5.6-luna:low
+  task: openai-codex/gpt-5.6-terra:medium
+  slow: openai-codex/gpt-5.6-sol:high
+  plan: openai-codex/gpt-5.6-sol:high
+  designer: anthropic/claude-fable-5:medium
+  vision: openai-codex/gpt-5.6-terra:medium
+  commit: openai-codex/gpt-5.6-luna:low
+  advisor: openai-codex/gpt-5.6-sol:high
+task: 
+  enableLsp: true
+  agentModelOverrides: 
+    librarian: openai-codex/gpt-5.6-sol:medium
+secrets: 
+  enabled: true
+defaultThinkingLevel: auto
+skills: 
+  enableClaudeUser: false
+disabledProviders: 
+  - claude-plugins
+extensions: 
+  - ~/src/agents/omp/extensions
+statusLine: 
+  preset: custom
+  leftSegments: 
+    []
+  rightSegments: 
+    []
+  segmentOptions: 
+    model: 
+      showThinkingLevel: false
+    path: 
+      abbreviate: true
+      maxLength: 40
+      stripWorkPrefix: true
+    git: 
+      showBranch: true
+      showStaged: true
+      showUnstaged: true
+      showUntracked: false
+startup: 
+  quiet: true
+dev: 
+  autoqaConsent: granted
+features: 
+  unexpectedStopDetection: true
+astGrep: 
+  enabled: true
+tier: 
+  anthropic: none
+tools: 
+  approval: 
+    act_ui: prompt
+completion: 
+  notify: "off"
+ask: 
+  notify: "off"
+auth: 
+  broker: 
+    url: http://127.0.0.1:8766
+    token: "!cat ~/.omp/auth-broker.token"

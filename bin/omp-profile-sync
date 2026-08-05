@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# omp-profile-sync — materialize omp named profiles from ~/src/agents/omp/profiles/
+#
+# Each source dir  ~/src/agents/omp/profiles/<name>/  becomes  ~/.omp/profiles/<name>/agent/:
+#   AGENTS.md   symlinked (repo is source of truth; edits apply immediately)
+#   config.yml  copied when missing (omp rewrites it at runtime, so it must be a real file)
+#   mcp.json    copied when missing (same reason)
+#   skills/     symlinks to every shared skill in ~/src/agents/shared/skills
+#
+# --force re-copies config.yml/mcp.json over runtime state.
+set -euo pipefail
+
+SRC="$HOME/src/agents/omp/profiles"
+DST="$HOME/.omp/profiles"
+SKILLS_SRC="$HOME/src/agents/shared/skills"
+FORCE=0
+[[ "${1:-}" == "--force" ]] && FORCE=1
+
+[[ -d "$SRC" ]] || { echo "no profile sources at $SRC" >&2; exit 1; }
+
+for dir in "$SRC"/*/; do
+  name="$(basename "$dir")"
+  agent="$DST/$name/agent"
+  mkdir -p "$agent/skills"
+
+  ln -sfn "${dir%/}/AGENTS.md" "$agent/AGENTS.md"
+
+  for f in config.yml mcp.json; do
+    if [[ -f "$dir$f" ]] && { [[ $FORCE -eq 1 ]] || [[ ! -f "$agent/$f" ]]; }; then
+      cp "$dir$f" "$agent/$f"
+      echo "$name: installed $f"
+    fi
+  done
+
+  for s in "$SKILLS_SRC"/*/; do
+    ln -sfn "${s%/}" "$agent/skills/$(basename "$s")"
+  done
+
+  echo "$name: ok"
+done
+
+# Auth broker unit: profiles share the default profile's credentials through it.
+UNIT_SRC="$HOME/src/agents/omp/systemd/omp-auth-broker.service"
+UNIT_DST="$HOME/.config/systemd/user/omp-auth-broker.service"
+if [[ -f "$UNIT_SRC" ]] && ! cmp -s "$UNIT_SRC" "$UNIT_DST"; then
+  mkdir -p "$(dirname "$UNIT_DST")"
+  cp "$UNIT_SRC" "$UNIT_DST"
+  systemctl --user daemon-reload
+  echo "installed omp-auth-broker.service"
+fi
+systemctl --user enable --now omp-auth-broker.service >/dev/null 2>&1 || \
+  echo "warning: could not enable omp-auth-broker.service" >&2
