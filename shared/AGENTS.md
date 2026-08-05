@@ -182,15 +182,9 @@ serve-report <path-to-file-or-dir> [--name NAME]
 ```
 
 - **Never** run `python3 -m http.server` (or `npx serve`, `http-server`, …)
-  yourself — that is the per-instance sprawl we are consolidating away.
-- Works for a single file or a whole directory (site with `index.html` +
-  assets).
-- Default is a live symlink; pass `--copy` to freeze a snapshot that outlives
-  the source. Manage with `serve-report status|list|rm <slug>|gc`. Never
+  yourself — that is the per-instance sprawl we are consolidating away. Never
   `stop`/`restart` the shared server to clean up your own report — use
-  `rm`/`gc`.
-- Full usage lives in the `serving-reports` skill
-  (`skill://serving-reports`).
+  `serve-report rm|gc`. Full usage: `skill://serving-reports`.
 - **CAD models get the same treatment:** `serve-cad part.stl` publishes an
   interactive orbit/pan/zoom viewer through the same server — never deliver a
   part as a raw `.stl` path or a static render. Full usage:
@@ -248,21 +242,10 @@ The user can inspect pending items with `user-queue`, inspect every item with
 
 ## Tester handoff workflow
 
-When independent testing is useful, use the local tester harness at
-`/home/svankina/src/tester` instead of asking the user to manually test. The
-handoff executable is `/home/svankina/src/tester/bin/tester-run`.
-
-Use tester handoff when you need an independent check of a web app, CLI tool,
-TUI, or desktop application, especially before reporting that a feature is
-done. The tester runs in an isolated local environment with its own Xvfb
-display, HOME, TMPDIR, browser profile, screenshots, and logs.
-
-Call `tester-run` with JSON on stdin or a request file. It prints exactly one
-JSON result to stdout; progress and diagnostics go to stderr and artifact
-files. Always parse/read the JSON result and mention important artifacts in
-your final report.
-
-Simple examples:
+When independent testing is useful — a web app, CLI, TUI, or desktop app,
+especially before reporting that a feature is done — hand off to the local
+tester harness instead of asking the user to test. It runs in an isolated
+environment (own Xvfb display, HOME, TMPDIR, browser profile, logs):
 
 ```bash
 /home/svankina/src/tester/bin/tester-run --repo "$PWD" --kind web --url http://127.0.0.1:3000 --task "Test the login flow"
@@ -271,57 +254,20 @@ printf '%s\n' '{"schema_version":"tester.v1","target":{"type":"cli","command":"p
   | /home/svankina/src/tester/bin/tester-run -
 ```
 
-Request format highlights:
+`tester-run` prints exactly one JSON result to stdout (progress goes to
+stderr) — parse it, and prefer sharing its `environment.run_viewer_url`
+(player controls, annotated screenshot, artifact links) over raw artifact
+paths under `.tester/runs/<run-id>/`. The full request schema (`target.type`:
+`web_url|cli|tui|desktop`, assertions, timeouts) and exit codes are documented
+in `~/src/tester`; invalid requests fail fast with a structured error.
 
-- `schema_version`: use `tester.v1`.
-- `target.type`: one of `web_url`, `cli`, `tui`, or `desktop`.
-- `target.url`: required for `web_url`.
-- `target.command`: required for `cli`, `tui`, and `desktop`.
-- `target.args`, `target.cwd`, and `target.env`: optional command context.
-- `objective`: what to verify.
-- `assertions`: concrete pass criteria.
-- `timeout_seconds`: overall tester-agent timeout.
-- `backend`: optional; only `local` is implemented. Requests for `container`
-  or `firecracker` return a structured blocked result, not a silent fallback.
-- `worktree`: optional; defaults to enabled for git repos. `tester-run`
-  creates a per-run detached git worktree under
-  `.tester/runs/<run-id>/worktrees/` so tests do not mutate the caller's
-  checkout. Dirty source repos block by default; commit changes first, or
-  explicitly set `worktree.on_dirty` to `head` or `disable` when appropriate.
-
-Exit codes:
-
-- `0`: pass
-- `1`: fail
-- `2`: invalid request or blocked
-- `3`: harness error
-- `4`: timeout
-- `5`: tester-agent error
-- `130`: cancelled
-
-Tester artifacts are written under
-`/home/svankina/src/tester/.tester/runs/<run-id>/`, including `request.json`,
-`result.json`, `prompt.md`, `viewer.html`,
-`screenshots/annotated-summary.png`, logs, screenshots, optional
-`media/recording.mp4` / `media/recording.gif`, per-run git worktrees, and Pi
-session files. Each run has a saved viewer at `environment.run_viewer_url` in
-the result JSON, usually `http://<tailscale-ip>:18765/runs/<run-id>/`; prefer
-sharing that URL because it includes player controls, the marked-up
-screenshot, and links to logs/artifacts. For deterministic GUI/TUI demos,
-prefer `/home/svankina/src/tester/bin/tester-demo` or scenario wrappers over
-spawning an exploratory tester agent. The isolated tester HOME has its own Pi
-resources; run `/home/svankina/src/tester/bin/tester-env setup-pi-resources`
-if custom slash commands like `/thinking` are missing. For live manual screen
-viewing, run `/home/svankina/src/tester/bin/tester-env status` and use the
-printed screen viewer URL.
-
-For direct/manual TUI tests, run the tested process inside the isolated
-tester tmux server instead of a bare terminal:
-`/home/svankina/src/tester/bin/tester-env tmux-new <session> <command...>`,
-attach visually with `tmux-attach`, send input with `tmux-type`/`tmux-enter`,
-and capture text with `tmux-capture`. Always clean up after direct/manual
-runs with `/home/svankina/src/tester/bin/tester-env cleanup`; `tester-run`
-performs this cleanup automatically.
+Runs default to a per-run detached git worktree so tests never mutate the
+caller's checkout; dirty repos block by default — commit first, or set
+`worktree.on_dirty` to `head`/`disable` deliberately. For deterministic
+GUI/TUI demos prefer `bin/tester-demo` over an exploratory tester agent. For
+direct/manual TUI tests use `bin/tester-env tmux-new/tmux-type/tmux-capture`
+inside the isolated tmux server, and always finish with `tester-env cleanup`
+(`tester-run` cleans up after itself).
 
 ## New feature work → use a worktree
 
@@ -359,98 +305,15 @@ the same config) every time is a workflow bug on *my* side. When it recurs:
 3. Only then continue the task.
 Never let the user be the one to point out "you've hit this 10 times."
 
-### Concrete: Python for CAD projects
+## Shell aliases
 
-`/usr/bin/python3` does **not** have `build123d` and never will — use the
-project-local virtual environment for CAD/build123d work:
+**IMPORTANT:** `rm` is aliased to `trash-put` in the user's interactive shell
+— files the *user* deletes go to the trash and are recoverable. Agent shells
+are non-interactive: no aliases apply there, and a bare `rm` really deletes.
 
-```bash
-.venv/bin/python yourscript.py
-```
-
-Set this once from the project root at the start of CAD work (for example,
-`PY=.venv/bin/python`) and use `$PY` thereafter. Pyright/LSP flagging
-`import build123d` as "could not be resolved" means the editor is using the
-wrong interpreter; configure `pyrightconfig.json` with `venvPath`/`venv` for
-that project rather than re-noticing it each time.
-
-## Shell aliases & functions
-
-**IMPORTANT:** `rm` is aliased to `trash-put` — files are not permanently
-deleted, they go to the trash.
-
-### Git
-| Alias | Expands to |
-|-------|-----------|
-| `gs` | `git status` |
-| `ga` | `git add` |
-| `gd` | `git diff` |
-| `gco` | `git checkout` |
-| `gp` | `git push` |
-| `gpr` | `git pull --rebase` |
-| `gf` | `git add $_` (re-add last arg) |
-| `gcm <msg>` | `git commit -m "<msg>"` |
-| `mbranch <name>` | create branch locally and push with `-u origin` |
-| `dbranch <name>` | delete branch locally and on origin |
-
-### Files & Navigation
-| Alias | Expands to |
-|-------|-----------|
-| `v` | `vim` |
-| `l` | `ls -ClFh --hide="*.pyc"` |
-| `ll` | `ls -alF` |
-| `la` | `ls -lA` |
-| `lh` | `ls -lAhrt` |
-| `mc <dir>` | `mkdir <dir> && cd <dir>` |
-| `xtar` | `tar -xvf` |
-| `ctar` | `tar -cvzf` |
-
-### Python
-| Alias | Expands to |
-|-------|-----------|
-| `py` | `python3 -u` |
-| `p3` | `python3` |
-| `ipy` | `ipython` |
-
-### tmux
-| Alias | Expands to |
-|-------|-----------|
-| `tm` | `tmux -u` |
-| `ta` | `tmux attach` |
-| `td` | `tmux detach` |
-| `tl` | `tmux list-sessions` |
-
-### System
-| Alias | Expands to |
-|-------|-----------|
-| `_` | `sudo` |
-| `sudo` | `sudo ` (trailing space for alias expansion) |
-| `docker` | `sudo docker` |
-| `sai` | `sudo apt install -y` |
-| `sup` | `sudo apt update && upgrade && autoremove` |
-
-### Lobclaw remote
-| Alias | Expands to |
-|-------|-----------|
-| `lobtmux` | `lob shell` |
-| `lobwarm` | `lob warm` |
-| `lobclose` | `lob close` |
-| `lobpush [args]` | `lob push [args]` |
-| `lobpull [args]` | `lob pull [args]` |
-
-### Warp / cmd-context (zsh only)
-| Alias | Expands to |
-|-------|-----------|
-| `cc` | `CMD_WARP_MODE=interactive cmd-context` |
-| `ccp` | `CMD_WARP_MODE=plan cmd-context` |
-| `ccr` | `CMD_WARP_MODE=resume cmd-context` |
-| `cmd` | `cmd --yolo` |
-
-### Dotfiles
-| Alias | Expands to |
-|-------|-----------|
-| `cfg` | `git` against `$HOME/wksp/dotfiles` bare repo |
-| `cfgu` | stage all tracked, commit "updates", push |
+The full alias set lives in `~/src/dotfiles`. If the user types unfamiliar
+shorthand in chat (`gs`, `gcm`, `mbranch`, `cc`, `lobpush`, `cfg`, …), look it
+up there instead of guessing.
 
 ## Screenshots agents take — target the window, never the screen
 

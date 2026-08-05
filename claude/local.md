@@ -25,11 +25,9 @@ at any moment:
 
 ## Subagent model routing
 
-When delegating work to a subagent, pick the model by whether the task needs
-vision:
+When delegating work to a subagent, pick the model by task complexity:
 
-- **No vision required** (code, search, refactors, analysis, shell work,
-  etc.) → use a **`gpt-5.3-codex`** subagent.
-- **Vision required** (screenshots, images, UI/visual inspection, anything
-  that must look at pixels) → use a **`gpt-5.5` with `thinking: none`**
-  subagent.
+- **Simple tasks** (mechanical edits, renames, focused searches, small
+  scripts, data collection) → use a **`gpt-5.6-luna`** subagent.
+- **Complex tasks** (multi-file refactors, debugging, design, anything
+  needing sustained reasoning) → use a **`gpt-5.6-sol`** subagent.
