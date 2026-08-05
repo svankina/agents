@@ -91,3 +91,15 @@ def test_target_state_all_four(tmp_path):
     assert a.target_state(t, exp) == "drifted"
     t.path.write_text("# my own file, no banner\n")
     assert a.target_state(t, exp) == "foreign"
+
+
+def test_agent_fork_overrides_shared(tmp_path):
+    cfg = make_cfg(tmp_path)
+    (cfg.repo / "claude" / "AGENTS.md").write_text("# Claude fork\nOwn body.\n")
+    by = {t.agent: t for t in cfg.targets()}
+    exp = a.expected_content(cfg, by["claude"])
+    assert "# Claude fork" in exp and "# Shared core" not in exp
+    assert "claude/AGENTS.md" in exp.splitlines()[0]
+    assert exp.index("# Claude fork") < exp.index("# About the user") < exp.index("# claude delta")
+    omp = a.expected_content(cfg, by["omp"])
+    assert "# Shared core" in omp and "shared/AGENTS.md" in omp.splitlines()[0]

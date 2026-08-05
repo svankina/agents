@@ -33,6 +33,11 @@ live agent dirs, or copied into `~/src/pagent`.
   `CLAUDE_DESIGN_*`, `CONTEXT_SURGEON_URL`.
 
 ## Conventions
+- Global instructions: `agents-sync` composes each agent's file from a base +
+  `shared/USER.md` + `<agent>/local.md`. The base is `<agent>/AGENTS.md` when it
+  exists (full per-agent fork), else `shared/AGENTS.md`. **Claude Code is forked**
+  (`claude/AGENTS.md`, since 2026-08-05): edits to `shared/AGENTS.md` no longer
+  reach Claude.
 - Install pattern is symlink, not copy: e.g. `ln -s ~/src/agents/claude/commands/X.md ~/.claude/commands/X.md`,
   warpfork → `~/.local/bin/`. Claude Code / Pi auto-discover the target dirs.
 - Pi extensions: drop the `.ts` in Pi's extensions dir (or point Pi at the folder); it loads
