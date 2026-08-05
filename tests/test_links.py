@@ -26,7 +26,7 @@ def test_link_state_transitions(tmp_path):
     src = add_skill(cfg, "example-skill")
     link = cfg.home / ".claude" / "skills" / "example-skill"
     assert a.link_state(link, src, cfg.repo) == "missing"
-    a.apply_link(link, src)
+    a.apply_link(link, src, cfg.repo)
     assert a.link_state(link, src, cfg.repo) == "clean"
     # stale: points into repo, wrong place
     link.unlink()
@@ -46,8 +46,8 @@ def test_apply_link_replaces_stale(tmp_path):
     cfg = make_cfg(tmp_path)
     src = add_skill(cfg, "s1")
     link = cfg.home / ".codex" / "skills" / "s1"
-    a.apply_link(link, src)
-    a.apply_link(link, src)  # idempotent
+    a.apply_link(link, src, cfg.repo)
+    a.apply_link(link, src, cfg.repo)  # idempotent
     assert link.resolve() == src.resolve()
 
 
@@ -55,7 +55,7 @@ def test_stale_repo_links_detects_orphans(tmp_path):
     cfg = make_cfg(tmp_path)
     src = add_skill(cfg, "gone")
     link = cfg.home / ".claude" / "skills" / "gone"
-    a.apply_link(link, src)
+    a.apply_link(link, src, cfg.repo)
     (src / "SKILL.md").unlink()
     src.rmdir()
     assert a.stale_repo_links(cfg) == [link]
@@ -65,7 +65,7 @@ def test_home_links_relative_claude_md(tmp_path):
     cfg = make_cfg(tmp_path)
     links = dict(cfg.home_links())
     assert links[cfg.home / "CLAUDE.md"] == Path("AGENTS.md")
-    a.apply_link(cfg.home / "CLAUDE.md", Path("AGENTS.md"))
+    a.apply_link(cfg.home / "CLAUDE.md", Path("AGENTS.md"), cfg.repo)
     assert os.readlink(cfg.home / "CLAUDE.md") == "AGENTS.md"
 
 
@@ -95,7 +95,7 @@ def test_stale_repo_links_prunes_removed_command(tmp_path):
     cfg = make_cfg(tmp_path)
     src = add_command(cfg, "gone")
     link = cfg.command_dests()[0] / "gone.md"
-    a.apply_link(link, src)
+    a.apply_link(link, src, cfg.repo)
     src.unlink()
     assert a.stale_repo_links(cfg) == [link]
 
