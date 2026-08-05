@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# agent-status — post a wrap-up status line to the Mattermost #status-updates
+# channel via its incoming webhook.
+#
+# Usage:
+#   agent-status [--source NAME] "message"
+#   echo "message" | agent-status [--source NAME]
+#
+# The webhook URL lives in ~/.config/agent-status/webhook (one line).
+# --source sets the displayed username (per-post override); defaults to
+# $AGENT_STATUS_SOURCE, then the basename of the current directory.
+set -euo pipefail
+
+conf="${XDG_CONFIG_HOME:-$HOME/.config}/agent-status/webhook"
+
+source_name="${AGENT_STATUS_SOURCE:-}"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --source) source_name="$2"; shift 2 ;;
+    --source=*) source_name="${1#*=}"; shift ;;
+    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+    --) shift; break ;;
+    *) break ;;
+  esac
+done
+
+if [[ $# -gt 0 ]]; then
+  message="$*"
+else
+  message="$(cat)"
+fi
+[[ -n "$message" ]] || { echo "agent-status: empty message" >&2; exit 1; }
+
+[[ -r "$conf" ]] || { echo "agent-status: missing webhook config: $conf" >&2; exit 1; }
+url="$(head -n1 "$conf")"
+
+[[ -n "$source_name" ]] || source_name="$(basename "$PWD")"
+
+payload="$(jq -n --arg text "$message" --arg username "$source_name" \
+  '{text: $text, username: $username}')"
+
+code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$url" \
+  -H 'Content-Type: application/json' -d "$payload")"
+if [[ "$code" != "200" ]]; then
+  echo "agent-status: webhook returned HTTP $code" >&2
+  exit 1
+fi

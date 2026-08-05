@@ -393,6 +393,21 @@ already visible in the active session. The command returns success only after
 Homer durably accepts and audits the notification; if it fails, report that
 failure in the session instead of claiming the user was notified.
 
+## Wrap-up status posts — `agent-status`
+
+When you finish a piece of work (feature done, investigation concluded, long
+task wrapped up), post a one-line status to the Mattermost `#status-updates`
+channel:
+
+```bash
+agent-status --source <agent-or-project> "wrapped up: <what changed, where>"
+```
+
+One line, past tense, concrete: what now works and where. Skip it for trivial
+Q&A turns. The command posts through an incoming webhook
+(`~/.config/agent-status/webhook`); `--source` sets the displayed name — use
+your agent name or the project directory.
+
 ## Compute fairness — heavy jobs go through `fair-run`
 
 This machine is shared by the user and multiple concurrent agents. Any
