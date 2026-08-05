@@ -25,17 +25,15 @@ const SUPPORTED_SHELLS: Record<string, true> = {
 	zsh: true,
 };
 
-const WRAP_UP_PROMPT = `Safe quit is armed. Finish the current task completely now.
+const WRAP_UP_PROMPT = `Safe quit is armed. The task is already done and verified — do not redo, re-run, or re-verify any of it, and do not start new work.
 
-Before stopping:
-- satisfy every active request and todo;
-- run the specific verification that proves the changed behavior;
-- commit all intended changes with a clear commit message;
+Wrap up only:
+- append a short dated entry to the nearest NOTES.md with anything a future session needs (durable facts, gotchas, where things landed); skip only if the session produced nothing worth keeping;
+- commit the remaining intended changes with a clear message;
 - push the current branch, setting its upstream when needed;
-- stop every process, service, watcher, GUI, and background job you launched — but never shared infrastructure: the tmux server, any tmux session, window, or pane, other agents' processes, systemd services you did not start this session, or the triage panel;
-- leave no intended changes uncommitted.
+- stop every process, service, watcher, GUI, and background job you launched — but never shared infrastructure: the tmux server, any tmux session, window, or pane, other agents' processes, systemd services you did not start this session, or the triage panel.
 
-End the final response with ${SAFEQUIT_READY_MARKER} on its own line only when the task is complete. If a blocker prevents completion, explain it and end with ${SAFEQUIT_BLOCKED_MARKER} instead. Do not emit either marker anywhere else.`;
+End the final response with ${SAFEQUIT_READY_MARKER} on its own line. If a blocker prevents pushing, explain it and end with ${SAFEQUIT_BLOCKED_MARKER} instead. Do not emit either marker anywhere else.`;
 
 interface CommandResult {
 	code: number | null;
@@ -292,7 +290,7 @@ export default function safeQuit(api: ExtensionAPI): void {
 			}
 			return {
 				continue: true,
-				additionalContext: `Safe quit is still armed. Continue the wrap-up. End with ${SAFEQUIT_READY_MARKER} only after every requested task is complete, committed, verified, and pushed; use ${SAFEQUIT_BLOCKED_MARKER} if completion is blocked.`,
+				additionalContext: `Safe quit is still armed. Finish the wrap-up only — no new work, no re-verification. End with ${SAFEQUIT_READY_MARKER} once the NOTES entry is written and everything is committed and pushed; use ${SAFEQUIT_BLOCKED_MARKER} if a blocker prevents that.`,
 			};
 		}
 
