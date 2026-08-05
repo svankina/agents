@@ -1,0 +1,49 @@
+setupVersion: 1
+modelRoles: 
+  default: anthropic/claude-haiku-4-5
+  smol: anthropic/claude-haiku-4-5:minimal
+  commit: anthropic/claude-haiku-4-5:minimal
+  vision: anthropic/claude-haiku-4-5:minimal
+  advisor: anthropic/claude-haiku-4-5:minimal
+  task: anthropic/claude-sonnet-5:low
+  designer: anthropic/claude-sonnet-5:low
+  slow: anthropic/claude-sonnet-5:medium
+  plan: anthropic/claude-sonnet-5:medium
+enabledModels: 
+  - anthropic/claude-haiku-4-5
+  - anthropic/claude-sonnet-5
+  - anthropic/claude-opus-5
+defaultThinkingLevel: minimal
+skills: 
+  enableClaudeUser: false
+  enableClaudeProject: false
+  enableCodexUser: false
+disabledProviders: 
+  - claude-plugins
+startup: 
+  quiet: true
+symbolPreset: unicode
+theme: 
+  dark: titanium
+statusLine: 
+  preset: custom
+  leftSegments: 
+    []
+  rightSegments: 
+    []
+  segmentOptions: 
+    model: 
+      showThinkingLevel: false
+    path: 
+      abbreviate: true
+      maxLength: 40
+      stripWorkPrefix: true
+    git: 
+      showBranch: true
+      showStaged: true
+      showUnstaged: true
+      showUntracked: false
+completion: 
+  notify: "off"
+ask: 
+  notify: "off"
