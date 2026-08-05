@@ -1,94 +1,161 @@
 #!/usr/bin/env bash
-# project-map — curated per-project agent context (MAP.md).
+# project-map — curated per-project agent context in AGENTS.md.
 #
-# MAP.md is the distilled, auto-read project brief for agents: architecture,
-# where-things-live, invariants, dated decisions. Hard-capped so it stays
-# curated. NOTES.md remains the raw append-only log; MAP.md is the index.
+# The embedded Project map section is the distilled, auto-read project brief:
+# architecture, where-things-live, invariants, and dated decisions. It is
+# hard-capped so it stays curated; NOTES.md remains the raw append-only log.
 #
 # Usage:
-#   project-map init [DIR]     create MAP.md template (refuses to overwrite)
-#   project-map lint [DIR]     enforce size cap + required sections
-#   project-map check [DIR]    staleness: MAP.md age vs repo activity
+#   project-map init [DIR]     add a Project map section to AGENTS.md
+#   project-map lint [DIR]     enforce the embedded section contract
+#   project-map check [DIR]    check review-date age vs repo activity
 set -euo pipefail
 
 MAX_LINES=150
 STALE_COMMITS=30
 STALE_DAYS=60
-SECTIONS=("## Architecture" "## Where things live" "## Invariants & gotchas" "## Decisions")
+PROJECT_MAP_HEADING="## Project map"
+EMPTY_COMMENT="<!-- project-map-empty: Add only facts for which the litmus is yes: would a fresh agent work incorrectly or slowly without this? Remove this comment when the map has its first dated decision. -->"
+SECTIONS=("### Architecture" "### Where things live" "### Invariants & gotchas" "### Decisions")
 
 die() { echo "project-map: $*" >&2; exit 1; }
 
 cmd="${1:-}"; shift || true
 dir="${1:-.}"
-map="$dir/MAP.md"
+agents="$dir/AGENTS.md"
+
+extract_section() {
+  awk '
+    $0 == "## Project map" && !found { found = 1; in_map = 1 }
+    in_map && $0 ~ /^## / && $0 != "## Project map" { exit }
+    in_map { print }
+  ' "$agents"
+}
+
+valid_date() {
+  local value="$1" normalized
+  normalized=$(date -d "$value" +%F 2>/dev/null) || return 1
+  [ "$normalized" = "$value" ]
+}
 
 case "$cmd" in
   init)
-    [ -e "$map" ] && die "$map already exists"
+    [ -d "$dir" ] || die "$dir is not a directory"
+    if [ -f "$agents" ] && grep -qxF "$PROJECT_MAP_HEADING" "$agents"; then
+      die "$agents already contains a Project map section"
+    fi
+
     name="$(basename "$(cd "$dir" && pwd)")"
-    cat > "$map" <<EOF
-# $name — agent map
+    reviewed="$(date +%F)"
+    if [ ! -e "$agents" ]; then
+      printf '# %s\n' "$name" > "$agents"
+    elif [ ! -f "$agents" ]; then
+      die "$agents is not a regular file"
+    fi
 
-Distilled project brief. Read this before working; it replaces re-deriving
-the repo from scratch. Litmus for every line: "would a fresh agent do
-something wrong or slow without this?" If no, it belongs in NOTES.md.
-Maintained by agents: at wrap-up, add/prune/date entries, then run
-\`project-map lint\`. Hard cap: $MAX_LINES lines.
+    if [ -s "$agents" ] && [ "$(tail -c 1 "$agents" | wc -l)" -eq 0 ]; then
+      printf '\n' >> "$agents"
+    fi
+    cat >> "$agents" <<EOF
 
-## Architecture
+## Project map
+<!-- project-map-reviewed: $reviewed -->
+$EMPTY_COMMENT
 
-<!-- <=10 lines: what this is, the moving parts, how data flows -->
+### Architecture
 
-## Where things live
+### Where things live
 
-| Path | What |
-|---|---|
+### Invariants & gotchas
 
-## Invariants & gotchas
-
-<!-- things that break agents: rate limits, files never to commit, ports, perms -->
-
-## Decisions
-
-<!-- dated, with reasons: "2026-07: X goes through Y, not Z — Z's auth broke" -->
+### Decisions
 EOF
-    echo "$map"
+    echo "$agents"
     ;;
 
   lint)
-    [ -f "$map" ] || die "$map missing (run: project-map init $dir)"
+    [ -f "$agents" ] || die "$agents missing (run: project-map init $dir)"
     rc=0
-    lines=$(wc -l < "$map")
+
+    heading_count=$(awk '$0 == "## Project map" { count++ } END { print count + 0 }' "$agents")
+    if [ "$heading_count" -ne 1 ]; then
+      echo "FAIL $agents: expected exactly one '$PROJECT_MAP_HEADING' heading (found $heading_count)" >&2
+      rc=1
+    fi
+
+    section_file=$(mktemp)
+    trap 'rm -f "$section_file"' EXIT
+    extract_section > "$section_file"
+    lines=$(awk 'END { print NR + 0 }' "$section_file")
     if [ "$lines" -gt "$MAX_LINES" ]; then
-      echo "FAIL $map: $lines lines (cap $MAX_LINES) — prune, don't append" >&2; rc=1
+      echo "FAIL $agents: Project map has $lines lines (cap $MAX_LINES) — prune, don't append" >&2
+      rc=1
     fi
-    for s in "${SECTIONS[@]}"; do
-      grep -qxF "$s" "$map" || { echo "FAIL $map: missing section '$s'" >&2; rc=1; }
-    done
-    # Decisions must be dated (YYYY-MM); tolerate an empty section.
-    dec=$(sed -n '/^## Decisions$/,$p' "$map" | sed '1d' | sed '/^<!--/d;/^\s*$/d')
-    if [ -n "$dec" ] && ! printf '%s\n' "$dec" | grep -Eq '20[0-9]{2}-[01][0-9]'; then
-      echo "FAIL $map: Decisions section has no dated (YYYY-MM) entries" >&2; rc=1
+
+    actual_sections=$(awk '/^### / { print }' "$section_file")
+    expected_sections=$(printf '%s\n' "${SECTIONS[@]}")
+    if [ "$actual_sections" != "$expected_sections" ]; then
+      echo "FAIL $agents: Project map must contain exactly the four required ### subsections in contract order" >&2
+      rc=1
     fi
-    [ "$rc" -eq 0 ] && echo "OK $map: $lines/$MAX_LINES lines"
+
+    marker_count=$(awk '/^<!-- project-map-reviewed: [0-9]{4}-[0-9]{2}-[0-9]{2} -->$/ { count++ } END { print count + 0 }' "$section_file")
+    all_marker_count=$(awk '/project-map-reviewed:/ { count++ } END { print count + 0 }' "$section_file")
+    positioned_marker_count=$(awk 'NR == 2 && /^<!-- project-map-reviewed: [0-9]{4}-[0-9]{2}-[0-9]{2} -->$/ { count++ } END { print count + 0 }' "$section_file")
+    if [ "$marker_count" -ne 1 ] || [ "$all_marker_count" -ne 1 ] || [ "$positioned_marker_count" -ne 1 ]; then
+      echo "FAIL $agents: Project map needs exactly one '<!-- project-map-reviewed: YYYY-MM-DD -->' marker" >&2
+      rc=1
+    else
+      review_date=$(sed -n 's/^<!-- project-map-reviewed: \([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]\) -->$/\1/p' "$section_file")
+      if ! valid_date "$review_date"; then
+        echo "FAIL $agents: invalid Project map review date '$review_date'" >&2
+        rc=1
+      fi
+    fi
+
+    if ! grep -qxF "$EMPTY_COMMENT" "$section_file"; then
+      decisions=$(awk '
+        $0 == "### Decisions" { in_decisions = 1; next }
+        in_decisions && /^### / { exit }
+        in_decisions && /^[[:space:]]*<!--/ { next }
+        in_decisions { print }
+      ' "$section_file")
+      if ! printf '%s\n' "$decisions" | grep -Eq '(^|[^0-9])[0-9]{4}-(0[1-9]|1[0-2])([^0-9]|$)'; then
+        echo "FAIL $agents: Decisions subsection has no YYYY-MM dated entry" >&2
+        rc=1
+      fi
+    fi
+
+    if [ "$rc" -eq 0 ]; then
+      echo "OK $agents: $lines/$MAX_LINES project-map lines"
+    fi
     exit "$rc"
     ;;
 
   check)
-    [ -f "$map" ] || die "$map missing (run: project-map init $dir)"
+    lint_rc=0
+    "$0" lint "$dir" >/dev/null || lint_rc=$?
+    [ "$lint_rc" -eq 0 ] || exit "$lint_rc"
     git -C "$dir" rev-parse --git-dir >/dev/null 2>&1 || die "$dir is not a git repo"
-    map_commit=$(git -C "$dir" log -1 --format=%H -- MAP.md 2>/dev/null || true)
-    if [ -z "$map_commit" ]; then
-      echo "WARN $map: never committed"; exit 0
+
+    review_date=$(sed -n 's/^<!-- project-map-reviewed: \([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]\) -->$/\1/p' <(extract_section))
+    valid_date "$review_date" || die "$agents has invalid Project map review date '$review_date'"
+    today=$(date +%F)
+    if [[ "$review_date" > "$today" ]]; then
+      die "$agents has future Project map review date '$review_date'"
     fi
-    behind=$(git -C "$dir" rev-list --count "$map_commit"..HEAD)
-    map_ts=$(git -C "$dir" log -1 --format=%ct -- MAP.md)
-    days=$(( ( $(date +%s) - map_ts ) / 86400 ))
-    if [ "$behind" -gt "$STALE_COMMITS" ] || [ "$days" -gt "$STALE_DAYS" ]; then
-      echo "STALE $map: $behind commits / $days days behind — review and re-date"
+
+    review_epoch=$(date -d "$review_date" +%s)
+    today_epoch=$(date -d "$today" +%s)
+    days=$(( (today_epoch - review_epoch) / 86400 ))
+    day_after=$(date -d "$review_date + 1 day" +%F)
+    commits=$(git -C "$dir" rev-list --count --since="$day_after 00:00:00" HEAD)
+
+    if [ "$days" -gt "$STALE_DAYS" ] || [ "$commits" -gt "$STALE_COMMITS" ]; then
+      echo "STALE $agents: reviewed $review_date ($days days / $commits commits since review) — review and re-date"
       exit 2
     fi
-    echo "OK $map: $behind commits / $days days behind"
+    echo "OK $agents: reviewed $review_date ($days days / $commits commits since review)"
     ;;
 
   *)
