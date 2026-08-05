@@ -145,6 +145,13 @@ Key facts learned from oh-my-pi source:
 Verified end to end: pty-launched omp, prompt "call quit_session then say
 bye" → tool ran, reply rendered, process exited 0 on its own.
 
+2026-08-05 later: added `kill_terminal` param (used by `/wq`, which is now a
+real file in `shared/commands/`, no longer a symlink to `wrapup.md`). It
+spawns a detached bash watcher at execute time that polls `kill -0 <omp pid>`
+and SIGHUPs `process.ppid` (the launching shell) once omp exits — closing the
+terminal window / tmux pane. HUP, not TERM, so the shell tears down as if the
+terminal closed. Guarded against ppid <= 1.
+
 ## 2026-08-05 — playground-routing queue item resolved
 
 Queue item #3 executed: the old `playground-routing` branch's only delta vs master was
