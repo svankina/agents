@@ -25,6 +25,7 @@ import argparse
 import json
 import os
 import signal
+import select
 import socket
 import subprocess
 import sys
@@ -78,6 +79,35 @@ def start_time(pid: int) -> str | None:
 
 def alive(pid: int, expected_start: str) -> bool:
     return start_time(pid) == expected_start
+
+
+def wait_for_exit(pid: int, expected_start: str, timeout: float) -> bool:
+    """Block until the process exits; True on exit, False on timeout.
+
+    Uses pidfd_open + select for a real exit event (no polling); a recycled
+    pid never matches expected_start, so it counts as already exited. Falls
+    back to a 50ms /proc poll only when pidfd is unavailable.
+    """
+    deadline = time.monotonic() + timeout
+    if not alive(pid, expected_start):
+        return True
+    try:
+        fd = os.pidfd_open(pid)
+    except OSError:
+        fd = None
+    if fd is not None:
+        try:
+            if not alive(pid, expected_start):
+                return True  # exited (or pid recycled) while opening
+            readable, _, _ = select.select([fd], [], [], max(0.0, deadline - time.monotonic()))
+            return bool(readable) or not alive(pid, expected_start)
+        finally:
+            os.close(fd)
+    while alive(pid, expected_start):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+    return True
 
 
 def tmux_pane_pid(tmux_socket: str | None, pane: str) -> int | None:
@@ -136,12 +166,9 @@ def handle(request: dict) -> None:
     timeout = float(request.get("timeout") or DEFAULT_TIMEOUT)
 
     label = f"agent {agent_pid} shell {shell_pid} pane {pane or '-'}"
-    deadline = time.monotonic() + timeout
-    while alive(agent_pid, agent_start):
-        if time.monotonic() >= deadline:
-            log(f"{label}: agent still running after {timeout:.0f}s; leaving everything alone")
-            return
-        time.sleep(0.05)
+    if not wait_for_exit(agent_pid, agent_start, timeout):
+        log(f"{label}: agent still running after {timeout:.0f}s; leaving everything alone")
+        return
 
     if pane:
         current = tmux_pane_pid(tmux_socket, pane)
