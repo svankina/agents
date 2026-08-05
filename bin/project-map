@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# project-map — curated per-project agent context (MAP.md).
+#
+# MAP.md is the distilled, auto-read project brief for agents: architecture,
+# where-things-live, invariants, dated decisions. Hard-capped so it stays
+# curated. NOTES.md remains the raw append-only log; MAP.md is the index.
+#
+# Usage:
+#   project-map init [DIR]     create MAP.md template (refuses to overwrite)
+#   project-map lint [DIR]     enforce size cap + required sections
+#   project-map check [DIR]    staleness: MAP.md age vs repo activity
+set -euo pipefail
+
+MAX_LINES=150
+STALE_COMMITS=30
+STALE_DAYS=60
+SECTIONS=("## Architecture" "## Where things live" "## Invariants & gotchas" "## Decisions")
+
+die() { echo "project-map: $*" >&2; exit 1; }
+
+cmd="${1:-}"; shift || true
+dir="${1:-.}"
+map="$dir/MAP.md"
+
+case "$cmd" in
+  init)
+    [ -e "$map" ] && die "$map already exists"
+    name="$(basename "$(cd "$dir" && pwd)")"
+    cat > "$map" <<EOF
+# $name — agent map
+
+Distilled project brief. Read this before working; it replaces re-deriving
+the repo from scratch. Litmus for every line: "would a fresh agent do
+something wrong or slow without this?" If no, it belongs in NOTES.md.
+Maintained by agents: at wrap-up, add/prune/date entries, then run
+\`project-map lint\`. Hard cap: $MAX_LINES lines.
+
+## Architecture
+
+<!-- <=10 lines: what this is, the moving parts, how data flows -->
+
+## Where things live
+
+| Path | What |
+|---|---|
+
+## Invariants & gotchas
+
+<!-- things that break agents: rate limits, files never to commit, ports, perms -->
+
+## Decisions
+
+<!-- dated, with reasons: "2026-07: X goes through Y, not Z — Z's auth broke" -->
+EOF
+    echo "$map"
+    ;;
+
+  lint)
+    [ -f "$map" ] || die "$map missing (run: project-map init $dir)"
+    rc=0
+    lines=$(wc -l < "$map")
+    if [ "$lines" -gt "$MAX_LINES" ]; then
+      echo "FAIL $map: $lines lines (cap $MAX_LINES) — prune, don't append" >&2; rc=1
+    fi
+    for s in "${SECTIONS[@]}"; do
+      grep -qxF "$s" "$map" || { echo "FAIL $map: missing section '$s'" >&2; rc=1; }
+    done
+    # Decisions must be dated (YYYY-MM); tolerate an empty section.
+    dec=$(sed -n '/^## Decisions$/,$p' "$map" | sed '1d' | sed '/^<!--/d;/^\s*$/d')
+    if [ -n "$dec" ] && ! printf '%s\n' "$dec" | grep -Eq '20[0-9]{2}-[01][0-9]'; then
+      echo "FAIL $map: Decisions section has no dated (YYYY-MM) entries" >&2; rc=1
+    fi
+    [ "$rc" -eq 0 ] && echo "OK $map: $lines/$MAX_LINES lines"
+    exit "$rc"
+    ;;
+
+  check)
+    [ -f "$map" ] || die "$map missing (run: project-map init $dir)"
+    git -C "$dir" rev-parse --git-dir >/dev/null 2>&1 || die "$dir is not a git repo"
+    map_commit=$(git -C "$dir" log -1 --format=%H -- MAP.md 2>/dev/null || true)
+    if [ -z "$map_commit" ]; then
+      echo "WARN $map: never committed"; exit 0
+    fi
+    behind=$(git -C "$dir" rev-list --count "$map_commit"..HEAD)
+    map_ts=$(git -C "$dir" log -1 --format=%ct -- MAP.md)
+    days=$(( ( $(date +%s) - map_ts ) / 86400 ))
+    if [ "$behind" -gt "$STALE_COMMITS" ] || [ "$days" -gt "$STALE_DAYS" ]; then
+      echo "STALE $map: $behind commits / $days days behind — review and re-date"
+      exit 2
+    fi
+    echo "OK $map: $behind commits / $days days behind"
+    ;;
+
+  *)
+    die "usage: project-map {init|lint|check} [DIR]"
+    ;;
+esac
