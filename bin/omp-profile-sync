@@ -6,12 +6,17 @@
 #   config.yml  copied when missing (omp rewrites it at runtime, so it must be a real file)
 #   mcp.json    copied when missing (same reason)
 #   skills/     symlinks to every shared skill in ~/src/agents/shared/skills
+#   commands/   symlinks to every shared command in ~/src/agents/shared/commands
+# and  ~/.omp/profiles/<name>/plugins  is symlinked to  ~/.omp/plugins  so every
+# profile shares the base plugin installs and settings (omp-tokrate footer etc.).
 #
 # --force re-copies config.yml/mcp.json over runtime state.
 set -euo pipefail
 
 SRC="$HOME/src/agents/omp/profiles"
 DST="$HOME/.omp/profiles"
+COMMANDS_SRC="$HOME/src/agents/shared/commands"
+PLUGINS_BASE="$HOME/.omp/plugins"
 SKILLS_SRC="$HOME/src/agents/shared/skills"
 FORCE=0
 [[ "${1:-}" == "--force" ]] && FORCE=1
@@ -35,6 +40,19 @@ for dir in "$SRC"/*/; do
   for s in "$SKILLS_SRC"/*/; do
     ln -sfn "${s%/}" "$agent/skills/$(basename "$s")"
   done
+  mkdir -p "$agent/commands"
+  for c in "$COMMANDS_SRC"/*.md; do
+    ln -sfn "$c" "$agent/commands/$(basename "$c")"
+  done
+
+  # Shared plugin store: profiles resolve plugins under their own config root,
+  # so without this link a profile has no plugins (and no tokrate footer).
+  plugins="$DST/$name/plugins"
+  if [[ -d "$plugins" && ! -L "$plugins" ]]; then
+    echo "$name: WARNING: $plugins is a real directory; not linking (merge or remove it manually)" >&2
+  else
+    ln -sfn "$PLUGINS_BASE" "$plugins"
+  fi
 
   echo "$name: ok"
 done

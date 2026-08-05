@@ -1,0 +1,62 @@
+# sol profile — GPT-5.6-Sol main agent with tiered subagent routing.
+# Tiers: sol flagship ($5/$30) > terra mid ($2/$12) > luna small ($0.2/$1.2);
+# codex-spark = fast code model, text-only, 128K.
+modelRoles:
+  default: openai-codex/gpt-5.6-sol:medium
+  slow: openai-codex/gpt-5.6-sol:xhigh
+  plan: openai-codex/gpt-5.6-sol:high
+  # Default worker for delegated implementation (task tool).
+  task: openai-codex/gpt-5.6-terra:medium
+  # Fast background roles: titles, summaries, classification, commits.
+  smol: openai-codex/gpt-5.6-luna:low
+  tiny: openai-codex/gpt-5.6-luna:low
+  commit: openai-codex/gpt-5.6-luna:low
+  vision: openai-codex/gpt-5.6-terra:medium
+  advisor: openai-codex/gpt-5.6-terra:medium
+  designer: openai-codex/gpt-5.6-terra:high
+  # Custom roles consumed by task.agentModelOverrides below.
+  review: openai-codex/gpt-5.6-terra:high
+  scan: openai-codex/gpt-5.6-luna:medium
+  mech: openai-codex/gpt-5.3-codex-spark:low
+task:
+  agentModelOverrides:
+    scout: "@scan"
+    librarian: "@scan"
+    sonic: "@mech"
+    reviewer: "@review"
+    security-reviewer: "@review"
+enabledModels:
+  - openai-codex/gpt-5.6-sol
+  - openai-codex/gpt-5.6-terra
+  - openai-codex/gpt-5.6-luna
+  - openai-codex/gpt-5.3-codex-spark
+defaultThinkingLevel: medium
+startup:
+  quiet: true
+setupVersion: 1
+# Shared look & feel (matches the base profile: shared extensions provide /mod
+# and the startup display; statusLine is emptied because the omp-tokrate
+# plugin draws the footer line).
+symbolPreset: unicode
+theme:
+  dark: titanium
+extensions:
+  - ~/src/agents/omp/extensions
+statusLine:
+  preset: custom
+  leftSegments:
+    []
+  rightSegments:
+    []
+  segmentOptions:
+    model:
+      showThinkingLevel: false
+    path:
+      abbreviate: true
+      maxLength: 40
+      stripWorkPrefix: true
+    git:
+      showBranch: true
+      showStaged: true
+      showUnstaged: true
+      showUntracked: false

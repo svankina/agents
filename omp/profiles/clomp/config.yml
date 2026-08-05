@@ -1,0 +1,46 @@
+# clomp profile — Claude-only omp (fable-5 everywhere, opus-5 for task).
+modelRoles:
+  default: anthropic/claude-fable-5:medium
+  smol: anthropic/claude-fable-5:medium
+  slow: anthropic/claude-fable-5:medium
+  plan: anthropic/claude-fable-5:medium
+  vision: anthropic/claude-fable-5:medium
+  commit: anthropic/claude-fable-5:medium
+  advisor: anthropic/claude-fable-5:medium
+  designer: anthropic/claude-fable-5:medium
+  task: anthropic/claude-opus-5:medium
+enabledModels:
+  - anthropic/claude-fable-5
+  - anthropic/claude-opus-5
+defaultThinkingLevel: medium
+startup:
+  quiet: true
+setupVersion: 1
+dev:
+  autoqaConsent: granted
+# Shared look & feel (matches the base profile: shared extensions provide /mod
+# and the startup display; statusLine is emptied because the omp-tokrate
+# plugin draws the footer line).
+symbolPreset: unicode
+theme:
+  dark: titanium
+extensions:
+  - ~/src/agents/omp/extensions
+statusLine:
+  preset: custom
+  leftSegments:
+    []
+  rightSegments:
+    []
+  segmentOptions:
+    model:
+      showThinkingLevel: false
+    path:
+      abbreviate: true
+      maxLength: 40
+      stripWorkPrefix: true
+    git:
+      showBranch: true
+      showStaged: true
+      showUnstaged: true
+      showUntracked: false
