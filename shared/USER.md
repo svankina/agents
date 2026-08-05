@@ -31,6 +31,20 @@ context; do not edit the generated copies.
 - No passwordless sudo; privileged work goes through `psudo` handoffs.
 - Reachable on Android via `homer-notify`, for genuinely blocking events only.
 
+## Hardware (2026-08-05)
+
+- **GPU for compute: NVIDIA RTX 3090 Ti, 24 GB VRAM** (driver 580, CUDA 12.0,
+  PCI `42:00.0`). It is dedicated to CUDA/ML — the display runs on a separate
+  AMD RX 580, so the 3090 Ti is normally idle and free. **Run ML/compute work
+  on the GPU, not the CPU.** Verify with `nvidia-smi` before assuming it's
+  busy. (Known squatter: a `kokoro-tts` service run by user `ai-server` may be
+  parked on it; it can be stopped.)
+- Display GPU: AMD RX 580 (PCI `08:00.0`), X11 on display `:1`. Never target
+  it for compute.
+- CPU: AMD Threadripper 1920X — 12 cores / 24 threads.
+- RAM: 64 GB.
+- Storage: 2 TB NVMe (Sabrent Rocket Q) as the single root/home filesystem.
+
 ## Projects and systems
 
 - Durable user queue: `~/src/user/user-queue.sqlite3`, managed with the global
