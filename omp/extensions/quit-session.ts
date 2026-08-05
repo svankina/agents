@@ -9,7 +9,7 @@
  * exactly right: reply streams first, then the session exits like /quit.
  *
  * Used by the /wrapup command: post agent-status, call quit_session, reply.
- * Installed via symlink into each profile's agent/extensions/ dir.
+ * Loaded via `extensions: [~/src/agents/omp/extensions]` in each profile's config.yml.
  */
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 
