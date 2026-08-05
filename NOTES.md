@@ -144,3 +144,14 @@ Key facts learned from oh-my-pi source:
 
 Verified end to end: pty-launched omp, prompt "call quit_session then say
 bye" → tool ran, reply rendered, process exited 0 on its own.
+
+## 2026-08-05 — playground-routing queue item resolved
+
+Queue item #3 executed: the old `playground-routing` branch's only delta vs master was
+unrelated work (routing itself was already byte-identical on master). Split d56f715 →
+branch `omp-agent-folder`, 267b700 → branch `worktree-workflow-skill` (both pushed,
+unmerged, for review); dropped f148b33 (warpfork deletion) and deleted the branch
+local+remote. Narrowed the routing contract on master (a30626a): with an active
+playground marker, direct-fs tools (read/edit/write/grep/find/ls) are blocked with a
+use-bash-or-deactivate reason — split-brain is now loud instead of silent. 17 extension
+tests pass. Marker detection mirrors tester lib/playgrounds/active.py.
