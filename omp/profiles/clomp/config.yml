@@ -1,17 +1,30 @@
-# clomp profile — Claude-only omp (fable-5 everywhere, opus-5 for task).
+# clomp profile — eval-tuned roles (2026-08-05): sonnet-5 interactive,
+# codex (priority tier) for smol/task/advisor/commit, opus-5 for slow/plan.
+# Basis: MVP evals in ~/src/omp session — e2e bugfix wall-clock, probes, bench.
 modelRoles:
-  default: anthropic/claude-fable-5:medium
-  smol: anthropic/claude-fable-5:medium
-  slow: anthropic/claude-fable-5:medium
-  plan: anthropic/claude-fable-5:medium
-  vision: anthropic/claude-fable-5:medium
-  commit: anthropic/claude-fable-5:medium
-  advisor: anthropic/claude-fable-5:medium
-  designer: anthropic/claude-fable-5:medium
-  task: anthropic/claude-opus-5:medium
+  default: anthropic/claude-sonnet-5
+  smol: openai-codex/gpt-5.4-mini:medium
+  slow: anthropic/claude-opus-5:high
+  plan: anthropic/claude-opus-5:high
+  vision: anthropic/claude-haiku-4-5:medium
+  commit: openai-codex/gpt-5.4-mini:medium
+  advisor: openai-codex/gpt-5.4-mini:medium
+  designer: anthropic/claude-sonnet-5:medium
+  task: openai-codex/gpt-5.5:medium
+task:
+  agentModelOverrides:
+    scout: openai-codex/gpt-5.3-codex-spark:medium
+    sonic: openai-codex/gpt-5.4-mini:low
+tier:
+  openai: priority
 enabledModels:
-  - anthropic/claude-fable-5
+  - anthropic/claude-sonnet-5
   - anthropic/claude-opus-5
+  - anthropic/claude-fable-5
+  - anthropic/claude-haiku-4-5
+  - openai-codex/gpt-5.5
+  - openai-codex/gpt-5.4-mini
+  - openai-codex/gpt-5.3-codex-spark
 defaultThinkingLevel: medium
 startup:
   quiet: true
