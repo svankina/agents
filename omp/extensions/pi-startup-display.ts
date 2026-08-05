@@ -227,6 +227,17 @@ export default function piStartupDisplay(api: ExtensionAPI): void {
 		widget = undefined;
 	};
 
+	// The widget lives in the fixed region above the editor, which the TUI
+	// discards once the first turn starts. Re-emit its current content as a
+	// transcript notification first, so the startup info survives in native
+	// scrollback above the first user message instead of vanishing.
+	const persistToTranscript = (): void => {
+		if (!widget || !activeUi) return;
+		const width = Math.max(20, (process.stdout.columns ?? 80) - 2);
+		const lines = widget.render(width);
+		if (lines.length > 0) activeUi.notify(lines.join("\n"), "info");
+	};
+
 	const install = async (ctx: ExtensionContext): Promise<void> => {
 		clear();
 		if (!ctx.hasUI) return;
@@ -253,6 +264,18 @@ export default function piStartupDisplay(api: ExtensionAPI): void {
 
 	api.on("session_start", async (_event, ctx) => install(ctx));
 	api.on("session_switch", async (_event, ctx) => install(ctx));
-	api.on("before_agent_start", () => clear());
+	// First submission of any kind: flush the widget into the transcript before
+	// the user message is echoed, so it reads in chronological order above it.
+	api.on("input", () => {
+		persistToTranscript();
+		clear();
+		return undefined;
+	});
+	// Fallback for prompts that bypass the editor (initial CLI message,
+	// continue shortcuts, extension-sent user messages).
+	api.on("before_agent_start", () => {
+		persistToTranscript();
+		clear();
+	});
 	api.on("session_shutdown", () => clear());
 }
