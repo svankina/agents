@@ -55,6 +55,34 @@ export function locatePlaygroundBin(start: string): string | null {
   return null;
 }
 
+// Mirror active.py's safe_session_id: any char outside [A-Za-z0-9._-] becomes "_".
+export function safeSessionId(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]/g, "_");
+}
+
+// True when this session has an active playground marker in the repo owning
+// `bin` (bin is <repo>/bin/playground; markers live in
+// <repo>/.tester/playgrounds/active/<safe_session_id>.json).
+export function hasActiveMarker(bin: string, sessionId: string): boolean {
+  const repo = dirname(dirname(bin));
+  return existsSync(
+    resolve(repo, ".tester", "playgrounds", "active", `${safeSessionId(sessionId)}.json`),
+  );
+}
+
+// Tools that read or mutate the filesystem directly, bypassing the routed
+// shell. While a playground is active these would silently operate on the
+// HOST checkout while bash runs in the playground worktree (split-brain), so
+// the narrowed contract blocks them instead.
+export const GUARDED_TOOLS: Record<string, true> = {
+  read: true,
+  edit: true,
+  write: true,
+  grep: true,
+  find: true,
+  ls: true,
+};
+
 // Build the transparent wrapper for a single bash command. Pins
 // PLAYGROUND_SESSION_ID for both the route call and any activate it wraps, then
 // execs the wrapper so its stdout/stderr/exit become the tool result.
@@ -78,10 +106,27 @@ export default function (pi: ExtensionAPI) {
   }
 
   pi.on("tool_call", async (event, ctx) => {
+    const ctxCwd = ctx && typeof ctx === "object" && "cwd" in ctx ? ctx.cwd : undefined;
+    const cwd = typeof ctxCwd === "string" && ctxCwd ? ctxCwd : process.cwd();
     if (!isToolCallEventType("bash", event)) {
+      // Narrowed contract: routing only covers bash. Any direct-filesystem
+      // tool is blocked while a playground is active rather than silently
+      // touching the host checkout.
+      if (GUARDED_TOOLS[event.toolName]) {
+        const guardBin = locatePlaygroundBin(cwd);
+        if (guardBin && hasActiveMarker(guardBin, ROUTING_SESSION_ID)) {
+          return {
+            block: true,
+            reason:
+              `Blocked: a tester playground is active for this session (${ROUTING_SESSION_ID}), ` +
+              "so this tool would operate on the HOST checkout while bash commands run " +
+              "in the playground worktree. Use the bash tool (it is routed into the " +
+              "playground) or run `bin/playground deactivate` first.",
+          };
+        }
+      }
       return;
     }
-    const cwd = (ctx && (ctx as { cwd?: string }).cwd) || process.cwd();
     const bin = locatePlaygroundBin(cwd);
     if (!bin) {
       // Can't find bin/playground: leave the command untouched (runs on host).

@@ -121,6 +121,14 @@ host**. A single stable `PLAYGROUND_SESSION_ID` is pinned per Pi process and inj
 into the wrapped command so that a `playground activate` run from inside the session
 and the later routed commands all resolve the **same** marker.
 
+**Narrowed contract / split-brain guard:** routing covers the **Bash tool only**.
+Pi's direct-filesystem tools (`read`, `edit`, `write`, `grep`, `find`, `ls`) are
+never routed — they would silently operate on the HOST checkout while bash runs
+in the playground worktree. While a playground marker is active for the session,
+the hook therefore **blocks** those tools (`{ block: true }` with an explanatory
+reason: use bash, or `bin/playground deactivate`). With no active marker they
+pass through untouched.
+
 | Env | Purpose |
 |---|---|
 | `PLAYGROUND_ROUTING_ENABLED` | `1` to enable the routing hook (default off) |

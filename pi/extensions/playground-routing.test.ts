@@ -187,3 +187,67 @@ test("handler leaves the command on the host when no playground bin is found", a
     rmSync(dir, { recursive: true, force: true });
   }
 });
+// --- split-brain guard for non-bash tools -----------------------------------
+
+// The module pins its session id at import time (no env set here), so the
+// marker file name must match that pinned id.
+const pinnedSid = mod.safeSessionId(mod.resolveSessionId({}));
+
+function guardRepo(withMarker: boolean): { repo: string; bin: string } {
+  const repo = mkdtempSync(join(tmpdir(), "pgguard-"));
+  mkdirSync(join(repo, ".tester", "playgrounds", "active"), { recursive: true });
+  mkdirSync(join(repo, "bin"), { recursive: true });
+  const bin = join(repo, "bin", "playground");
+  writeFileSync(bin, "#!/bin/sh\n");
+  if (withMarker) {
+    writeFileSync(
+      join(repo, ".tester", "playgrounds", "active", `${pinnedSid}.json`),
+      JSON.stringify({ schema_version: "playground-active.v1" }),
+    );
+  }
+  return { repo, bin };
+}
+
+test("guarded tools are blocked while a playground marker is active", async () => {
+  process.env.PLAYGROUND_ROUTING_ENABLED = "1";
+  const { repo } = guardRepo(true);
+  try {
+    const { pi, handlers } = fakePi();
+    mod.default(pi);
+    const event: any = { tool: "edit", toolName: "edit", input: { path: "x.ts" } };
+    const result = await handlers["tool_call"](event, { cwd: repo });
+    expect(result?.block).toBe(true);
+    expect(result?.reason).toContain("playground is active");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("guarded tools pass through when no marker exists for this session", async () => {
+  process.env.PLAYGROUND_ROUTING_ENABLED = "1";
+  const { repo } = guardRepo(false);
+  try {
+    const { pi, handlers } = fakePi();
+    mod.default(pi);
+    const event: any = { tool: "read", toolName: "read", input: { path: "x.ts" } };
+    const result = await handlers["tool_call"](event, { cwd: repo });
+    expect(result).toBeUndefined();
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("bash is still routed, not blocked, while a marker is active", async () => {
+  process.env.PLAYGROUND_ROUTING_ENABLED = "1";
+  const { repo, bin } = guardRepo(true);
+  try {
+    const { pi, handlers } = fakePi();
+    mod.default(pi);
+    const event = bashEvent("echo hi");
+    const result = await handlers["tool_call"](event, { cwd: repo });
+    expect(result).toBeUndefined();
+    expect(event.input.command).toContain(`'${bin}' route --exec`);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
