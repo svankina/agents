@@ -120,3 +120,27 @@ in that directory as an extension entry point; it does not exclude
 Otherwise startup imports `bun:test` in the normal runtime and warns, for
 example, `Cannot use afterEach() outside of the test runner`. Reproduce with
 `omp models openai-codex`; `--no-extensions` removes the warning.
+
+## 2026-08-05 — quit_session omp extension (/wrapup :wq behavior)
+
+`omp/extensions/quit-session.ts` registers a `quit_session` tool; `/wrapup`
+calls it so one command posts the Mattermost status AND exits the session.
+Key facts learned from oh-my-pi source:
+
+- `ctx.shutdown()` in an extension only sets `shutdownRequested`; teardown
+  runs when the main loop hits `checkShutdownRequested()` at the idle
+  boundary right after the current prompt finishes. So call it
+  **synchronously inside tool execute** — deferred timers (session_stop +
+  setTimeout, idle-polling) fire after that check and the flag sits unread
+  until the next user input.
+- `session_stop` never fires for subagent sessions (`agentKind === "sub"`).
+- Extension discovery is per-profile: `~/.omp/agent/extensions/` plus
+  `~/.omp/profiles/<name>/agent/extensions/`. agents-sync does NOT manage
+  these; the quit-session symlinks were created manually in every profile.
+  New profiles need `ln -sfn ~/src/agents/omp/extensions/quit-session.ts
+  <profile>/agent/extensions/quit-session.ts`.
+- Footer "(sub)" in the omp TUI is the *subscription billing* tag, not
+  "subagent".
+
+Verified end to end: pty-launched omp, prompt "call quit_session then say
+bye" → tool ran, reply rendered, process exited 0 on its own.

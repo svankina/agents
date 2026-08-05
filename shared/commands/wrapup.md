@@ -17,6 +17,9 @@ The session is ending. Do this now, in order:
    Use your agent name or the project directory basename as `--source`.
    Verify the command exited 0; if it failed, report the error instead of
    claiming the post was made.
-3. Reply with the exact line you posted, plus anything left uncommitted,
+3. If a `quit_session` tool is available, call it now — it ends the session
+   gracefully after your final reply is delivered (vim `:wq`). If the tool
+   does not exist in this harness, skip this step.
+4. Reply with the exact line you posted, plus anything left uncommitted,
    unpushed, or unfinished (or "nothing pending"). Then stop — no further
    work, no follow-up offers.
