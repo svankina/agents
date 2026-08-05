@@ -37,7 +37,16 @@ export default function messageTimestamps(pi: ExtensionAPI) {
 		return new Text(theme.fg("dim", formatTime(at)), 1, 0);
 	});
 
+	// The agent loop re-emits message_start/message_end for a turn's input
+	// messages on retry/gate paths (agent-loop.ts emitInputMessages), so the
+	// same message can arrive more than once. Key on role+timestamp, the same
+	// signature omp's event controller uses to dedupe custom-message display.
+	const stamped = new Set<string>();
+
 	const stamp = (who: Stamp["who"], at: number) => {
+		const key = `${who}:${at}`;
+		if (stamped.has(key)) return;
+		stamped.add(key);
 		try {
 			pi.sendMessage({ customType: TYPE, content: "", display: true, details: { at, who } satisfies Stamp });
 		} catch {
