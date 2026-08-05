@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# mm-profile-bot — give an omp profile its own Mattermost bot presence.
+#
+# Usage: mm-profile-bot <name> [--description TEXT]
+#
+# Creates bot <name> on the local Mattermost, adds it to team `home` and
+# channel `status-updates`, mints a bot access token, and writes
+# ~/.config/agent-status/bots/<name>.env so `agent-status --source <name>`
+# posts AS that bot. Idempotent: safe to re-run; existing bots are reused,
+# but a fresh bot token is minted each run (old ones stay valid).
+#
+# Uses the short-lived admin PAT dance from ~/src/mattermost/avatars/sync.py:
+# server settings are flipped only if off and restored afterwards.
+# Avatars arrive automatically via mattermost-avatars.timer (autoavatar.py).
+set -euo pipefail
+
+MM_DIR=~/src/mattermost
+MM_URL=http://localhost:8065
+TEAM=home
+CHANNEL=status-updates
+ADMIN=sravan
+CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/agent-status/bots"
+
+name="${1:?usage: mm-profile-bot <name> [--description TEXT]}"
+shift
+description="omp profile ${name} — coding agent on Sravan's workstation"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --description) description="$2"; shift 2 ;;
+    --description=*) description="${1#*=}"; shift ;;
+    *) echo "mm-profile-bot: unknown arg: $1" >&2; exit 2 ;;
+  esac
+done
+
+mm() { docker compose -f "$MM_DIR/compose.yaml" exec -T mattermost mmctl --local "$@"; }
+api() { # api METHOD PATH [JSON_BODY]
+  local method="$1" path="$2" body="${3:-}"
+  curl -sS -X "$method" "$MM_URL/api/v4$path" \
+    -H "Authorization: Bearer $ADMIN_TOKEN" \
+    ${body:+-H 'Content-Type: application/json' -d "$body"}
+}
+
+get_setting() { mm config get "$1" | tr -d '[:space:]"'; }
+set_setting() { mm config set "$1" "$2" >/dev/null; }
+
+pat_was="$(get_setting ServiceSettings.EnableUserAccessTokens)"
+bot_was="$(get_setting ServiceSettings.EnableBotAccountCreation)"
+[[ "$pat_was" == "true" ]] || set_setting ServiceSettings.EnableUserAccessTokens true
+[[ "$bot_was" == "true" ]] || set_setting ServiceSettings.EnableBotAccountCreation true
+
+ADMIN_TOKEN_ID="" ADMIN_TOKEN=""
+cleanup() {
+  [[ -n "$ADMIN_TOKEN_ID" ]] && mm token revoke "$ADMIN_TOKEN_ID" >/dev/null || true
+  # Re-read before restoring: a concurrent syncer may have flipped it too.
+  [[ "$pat_was" == "true" ]] || set_setting ServiceSettings.EnableUserAccessTokens false
+  [[ "$bot_was" == "true" ]] || set_setting ServiceSettings.EnableBotAccountCreation false
+}
+trap cleanup EXIT
+
+admin_json="$(mm token generate "$ADMIN" "mm-profile-bot $name" --json)"
+ADMIN_TOKEN_ID="$(jq -r 'if type=="array" then .[0].id else .id end' <<<"$admin_json")"
+ADMIN_TOKEN="$(jq -r 'if type=="array" then .[0].token else .token end' <<<"$admin_json")"
+
+# Bot user (reuse if it already exists)
+user_json="$(api GET "/users/username/$name")"
+bot_id="$(jq -r 'if .status_code then empty else .id // empty end' <<<"$user_json")"
+if [[ -z "$bot_id" ]]; then
+  bot_json="$(api POST /bots "$(jq -n --arg u "$name" --arg d "$description" \
+    '{username: $u, display_name: $u, description: $d}')")"
+  bot_id="$(jq -r '.user_id // empty' <<<"$bot_json")"
+  [[ -n "$bot_id" ]] || { echo "mm-profile-bot: bot creation failed: $bot_json" >&2; exit 1; }
+  echo "created bot $name ($bot_id)"
+else
+  echo "bot $name already exists ($bot_id)"
+fi
+
+team_id="$(api GET "/teams/name/$TEAM" | jq -r .id)"
+api POST "/teams/$team_id/members" \
+  "$(jq -n --arg t "$team_id" --arg u "$bot_id" '{team_id: $t, user_id: $u}')" >/dev/null
+channel_id="$(api GET "/teams/$team_id/channels/name/$CHANNEL" | jq -r .id)"
+api POST "/channels/$channel_id/members" \
+  "$(jq -n --arg u "$bot_id" '{user_id: $u}')" >/dev/null
+
+bot_token_json="$(api POST "/users/$bot_id/tokens" '{"description":"agent-status"}')"
+bot_token="$(jq -r '.token // empty' <<<"$bot_token_json")"
+[[ -n "$bot_token" ]] || { echo "mm-profile-bot: bot token failed: $bot_token_json" >&2; exit 1; }
+
+mkdir -p "$CONF_DIR"
+cat > "$CONF_DIR/$name.env" <<EOF
+MM_URL=$MM_URL
+MM_BOT_TOKEN=$bot_token
+MM_CHANNEL_ID=$channel_id
+EOF
+chmod 600 "$CONF_DIR/$name.env"
+echo "wrote $CONF_DIR/$name.env — agent-status --source $name now posts as @$name"

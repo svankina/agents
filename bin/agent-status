@@ -1,24 +1,32 @@
 #!/usr/bin/env bash
-# agent-status — post a wrap-up status line to the Mattermost #status-updates
-# channel via its incoming webhook.
+# agent-status — post a status line to the Mattermost #status-updates channel.
 #
 # Usage:
-#   agent-status [--source NAME] "message"
+#   agent-status [--source NAME] [--channel NAME] "message"
 #   echo "message" | agent-status [--source NAME]
 #
-# The webhook URL lives in ~/.config/agent-status/webhook (one line).
-# --source sets the displayed username (per-post override); defaults to
-# $AGENT_STATUS_SOURCE, then the basename of the current directory.
+# Fast path: hands the message to agent-msgd over its unix socket
+# ($XDG_RUNTIME_DIR/agent-msgd.sock); the daemon owns all Mattermost
+# minutiae (bot tokens, channel ids, keep-alive connections).
+# Fallback (daemon down): posts directly — as the profile bot if
+# ~/.config/agent-status/bots/<source>.env exists (see mm-profile-bot),
+# else through the incoming webhook with a username override.
+#
+# --source defaults to $AGENT_STATUS_SOURCE, then the basename of $PWD.
 set -euo pipefail
 
-conf="${XDG_CONFIG_HOME:-$HOME/.config}/agent-status/webhook"
+conf_dir="${XDG_CONFIG_HOME:-$HOME/.config}/agent-status"
+sock="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/agent-msgd.sock"
 
 source_name="${AGENT_STATUS_SOURCE:-}"
+channel=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --source) source_name="$2"; shift 2 ;;
     --source=*) source_name="${1#*=}"; shift ;;
-    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+    --channel) channel="$2"; shift 2 ;;
+    --channel=*) channel="${1#*=}"; shift ;;
+    -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
     --) shift; break ;;
     *) break ;;
   esac
@@ -30,18 +38,38 @@ else
   message="$(cat)"
 fi
 [[ -n "$message" ]] || { echo "agent-status: empty message" >&2; exit 1; }
-
-[[ -r "$conf" ]] || { echo "agent-status: missing webhook config: $conf" >&2; exit 1; }
-url="$(head -n1 "$conf")"
-
 [[ -n "$source_name" ]] || source_name="$(basename "$PWD")"
 
-payload="$(jq -n --arg text "$message" --arg username "$source_name" \
-  '{text: $text, username: $username}')"
+payload="$(jq -n --arg s "$source_name" --arg m "$message" --arg c "$channel" \
+  '{source: $s, message: $m} + (if $c != "" then {channel: $c} else {} end)')"
 
-code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$url" \
-  -H 'Content-Type: application/json' -d "$payload")"
-if [[ "$code" != "200" ]]; then
-  echo "agent-status: webhook returned HTTP $code" >&2
-  exit 1
+# Fast path: local daemon over unix socket.
+if [[ -S "$sock" ]]; then
+  reply="$(curl -sS --max-time 10 --unix-socket "$sock" \
+    -X POST http://msgd/post -H 'Content-Type: application/json' \
+    -d "$payload" 2>&1)" && [[ "$(jq -r '.ok // false' <<<"$reply" 2>/dev/null)" == "true" ]] && exit 0
+  echo "agent-status: daemon failed ($reply); falling back to direct post" >&2
 fi
+
+# Fallback: direct post, as bot if creds exist.
+botenv="$conf_dir/bots/$source_name.env"
+if [[ -r "$botenv" && -z "$channel" ]]; then
+  # shellcheck disable=SC1090
+  source "$botenv"
+  body="$(jq -n --arg ch "$MM_CHANNEL_ID" --arg msg "$message" \
+    '{channel_id: $ch, message: $msg}')"
+  code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$MM_URL/api/v4/posts" \
+    -H "Authorization: Bearer $MM_BOT_TOKEN" \
+    -H 'Content-Type: application/json' -d "$body")"
+  [[ "$code" == "201" ]] || { echo "agent-status: bot post returned HTTP $code" >&2; exit 1; }
+  exit 0
+fi
+
+webhook_conf="$conf_dir/webhook"
+[[ -r "$webhook_conf" ]] || { echo "agent-status: missing webhook config: $webhook_conf" >&2; exit 1; }
+url="$(head -n1 "$webhook_conf")"
+body="$(jq -n --arg text "$message" --arg username "$source_name" \
+  '{text: $text, username: $username}')"
+code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$url" \
+  -H 'Content-Type: application/json' -d "$body")"
+[[ "$code" == "200" ]] || { echo "agent-status: webhook returned HTTP $code" >&2; exit 1; }
