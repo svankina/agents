@@ -76,3 +76,27 @@ live agent dirs, or copied into `~/src/pagent`.
 - `pi/skills/browser-harness/` holds **absolute symlinks** into `/home/svankina/src/browser-harness/`;
   it's gitignored because committing them would both break on other machines and leak the path. Never
   `git add` it.
+
+## Project map
+<!-- project-map-reviewed: 2026-08-06 -->
+
+### Architecture
+- Not a package: files here are symlinked into live agent dirs by
+  `bin/agents-sync`; shared/commands/*.md are live immediately (symlinks in
+  `~/.claude/commands/` and `~/.omp/agent/commands/`), no sync needed.
+
+### Where things live
+- `bin/project-map` — embedded `## Project map` contract: exactly the four
+  `###` subsections in order, one `project-map-reviewed` marker on line 2,
+  150-line cap, Decisions needs a YYYY-MM dated entry once non-empty.
+- `shared/commands/wq.md` — wrap-up flow that creates/reviews project maps.
+
+### Invariants & gotchas
+- `project-map init` creates `AGENTS.md` if missing; only then add the
+  `CLAUDE.md -> AGENTS.md` symlink (pre-existing AGENTS.md: leave alone).
+
+### Decisions
+- 2026-08-06: project-map pilot ended (was homer, librarian, manager, omp,
+  triage). `/wq` now runs `project-map init` in any repo lacking the section;
+  rollout is lazy at wrap-up — no eager mass-init, third-party clones
+  included only when a session wraps up there.
