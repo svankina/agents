@@ -166,3 +166,12 @@ tests pass. Marker detection mirrors tester lib/playgrounds/active.py.
 ## 2026-08-06 Project map rolled out to all repos
 
 Ended the project-map pilot (was: homer, librarian, manager, omp, triage). `/wq` now runs `project-map init` when a repo's root `AGENTS.md` lacks a `## Project map` section (creating AGENTS.md + the CLAUDE.md symlink if needed) instead of skipping. Third-party clones get a map only when a session wraps up there; no eager mass-init was done.
+
+## 2026-08-06 OpenRouter API key location
+
+There was no OpenRouter key anywhere on this machine (searched `~/.config`, dotfiles,
+`~/.zshenv`, `~/src/agents`; only Firefox storage and `tokscale/cache/pricing-openrouter.json`
+matched, no credential). Convention established: the key lives in `~/.config/openrouter/key`
+(single line, raw key, dir 700 / file 600), and `~/.zshenv` exports it as
+`OPENROUTER_API_KEY` when readable, so every shell (interactive or not) has it. Key verified
+against `GET https://openrouter.ai/api/v1/key` → 200, $10 limit, paid tier.
