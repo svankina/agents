@@ -162,3 +162,7 @@ local+remote. Narrowed the routing contract on master (a30626a): with an active
 playground marker, direct-fs tools (read/edit/write/grep/find/ls) are blocked with a
 use-bash-or-deactivate reason — split-brain is now loud instead of silent. 17 extension
 tests pass. Marker detection mirrors tester lib/playgrounds/active.py.
+
+## 2026-08-06 Project map rolled out to all repos
+
+Ended the project-map pilot (was: homer, librarian, manager, omp, triage). `/wq` now runs `project-map init` when a repo's root `AGENTS.md` lacks a `## Project map` section (creating AGENTS.md + the CLAUDE.md symlink if needed) instead of skipping. Third-party clones get a map only when a session wraps up there; no eager mass-init was done.

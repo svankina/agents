@@ -6,10 +6,12 @@ The session is ending, and the terminal it runs in should close with it.
 Do this now, in order:
 
 1. Preserve durable context for the next agent:
-   - Find the current git repository root. If its root `AGENTS.md` contains an
-     exact `## Project map` section, review that section against what this
-     session actually learned. If there is no such section, skip this step;
-     `/wq` never creates one implicitly.
+   - Find the current git repository root. If its root `AGENTS.md` lacks an
+     exact `## Project map` section, create it now: run
+     `project-map init <repo-root>`. If that created `AGENTS.md` and no
+     `CLAUDE.md` exists, add the conventional symlink:
+     `ln -s AGENTS.md CLAUDE.md`. Then review the section against what this
+     session actually learned.
    - Add only durable facts that would otherwise make a fresh agent work
      incorrectly or slowly. Correct or prune stale facts. Keep architecture,
      paths, invariants, and dated decisions; exclude session chronology,
