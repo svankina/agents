@@ -18,11 +18,40 @@ context; do not edit the generated copies.
   lead with the action, restate where we are, one concrete next step. See
   "Output style" in `shared/AGENTS.md` for the full rules.
 
+## Location & timezone (2026-08-10)
+
+- Lives in **Hyderabad, India** (Financial District, Nanakramguda, 500032).
+- Timezone: **Asia/Kolkata (IST, UTC+5:30)** — the workstation clock is set to
+  it. For anything date- or time-sensitive ("today", delivery days, schedules,
+  deadlines), use the system's local time (`date`), never an assumed or UTC
+  date.
+- Shopping/deliveries happen on **amazon.in** (not .com).
+
 ## Deliverables
 
 - Hates raw Markdown as a deliverable. Anything meant to be *looked at* is
   polished, self-contained HTML served over the shared report server.
 - Wants actual code changes shown in chat as fenced diffs, not summarised away.
+
+## CAD (2026-08-06)
+
+- **Model in build123d. Never OpenSCAD.** Stated flatly mid-project after a
+  run of `.scad` parts: "Stop using openscad. Use build123d." This is not a
+  per-repo preference — it holds for every part, including throwaway mock
+  geometry that only ever shows up in a render. Existing `.scad` files get
+  ported, not extended.
+- **Render with three.js in the browser tool. Never Blender/Cycles.** Same
+  conversation, one instruction later: "stop using blender to render stuff
+  takes forever use threejs". He is right about the cost — a cold Cycles run
+  spent 7 minutes compiling CUDA kernels before drawing a pixel, and 1-3
+  minutes per subsequent batch, against about a second for a WebGL frame. Put
+  the meshes in a three.js page, drive the camera from the browser tool, and
+  screenshot it.
+- Parts are delivered as an interactive viewer link (`serve-cad`), never a raw
+  STL path or a static render.
+- Prints go through the gatekeeper: `@slicer print <path under ~/src/3dp>
+  [--printer p1s|ender3]` in the Mattermost `~3d-printing` channel. Agents do
+  not call `ender3.sh print`/`upload` themselves.
 
 ## Environment
 
