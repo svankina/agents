@@ -44,6 +44,7 @@ let modelRoot = null;   // current model wrapper (already centered on grid)
 let helpers = null;     // grid + axes group
 let edgeLines = [];     // LineSegments overlays
 let meshes = [];        // meshes of current model
+let hitMeshes = [];     // subset of meshes that is effectively visible (hover targets)
 let bounds = null;      // {size, radius, height}
 let modelStem = '';     // current file stem (label fallback for unnamed meshes)
 let show = { grid: true, wire: false, edges: true };
@@ -68,10 +69,12 @@ function disposeObject(root) {
 
 function clearModel() {
   clearHover();
+  clearLegend();
   if (modelRoot) { scene.remove(modelRoot); disposeObject(modelRoot); modelRoot = null; }
   if (helpers) { scene.remove(helpers); disposeObject(helpers); helpers = null; }
   edgeLines = [];
   meshes = [];
+  hitMeshes = [];
 }
 
 function niceStep(footprint) {
@@ -174,11 +177,15 @@ function highlight(mat) {
 }
 
 // Swap in per-mesh clones so shared materials don't bleed the highlight.
+// `node` is an Object3D or an array of them (a legend row can cover siblings).
 function setHover(node) {
   hoverNode = node;
-  for (const m of collectMeshes(node)) {
-    hoverOriginals.set(m, m.material);
-    m.material = Array.isArray(m.material) ? m.material.map(highlight) : highlight(m.material);
+  for (const root of Array.isArray(node) ? node : [node]) {
+    for (const m of collectMeshes(root)) {
+      if (hoverOriginals.has(m)) continue;
+      hoverOriginals.set(m, m.material);
+      m.material = Array.isArray(m.material) ? m.material.map(highlight) : highlight(m.material);
+    }
   }
 }
 
@@ -206,7 +213,8 @@ function updateHover() {
   if (!pointerDirty || dragging || !modelRoot) return;
   pointerDirty = false;
   raycaster.setFromCamera(pointer, camera);
-  const hit = raycaster.intersectObjects(meshes, false)[0]; // non-recursive: skips edges
+  // three r166's raycaster ignores object.visible, so hit-test the filtered set.
+  const hit = raycaster.intersectObjects(hitMeshes, false)[0]; // non-recursive: skips edges
   const section = hit ? sectionOf(hit.object) : null;
   const node = section || (hit ? hit.object : null);
   if (node !== hoverNode) {
@@ -226,6 +234,173 @@ canvas.addEventListener('pointermove', (e) => {
 canvas.addEventListener('pointerdown', () => { dragging = true; clearHover(); });
 window.addEventListener('pointerup', () => { dragging = false; pointerDirty = true; });
 canvas.addEventListener('pointerleave', () => { pointerDirty = false; clearHover(); });
+
+// --- component legend -------------------------------------------------------
+// Rows mirror the model tree, using the hover code's "real name" rule: the
+// top-level rows are the outermost named nodes below modelRoot; one that holds
+// further named nodes becomes a group whose rows are its deepest named
+// descendants, flattened to a single child level.
+const legendEl = $('legend');
+const legendList = $('legend-list');
+const legendAll = $('legend-all');
+const legendToggle = $('legend-toggle');
+let legendRows = [];               // [{nodes, label, input, kids?}]
+
+const COUNTER = /(?:[\s_.-]*\d+)+$/; // trailing counter chain: "post_1", "post_1-2"
+const legendName = (s) => s.replace(/_/g, ' ');
+const visibleInScene = (o) => {
+  for (let n = o; n; n = n.parent) if (!n.visible) return false;
+  return true;
+};
+
+function refreshHits() { hitMeshes = meshes.filter(visibleInScene); }
+
+// Outermost named nodes strictly below `root`.
+function namedChildren(root) {
+  const out = [];
+  const walk = (o) => { for (const c of o.children) if (isSection(c)) out.push(c); else walk(c); };
+  walk(root);
+  return out;
+}
+
+// Deepest named descendants — what a group offers as rows.
+function namedLeaves(root) {
+  return namedChildren(root).flatMap((n) => {
+    const kids = namedLeaves(n);
+    return kids.length ? kids : [n];
+  });
+}
+
+// One legend level: groups (when expanding) keep their place, plain siblings
+// whose names differ only by a trailing counter collapse into one row.
+function levelRows(nodes, expand) {
+  const rows = [];
+  const byBase = new Map();
+  for (const n of nodes) {
+    if (expand && namedChildren(n).length) {
+      rows.push({ nodes: [n], label: legendName(n.name), kids: levelRows(namedLeaves(n), false) });
+      continue;
+    }
+    const base = n.name.replace(COUNTER, '') || n.name;
+    const row = byBase.get(base);
+    if (row) { row.nodes.push(n); continue; }
+    const fresh = { nodes: [n], label: legendName(n.name), base };
+    byBase.set(base, fresh);
+    rows.push(fresh);
+  }
+  for (const r of rows) if (r.nodes.length > 1) r.label = `${legendName(r.base)} ×${r.nodes.length}`;
+  return rows;
+}
+
+function legendTree() {
+  if (!modelRoot) return [];
+  let tops = namedChildren(modelRoot);
+  // A lone wrapper (e.g. a glTF "Scene" node) earns no row of its own.
+  while (tops.length === 1 && namedChildren(tops[0]).length) tops = namedChildren(tops[0]);
+  return levelRows(tops, true);
+}
+
+function applyRow(row, on) {
+  for (const n of row.nodes) n.visible = on;
+  row.input.checked = on;
+  row.input.indeterminate = false;
+  for (const k of row.kids || []) applyRow(k, on);
+}
+
+function syncGroup(row, apply = true) {
+  const on = row.kids.filter((k) => k.input.checked).length;
+  if (apply) row.nodes[0].visible = on > 0;
+  row.input.checked = on === row.kids.length && row.nodes[0].visible;
+  row.input.indeterminate = on > 0 && !row.input.checked;
+}
+
+function syncMaster() {
+  const on = legendRows.filter((r) => r.input.checked).length;
+  const any = legendRows.filter((r) => r.input.checked || r.input.indeterminate).length;
+  legendAll.checked = legendRows.length > 0 && on === legendRows.length;
+  legendAll.indeterminate = any > 0 && !legendAll.checked;
+}
+
+function legendRowEl(row) {
+  const el = document.createElement('div');
+  el.className = row.kids ? 'lg-row lg-group' : 'lg-row';
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.checked = row.nodes.some((n) => n.visible);
+  row.input = box;
+  const name = document.createElement('span');
+  name.className = 'lg-name';
+  name.textContent = row.label;
+  name.title = row.label;
+  const label = document.createElement('label');
+  label.append(box, name);
+  el.append(label);
+  el.addEventListener('pointerenter', () => {
+    if (hoverNode === row.nodes) return;
+    clearHover();
+    setHover(row.nodes);
+  });
+  el.addEventListener('pointerleave', () => { if (hoverNode === row.nodes) clearHover(); });
+  return el;
+}
+
+function clearLegend() {
+  legendRows = [];
+  legendList.replaceChildren();
+  legendEl.style.display = 'none';
+}
+
+function buildLegend() {
+  clearLegend();
+  legendRows = legendTree();
+  for (const row of legendRows) {
+    const el = legendRowEl(row);
+    row.input.addEventListener('change', () => {
+      applyRow(row, row.input.checked);
+      syncMaster();
+      refreshHits();
+    });
+    legendList.append(el);
+    if (!row.kids) continue;
+
+    const kidsEl = document.createElement('div');
+    kidsEl.className = 'lg-kids';
+    kidsEl.hidden = row.kids.length > 8;   // long groups start collapsed
+    const tri = document.createElement('button');
+    tri.className = 'lg-tri';
+    tri.textContent = kidsEl.hidden ? '▶' : '▼';
+    tri.addEventListener('click', () => {
+      kidsEl.hidden = !kidsEl.hidden;
+      tri.textContent = kidsEl.hidden ? '▶' : '▼';
+    });
+    el.prepend(tri);
+    for (const kid of row.kids) {
+      kidsEl.append(legendRowEl(kid));
+      kid.input.addEventListener('change', () => {
+        applyRow(kid, kid.input.checked);
+        syncGroup(row);
+        syncMaster();
+        refreshHits();
+      });
+    }
+    legendList.append(kidsEl);
+    syncGroup(row, false);
+  }
+  legendEl.style.display = legendRows.length ? 'flex' : 'none';
+  syncMaster();
+  refreshHits();
+}
+
+legendAll.addEventListener('change', () => {
+  for (const row of legendRows) applyRow(row, legendAll.checked);
+  legendAll.indeterminate = false;
+  refreshHits();
+});
+legendToggle.addEventListener('click', () => {
+  legendList.hidden = !legendList.hidden;
+  legendToggle.textContent = legendList.hidden ? '+' : '−';
+  legendToggle.title = legendList.hidden ? 'show components' : 'hide components';
+});
 
 // --- camera -----------------------------------------------------------------
 function setView(azDeg, elDeg, animateFrom) {
@@ -326,6 +501,7 @@ async function loadModel(entry) {
     });
     applyWireframe();
     buildEdges();
+    buildLegend();
     buildHelpers();
     fit();
 
@@ -417,4 +593,7 @@ renderer.setAnimationLoop(() => { controls.update(); updateHover(); renderer.ren
 boot();
 
 // Small API for automated checks (agents drive this from a browser tool).
-window.cadviewer = { setView, fit, scene, camera, controls, get bounds() { return bounds; } };
+window.cadviewer = {
+  setView, fit, scene, camera, controls, legend: { refresh: buildLegend },
+  get bounds() { return bounds; },
+};

@@ -66,6 +66,37 @@
     backdrop-filter: blur(6px); pointer-events: none; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis;
   }
+
+  #legend {
+    top: 14px; right: 14px; width: min(240px, calc(100vw - 28px)); max-height: 70vh;
+    display: none; flex-direction: column; padding: 8px 10px;
+  }
+  #legend-head { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+  #legend-head label { display: flex; align-items: center; gap: 6px; flex: 1; cursor: pointer; }
+  #legend-toggle {
+    font: inherit; font-size: 12px; color: var(--dim);
+    background: transparent; border: 1px solid var(--border);
+    border-radius: 6px; padding: 0 7px; cursor: pointer;
+  }
+  #legend-toggle:hover { border-color: var(--accent); color: var(--fg); }
+  #legend-list { margin-top: 6px; overflow-y: auto; font-size: 12px; }
+  #legend input[type="checkbox"] {
+    accent-color: var(--accent); flex: none; width: 13px; height: 13px; margin: 0;
+  }
+  .lg-row { display: flex; align-items: center; gap: 4px; border-radius: 4px; }
+  .lg-row:hover { background: rgba(90, 169, 230, 0.16); }
+  .lg-row > label {
+    display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0;
+    padding: 2px 4px 2px 0; cursor: pointer;
+  }
+  .lg-row.lg-group > label { font-weight: 600; }
+  .lg-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lg-tri {
+    flex: none; width: 14px; padding: 0; font: inherit; font-size: 9px;
+    color: var(--dim); background: transparent; border: 0; cursor: pointer;
+  }
+  .lg-tri:hover { color: var(--fg); }
+  .lg-kids { padding-left: 20px; }
 </style>
 </head>
 <body>
@@ -90,6 +121,14 @@
   <button id="btn-grid">Grid</button>
   <button id="btn-wire">Wire</button>
   <button id="btn-edges">Edges</button>
+</div>
+
+<div id="legend" class="panel">
+  <div id="legend-head">
+    <label><input type="checkbox" id="legend-all" checked><span>Components</span></label>
+    <button id="legend-toggle" title="hide components">−</button>
+  </div>
+  <div id="legend-list"></div>
 </div>
 
 <div id="hint">drag orbit · right-drag / shift-drag pan · scroll zoom · double-click fit</div>
