@@ -45,6 +45,7 @@ let helpers = null;     // grid + axes group
 let edgeLines = [];     // LineSegments overlays
 let meshes = [];        // meshes of current model
 let bounds = null;      // {size, radius, height}
+let modelStem = '';     // current file stem (label fallback for unnamed meshes)
 let show = { grid: true, wire: false, edges: true };
 
 // --- helpers ----------------------------------------------------------------
@@ -66,6 +67,7 @@ function disposeObject(root) {
 }
 
 function clearModel() {
+  clearHover();
   if (modelRoot) { scene.remove(modelRoot); disposeObject(modelRoot); modelRoot = null; }
   if (helpers) { scene.remove(helpers); disposeObject(helpers); helpers = null; }
   edgeLines = [];
@@ -136,6 +138,95 @@ function buildEdges() {
   }
 }
 
+// --- hover highlight --------------------------------------------------------
+const HOVER_EMISSIVE = 0x5aa9e6; // --accent
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();   // NDC
+const tooltip = $('tooltip');
+let pointerX = 0, pointerY = 0;        // client px, for the tooltip
+let pointerDirty = false;              // raycast only after the pointer moved
+let dragging = false;
+let hoverNode = null;                  // highlighted section (or bare mesh)
+const hoverOriginals = new Map();      // mesh -> material(s) displaced by clones
+
+const AUTO_NAME = /^mesh_\d+(_\d+)?$/; // glTF loader ids for unnamed primitives
+
+// A name counts only if it isn't loader-generated: bare "mesh_25"/"mesh_25_1",
+// or a primitive-split suffix of the parent ("vertical_post_1-1" -> "…_1").
+function isSection(o) {
+  if (!o.name || AUTO_NAME.test(o.name)) return false;
+  const p = o.parent;
+  const tail = p && p.name && o.name.startsWith(`${p.name}_`) && o.name.slice(p.name.length + 1);
+  return !(tail && /^\d+$/.test(tail));
+}
+
+// Nearest ancestor (or the mesh itself) with a real name; null for bare geometry.
+function sectionOf(mesh) {
+  for (let o = mesh; o && o !== modelRoot; o = o.parent) if (isSection(o)) return o;
+  return null;
+}
+
+function highlight(mat) {
+  const c = mat.clone();
+  if (c.emissive) { c.emissive.setHex(HOVER_EMISSIVE); c.emissiveIntensity = 0.35; }
+  if ('wireframe' in c) c.wireframe = show.wire;
+  return c;
+}
+
+// Swap in per-mesh clones so shared materials don't bleed the highlight.
+function setHover(node) {
+  hoverNode = node;
+  for (const m of collectMeshes(node)) {
+    hoverOriginals.set(m, m.material);
+    m.material = Array.isArray(m.material) ? m.material.map(highlight) : highlight(m.material);
+  }
+}
+
+function clearHover() {
+  for (const [m, orig] of hoverOriginals) {
+    const clones = Array.isArray(m.material) ? m.material : [m.material];
+    m.material = orig;
+    clones.forEach((c) => c.dispose());
+  }
+  hoverOriginals.clear();
+  hoverNode = null;
+  if (tooltip) tooltip.style.display = 'none';
+}
+
+function moveTooltip(label) {
+  tooltip.textContent = label;
+  tooltip.style.display = 'block';
+  const x = Math.min(pointerX + 12, window.innerWidth - tooltip.offsetWidth - 4);
+  const y = Math.min(pointerY + 12, window.innerHeight - tooltip.offsetHeight - 4);
+  tooltip.style.left = `${Math.max(4, x)}px`;
+  tooltip.style.top = `${Math.max(4, y)}px`;
+}
+
+function updateHover() {
+  if (!pointerDirty || dragging || !modelRoot) return;
+  pointerDirty = false;
+  raycaster.setFromCamera(pointer, camera);
+  const hit = raycaster.intersectObjects(meshes, false)[0]; // non-recursive: skips edges
+  const section = hit ? sectionOf(hit.object) : null;
+  const node = section || (hit ? hit.object : null);
+  if (node !== hoverNode) {
+    clearHover();
+    if (node) setHover(node);
+  }
+  if (node && tooltip) moveTooltip(section ? section.name.replace(/_/g, ' ') : modelStem);
+}
+
+canvas.addEventListener('pointermove', (e) => {
+  const r = canvas.getBoundingClientRect();
+  pointer.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  pointerX = e.clientX;
+  pointerY = e.clientY;
+  pointerDirty = true;
+});
+canvas.addEventListener('pointerdown', () => { dragging = true; clearHover(); });
+window.addEventListener('pointerup', () => { dragging = false; pointerDirty = true; });
+canvas.addEventListener('pointerleave', () => { pointerDirty = false; clearHover(); });
+
 // --- camera -----------------------------------------------------------------
 function setView(azDeg, elDeg, animateFrom) {
   const az = (azDeg * Math.PI) / 180;
@@ -203,6 +294,7 @@ async function parseModel(file, data) {
 async function loadModel(entry) {
   setStatus('loading…');
   clearModel();
+  modelStem = entry.file.split('/').pop().replace(/\.[^.]*$/, '');
   try {
     const data = await fetchProgress(`./${entry.file}`);
     const { object, zUp } = await parseModel(entry.file, data);
@@ -226,6 +318,12 @@ async function loadModel(entry) {
     bounds = { size, radius: Math.max(size.length() / 2, 1e-6), height: size.y };
 
     meshes = collectMeshes(modelRoot);
+    // Stable order for transparent meshes: three.js re-sorts near-equidistant
+    // ones every frame, which reads as flicker.
+    meshes.forEach((m, i) => {
+      const mat = Array.isArray(m.material) ? m.material[0] : m.material;
+      if (mat && mat.transparent) m.renderOrder = 1 + i;
+    });
     applyWireframe();
     buildEdges();
     buildHelpers();
@@ -252,9 +350,10 @@ function setStatus(text, isError = false) {
 }
 
 function applyWireframe() {
+  const setWire = (mat) => { if ('wireframe' in mat) mat.wireframe = show.wire; };
   for (const m of meshes) {
-    const mats = Array.isArray(m.material) ? m.material : [m.material];
-    mats.forEach((mat) => { if ('wireframe' in mat) mat.wireframe = show.wire; });
+    const cur = hoverOriginals.has(m) ? [m.material, hoverOriginals.get(m)] : [m.material];
+    cur.flat().forEach(setWire);
   }
 }
 
@@ -314,7 +413,7 @@ async function boot() {
 
 window.addEventListener('resize', resize);
 resize();
-renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+renderer.setAnimationLoop(() => { controls.update(); updateHover(); renderer.render(scene, camera); });
 boot();
 
 // Small API for automated checks (agents drive this from a browser tool).

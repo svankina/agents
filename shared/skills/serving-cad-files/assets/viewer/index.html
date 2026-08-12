@@ -59,6 +59,13 @@
     background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
   }
   #status.error { border-color: #e5484d; color: #ffb3b5; }
+  #tooltip {
+    position: fixed; z-index: 3; left: 0; top: 0; display: none;
+    max-width: 40vw; padding: 3px 7px; font-size: 12px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    backdrop-filter: blur(6px); pointer-events: none; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
 </style>
 </head>
 <body>
@@ -87,6 +94,7 @@
 
 <div id="hint">drag orbit · right-drag / shift-drag pan · scroll zoom · double-click fit</div>
 <div id="status">loading…</div>
+<div id="tooltip"></div>
 
 <script src="./app.js"></script>
 </body>
