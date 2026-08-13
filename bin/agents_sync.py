@@ -73,6 +73,10 @@ class Config:
     def shared_commands(self) -> Path:
         return self.repo / "shared" / "commands"
 
+    @property
+    def shared_agents(self) -> Path:
+        return self.repo / "shared" / "agents"
+
     def targets(self) -> list[Target]:
         paths = {
             "claude": self.home / ".claude" / "CLAUDE.md",
@@ -103,6 +107,15 @@ class Config:
             self.home / ".claude" / "commands",
             self.home / ".omp" / "agent" / "commands",
         ]
+
+    def agent_dests(self) -> list[Path]:
+        """Where a subagent definition has to land to be discovered. Claude Code
+        reads ~/.claude/agents; omp reads the agent dir's agents/ — per profile,
+        so every profile gets the links. codex/pi have no subagent surface."""
+        out = [self.home / ".claude" / "agents"]
+        for profile in self.omp_profiles():
+            out.append(self.omp_config(profile).parent / "agents")
+        return out
 
     def home_links(self) -> list[tuple[Path, Path]]:
         return [
@@ -199,6 +212,17 @@ def desired_command_links(cfg: Config) -> list[tuple[Path, Path]]:
     return links
 
 
+def desired_agent_links(cfg: Config) -> list[tuple[Path, Path]]:
+    """shared/agents/*.md -> every harness's agent-definition dir, so a new
+    subagent is a new file plus `agents-sync sync`."""
+    links = []
+    if cfg.shared_agents.is_dir():
+        for agent in sorted(p for p in cfg.shared_agents.iterdir() if p.suffix == ".md"):
+            for dest in cfg.agent_dests():
+                links.append((dest / agent.name, agent))
+    return links
+
+
 def link_state(link: Path, target: Path, repo: Path) -> str:
     if not link.is_symlink():
         if link.exists():
@@ -229,10 +253,11 @@ def apply_link(link: Path, target: Path, repo: Path) -> None:
 
 
 def stale_repo_links(cfg: Config) -> list[Path]:
-    """Links we made for a skill or command the repo no longer has."""
+    """Links we made for a skill, command or agent the repo no longer has."""
     groups = (
         (cfg.skill_dests(), cfg.shared_skills, desired_skill_links(cfg)),
         (cfg.command_dests(), cfg.shared_commands, desired_command_links(cfg)),
+        (cfg.agent_dests(), cfg.shared_agents, desired_agent_links(cfg)),
     )
     out = []
     for dests, source, wanted in groups:
@@ -315,7 +340,7 @@ def _iter_target_items(cfg: Config):
 
 def _iter_link_items(cfg: Config):
     for link, target in (desired_skill_links(cfg) + desired_command_links(cfg)
-                         + cfg.home_links() + cfg.bin_links()):
+                         + desired_agent_links(cfg) + cfg.home_links() + cfg.bin_links()):
         yield link, target, link_state(link, target, cfg.repo)
 
 

@@ -192,6 +192,16 @@ serve-report <path-to-file-or-dir> [--name NAME]
   interactive orbit/pan/zoom viewer through the same server — never deliver a
   part as a raw `.stl` path or a static render. Full usage:
   `skill://serving-cad-files`.
+- **CAD *work* is not yours to model.** Parametric modelling, assembly, and
+  geometry verification are handed off to the shared `cad` subagent (source:
+  `~/src/agents/shared/agents/cad.md`, synced into `~/.claude/agents/` and
+  every omp profile's `agent/agents/` by `agents-sync`). Dispatch it via your
+  harness's subagent/task mechanism with the full part requirements; keep
+  interpretation and final delivery yourself. Do not write build123d inline in
+  a general session and do not re-invent per-project CAD conventions — that is
+  exactly what the agent exists to prevent. Project-specific facts (measured
+  hardware, fits, pitfalls) still live in each repo's `AGENTS.md`/`NOTES.md`,
+  which the cad agent reads on arrival.
 
 Before presenting any URL to the user, verify it works and shows the expected
 content. Use an appropriate check for the URL type (for example, `curl`/HTTP

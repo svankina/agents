@@ -106,3 +106,31 @@ def test_iter_link_items_includes_commands(tmp_path):
     seen = {link: state for link, _, state in a._iter_link_items(cfg)}
     for dest in cfg.command_dests():
         assert seen[dest / "karen.md"] == "missing"
+
+
+def add_agent(cfg, name):
+    cfg.shared_agents.mkdir(parents=True, exist_ok=True)
+    path = cfg.shared_agents / f"{name}.md"
+    path.write_text(f"---\nname: {name}\n---\nBody.\n")
+    return path
+
+
+def test_desired_agent_links_covers_all_dests(tmp_path):
+    cfg = make_cfg(tmp_path)
+    src = add_agent(cfg, "cad")
+    (cfg.home / ".omp" / "profiles" / "clomp").mkdir(parents=True)
+    links = a.desired_agent_links(cfg)
+    dests = {link.parent for link, _ in links}
+    assert cfg.home / ".claude" / "agents" in dests
+    assert cfg.home / ".omp" / "agent" / "agents" in dests
+    assert cfg.home / ".omp" / "profiles" / "clomp" / "agent" / "agents" in dests
+    assert all(target == src for _, target in links)
+
+
+def test_stale_repo_links_prunes_removed_agent(tmp_path):
+    cfg = make_cfg(tmp_path)
+    src = add_agent(cfg, "cad")
+    link = cfg.home / ".claude" / "agents" / "cad.md"
+    a.apply_link(link, src, cfg.repo)
+    src.unlink()
+    assert a.stale_repo_links(cfg) == [link]
