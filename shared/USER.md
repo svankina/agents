@@ -60,6 +60,22 @@ context; do not edit the generated copies.
 - No passwordless sudo; privileged work goes through `psudo` handoffs.
 - Reachable on Android via `homer-notify`, for genuinely blocking events only.
 
+## DGX Spark (2026-08-13)
+
+- Second machine: **NVIDIA DGX Spark** (GB10 Grace Blackwell, 128 GB unified
+  memory, aarch64, DGX OS 7). Hostname `spark` — reach it as `ssh spark`
+  (alias → `spark.local` on LAN) or via Tailscale (`100.73.19.73`, MagicDNS
+  `spark`, Tailscale SSH enabled).
+- **Passwordless sudo IS enabled on the spark** for `svankina`
+  (`/etc/sudoers.d/90-svankina-nopasswd`). Agents needing root there run
+  `ssh spark sudo <cmd>` directly — NO psudo handoff, no password. The psudo
+  workflow applies only to the workstation.
+- Runs the local-LLM stack: DeepSeek-V4-Flash-0731-abliterated Q2_K + MTP
+  draft on `:8089`, LFM2.5-VL-3B vision sidecar on `:8090` (llama.cpp CUDA,
+  hub-managed from the workstation as `spark-deepseek` / `spark-vision`).
+  omp model selector: `spark/deepseek-v4-flash-abliterated`. Keep combined
+  usage under ~121 GiB — it is unified memory; a big malloc can wedge the box.
+
 ## Hardware (2026-08-05)
 
 - **GPU for compute: NVIDIA RTX 3090 Ti, 24 GB VRAM** (driver 580, CUDA 12.0,
