@@ -70,11 +70,16 @@ context; do not edit the generated copies.
   (`/etc/sudoers.d/90-svankina-nopasswd`). Agents needing root there run
   `ssh spark sudo <cmd>` directly — NO psudo handoff, no password. The psudo
   workflow applies only to the workstation.
-- Runs the local-LLM stack: DeepSeek-V4-Flash-0731-abliterated Q2_K + MTP
-  draft on `:8089`, LFM2.5-VL-3B vision sidecar on `:8090` (llama.cpp CUDA,
-  hub-managed from the workstation as `spark-deepseek` / `spark-vision`).
-  omp model selector: `spark/deepseek-v4-flash-abliterated`. Keep combined
-  usage under ~121 GiB — it is unified memory; a big malloc can wedge the box.
+- Runs the local-LLM stack (2026-08-14): ONE unquantized BF16 model at a time
+  on `:8089` via conflicting systemd units on the spark itself —
+  `spark-qwen.service` (Qwen3.6-27B uncensored heretic-v2 BF16, MTP, active
+  default) and `spark-gemma.service` (gemma-4-31B uncensored heretic BF16).
+  Swap: `ssh spark sudo systemctl start spark-gemma` (Conflicts= stops the
+  other). omp selector: `spark/qwen3.6-27b-uncensored-bf16` or
+  `spark/gemma-4-31b-uncensored-bf16`. DeepSeek and the LFM2.5-VL vision
+  sidecar units are disabled; their models remain in `spark:~/models`. Keep
+  combined usage under ~121 GiB — unified memory; a big malloc can wedge the
+  box, and both BF16 models resident do NOT fit (116.6 GB weights).
 
 ## Hardware (2026-08-05)
 
