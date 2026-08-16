@@ -70,21 +70,27 @@ context; do not edit the generated copies.
   (`/etc/sudoers.d/90-svankina-nopasswd`). Agents needing root there run
   `ssh spark sudo <cmd>` directly — NO psudo handoff, no password. The psudo
   workflow applies only to the workstation.
-- Runs the local-LLM stack (2026-08-16): ONE unquantized BF16 model at a time
-  on `:8089` via conflicting systemd units on the spark itself —
-  `spark-qwen38.service` (AEON-7 Qwen3.8-27B AEON Ultimate Uncensored BF16,
-  active default; llama.cpp master, `qwen35` arch), `spark-qwen.service`
-  (Qwen3.6-27B uncensored heretic-v2 BF16, MTP) and `spark-gemma.service`
-  (gemma-4-31B uncensored heretic BF16). Swap:
-  `ssh spark sudo systemctl start spark-<name>` (Conflicts= stops the rest).
-  omp selector: `spark/qwen3.8-27b-aeon-uncensored-bf16` (also
-  `qwen3.6-27b-uncensored-bf16`, `gemma-4-31b-uncensored-bf16`); pi provider
-  `spark`, same model ids. DeepSeek and the LFM2.5-VL vision sidecar units
-  are disabled; their models (and the Qwen3.8 mmproj) remain in
-  `spark:~/models`. Keep combined usage under ~121 GiB — unified memory; a
-  big malloc can wedge the box hard (2026-08-16: starting a 52 GB load while
-  another BF16 model was resident froze SSH for 1h+ and needed a physical
-  power-cycle — always stop the resident model unit first and check `free`).
+- Runs the local-LLM stack (2026-08-17): ONE model at a time on `:8089` via
+  conflicting systemd units on the spark itself — `spark-qwen38.service`
+  (Qwen3.8-27B RVN heretic abliterated Q4_K_M, ~12 tok/s, active default;
+  llama.cpp master, `qwen35` arch), `spark-qwen.service` (Qwen3.6-27B
+  uncensored heretic-v2 BF16, MTP) and `spark-gemma.service` (gemma-4-31B
+  uncensored heretic BF16). Swap: `ssh spark sudo systemctl start
+  spark-<name>` (Conflicts= stops the rest). omp selector:
+  `spark/qwen3.8-27b-rvn-uncensored` (also `qwen3.6-27b-uncensored-bf16`,
+  `gemma-4-31b-uncensored-bf16`); pi provider `spark`, same model ids.
+  DeepSeek and the LFM2.5-VL vision sidecar units are disabled; their models
+  (plus the AEON Qwen3.8 BF16 GGUF, RVN-Q6_K, and mmprojs) remain in
+  `spark:~/models`. BF16 27B is bandwidth-capped at ~4.7 tok/s (~273 GB/s /
+  54 GB) — quantize for speed. Keep combined usage under ~121 GiB — unified
+  memory; a big malloc can wedge the box hard (2026-08-16: starting a 52 GB
+  load while another BF16 model was resident froze SSH for 1h+ and needed a
+  physical power-cycle — always stop the resident model unit first and check
+  `free`).
+- GPU clocks are locked to 2200 MHz (`spark-gpu-clock.service`,
+  `nvidia-smi -lgc 0,2200`) — the known GB10 sudden-shutdown-under-load fix;
+  decode is bandwidth-bound so the cap costs ~nothing. Don't unlock for
+  "performance".
 
 ## Hardware (2026-08-05)
 
