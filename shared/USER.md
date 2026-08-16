@@ -70,16 +70,21 @@ context; do not edit the generated copies.
   (`/etc/sudoers.d/90-svankina-nopasswd`). Agents needing root there run
   `ssh spark sudo <cmd>` directly — NO psudo handoff, no password. The psudo
   workflow applies only to the workstation.
-- Runs the local-LLM stack (2026-08-14): ONE unquantized BF16 model at a time
+- Runs the local-LLM stack (2026-08-16): ONE unquantized BF16 model at a time
   on `:8089` via conflicting systemd units on the spark itself —
-  `spark-qwen.service` (Qwen3.6-27B uncensored heretic-v2 BF16, MTP, active
-  default) and `spark-gemma.service` (gemma-4-31B uncensored heretic BF16).
-  Swap: `ssh spark sudo systemctl start spark-gemma` (Conflicts= stops the
-  other). omp selector: `spark/qwen3.6-27b-uncensored-bf16` or
-  `spark/gemma-4-31b-uncensored-bf16`. DeepSeek and the LFM2.5-VL vision
-  sidecar units are disabled; their models remain in `spark:~/models`. Keep
-  combined usage under ~121 GiB — unified memory; a big malloc can wedge the
-  box, and both BF16 models resident do NOT fit (116.6 GB weights).
+  `spark-qwen38.service` (AEON-7 Qwen3.8-27B AEON Ultimate Uncensored BF16,
+  active default; llama.cpp master, `qwen35` arch), `spark-qwen.service`
+  (Qwen3.6-27B uncensored heretic-v2 BF16, MTP) and `spark-gemma.service`
+  (gemma-4-31B uncensored heretic BF16). Swap:
+  `ssh spark sudo systemctl start spark-<name>` (Conflicts= stops the rest).
+  omp selector: `spark/qwen3.8-27b-aeon-uncensored-bf16` (also
+  `qwen3.6-27b-uncensored-bf16`, `gemma-4-31b-uncensored-bf16`); pi provider
+  `spark`, same model ids. DeepSeek and the LFM2.5-VL vision sidecar units
+  are disabled; their models (and the Qwen3.8 mmproj) remain in
+  `spark:~/models`. Keep combined usage under ~121 GiB — unified memory; a
+  big malloc can wedge the box hard (2026-08-16: starting a 52 GB load while
+  another BF16 model was resident froze SSH for 1h+ and needed a physical
+  power-cycle — always stop the resident model unit first and check `free`).
 
 ## Hardware (2026-08-05)
 
