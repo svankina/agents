@@ -71,16 +71,26 @@ context; do not edit the generated copies.
   `ssh spark sudo <cmd>` directly — NO psudo handoff, no password. The psudo
   workflow applies only to the workstation.
 - Runs the local-LLM stack (2026-08-17): ONE model at a time on `:8089` via
-  conflicting systemd units on the spark itself — `spark-qwen38.service`
-  (Qwen3.8-27B RVN heretic abliterated Q4_K_M, ~12 tok/s, active default;
-  llama.cpp master, `qwen35` arch), `spark-qwen.service` (Qwen3.6-27B
-  uncensored heretic-v2 BF16, MTP) and `spark-gemma.service` (gemma-4-31B
-  uncensored heretic BF16). Swap: `ssh spark sudo systemctl start
-  spark-<name>` (Conflicts= stops the rest). omp selector:
-  `spark/qwen3.8-27b-rvn-uncensored` (also `qwen3.6-27b-uncensored-bf16`,
-  `gemma-4-31b-uncensored-bf16`); pi provider `spark`, same model ids.
-  DeepSeek and the LFM2.5-VL vision sidecar units are disabled; their models
-  (plus the AEON Qwen3.8 BF16 GGUF, RVN-Q6_K, and mmprojs) remain in
+  conflicting systemd units on the spark itself. Active default:
+  `spark-vllm.service` — vLLM docker (`vllm/vllm-openai:v0.27.1-aarch64`)
+  serving `aday777/Qwen3.8-27B-ARA-abliterated-NVFP4-MTP` (heretic-ara
+  lineage, 0/100 refusals, KL 0.054) with the external DSpark drafter
+  (`Doopeworld/Qwen3.8-27B-DSpark-vLLM`, k=14): ~56 tok/s on edit-heavy
+  work, ~15 tok/s fresh prose (drafter acceptance is workload-dependent),
+  262K context, prefix caching on. Recipe:
+  github.com/0xBakeer/Qwen3.8-27B-4-bit-on-a-single-DGX-Spark; launcher
+  `spark:~/bin/serve-qwen38-vllm.sh`. SM121 REQUIREMENTS baked in:
+  `VLLM_MARLIN_USE_ATOMIC_ADD=1` (silent corruption without it),
+  `VLLM_USE_FLASHINFER_MOE_FP4=0`, explicit `--enable-prefix-caching`
+  (silently off for hybrid models), `--reasoning-parser qwen3
+  --tool-call-parser qwen3_xml`, `--max-num-batched-tokens 16384` (k=14
+  needs it). Fallback llama.cpp units: `spark-qwen38.service` (Qwen3.8-27B
+  RVN heretic Q4_K_M, ~12 tok/s), `spark-qwen.service` (Qwen3.6-27B
+  heretic-v2 BF16, MTP), `spark-gemma.service` (gemma-4-31B heretic BF16).
+  Swap: `ssh spark sudo systemctl start spark-<name>` (Conflicts= stops the
+  rest). omp selector: `spark/qwen3.8-27b-ara-uncensored`; pi provider
+  `spark`, same model id. DeepSeek and the LFM2.5-VL vision sidecar units
+  are disabled; their models plus the AEON BF16 GGUF and RVN GGUFs remain in
   `spark:~/models`. BF16 27B is bandwidth-capped at ~4.7 tok/s (~273 GB/s /
   54 GB) — quantize for speed. Keep combined usage under ~121 GiB — unified
   memory; a big malloc can wedge the box hard (2026-08-16: starting a 52 GB
