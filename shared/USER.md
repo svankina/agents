@@ -81,10 +81,22 @@ context; do not edit the generated copies.
   github.com/0xBakeer/Qwen3.8-27B-4-bit-on-a-single-DGX-Spark; launcher
   `spark:~/bin/serve-qwen38-vllm.sh`. SM121 REQUIREMENTS baked in:
   `VLLM_MARLIN_USE_ATOMIC_ADD=1` (silent corruption without it),
-  `VLLM_USE_FLASHINFER_MOE_FP4=0`, explicit `--enable-prefix-caching`
+  `VLLM_USE_FLASHINFER_MOE_FP4=0`, `--attention-backend TRITON_ATTN`
+  (FlashInfer mis-drafts/has FP8 bugs on SM121), `--kv-cache-dtype fp8`
+  (2x KV; NVFP4 KV is SM100-only), explicit `--enable-prefix-caching`
   (silently off for hybrid models), `--reasoning-parser qwen3
   --tool-call-parser qwen3_xml`, `--max-num-batched-tokens 16384` (k=14
-  needs it). Fallback llama.cpp units: `spark-qwen38.service` (Qwen3.8-27B
+  needs it); `~/.cache/{triton,flashinfer,vllm}` mounted into the container
+  (JIT/compile caches; startup is ~11-14 min regardless — torch.compile).
+  Driver MUST stay 580.x (590.x deadlocks CUDAGraphs on GB10). Tuning
+  survey 2026-08-17: DSpark acceptance is workload+checkpoint dependent —
+  the base-distilled drafter accepts ~98% on edits but ~13% on fresh prose
+  against this ABLITERATED target (native MTP k=3 A/B: 26 edit / 18 fresh —
+  worse overall, not used). 34-46 tok/s solo is the community best on
+  non-abliterated 27B (SGLang+DSpark); the "75 tok/s" claims are
+  edit-workload numbers on base checkpoints. Our config is at parity for an
+  abliterated target; don't chase the headline number.
+  Fallback llama.cpp units: `spark-qwen38.service` (Qwen3.8-27B
   RVN heretic Q4_K_M, ~12 tok/s), `spark-qwen.service` (Qwen3.6-27B
   heretic-v2 BF16, MTP), `spark-gemma.service` (gemma-4-31B heretic BF16).
   Swap: `ssh spark sudo systemctl start spark-<name>` (Conflicts= stops the
