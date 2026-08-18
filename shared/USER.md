@@ -113,6 +113,12 @@ context; do not edit the generated copies.
   `nvidia-smi -lgc 0,2200`) — the known GB10 sudden-shutdown-under-load fix;
   decode is bandwidth-bound so the cap costs ~nothing. Don't unlock for
   "performance".
+- Chemistry stack on the spark (2026-08-18, `spark:~/chem/`, see its README):
+  RDKit + PubChem + OpenStax-textbook RAG (Chroma, 5171 chunks, CPU-only) for
+  the local abliterated model. omp on spark gets it as MCP server `chem`
+  (`~/.omp/agent/mcp.json`); pi and shells use the `chem` CLI
+  (`chem info|sub|sim|rxn|draw|pubchem|search`). Verified e2e on
+  `spark/qwen3.8-27b-ara-uncensored`.
 
 ## Hardware (2026-08-05)
 
