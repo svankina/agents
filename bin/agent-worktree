@@ -60,7 +60,7 @@ main_root() {
     git -C "$start" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
         || die "not inside a git repository (${start})"
     git -C "$start" worktree list --porcelain \
-        | awk '/^worktree /{print substr($0,10); exit}'
+        | awk '/^worktree / && !seen++ {print substr($0,10)}'
 }
 
 root="$(main_root)"
