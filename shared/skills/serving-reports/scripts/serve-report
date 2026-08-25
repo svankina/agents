@@ -96,8 +96,9 @@ start_server() {
   if server_up; then return 0; fi
   local port
   port="$(pick_port)"
+  echo "[serve-report] $(date -Is) START port=$port by pid=$$ ppid=$PPID ($(ps -o comm= -p $PPID 2>/dev/null || echo '?'))" >>"$LOG"
   setsid python3 -m http.server "$port" --bind "$BIND" --directory "$PUBLIC" \
-    >"$LOG" 2>&1 </dev/null &
+    >>"$LOG" 2>&1 </dev/null &
   local pid=$!
   echo "$pid" >"$PIDFILE"
   echo "$port" >"$PORTFILE"
@@ -116,6 +117,7 @@ ensure_server() {
 
 stop_server() {
   local pid; pid="$(server_pid)"
+  echo "[serve-report] $(date -Is) STOP requested by pid=$$ ppid=$PPID ($(ps -o comm= -p $PPID 2>/dev/null || echo '?'))" >>"$LOG"
   if pid_alive "$pid"; then
     kill "$pid" 2>/dev/null || true
     for _ in $(seq 0 20); do pid_alive "$pid" || break; sleep 0.1; done
