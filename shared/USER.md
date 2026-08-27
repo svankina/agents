@@ -32,6 +32,11 @@ context; do not edit the generated copies.
 - Hates raw Markdown as a deliverable. Anything meant to be *looked at* is
   polished, self-contained HTML served over the shared report server.
 - Wants actual code changes shown in chat as fenced diffs, not summarised away.
+- **Public/technical writeups in ASD-STE100** (Simplified Technical English:
+  short sentences, one instruction per sentence, active voice, no idioms).
+  2026-08-27, after a gist rewrite: "ASD-STE100 writeup was waaay better than
+  the original." Applies to prose deliverables (gists, docs, READMEs), not to
+  chat replies.
 
 ## CAD (2026-08-06)
 
