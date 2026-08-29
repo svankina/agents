@@ -22,7 +22,7 @@
 #   --copy        Snapshot the source (default: symlink, so updates stay live)
 #
 # Env:
-#   SERVE_REPORT_PORT   Preferred port (default 8787; scans upward if taken)
+#   SERVE_REPORT_PORT   Preferred port (default 8789; scans upward if taken)
 #   SERVE_REPORT_HOME   State dir   (default ~/.local/share/claude-serve)
 
 set -euo pipefail
@@ -33,7 +33,7 @@ PIDFILE="$STATE/server.pid"
 PORTFILE="$STATE/server.port"
 LOG="$STATE/server.log"
 LOCK="$STATE/.lock"
-PREF_PORT="${SERVE_REPORT_PORT:-8787}"
+PREF_PORT="${SERVE_REPORT_PORT:-8789}"  # 8787 is squatted by limitsd on this box
 HOST="127.0.0.1"                        # loopback; used for local health checks
 BIND="${SERVE_REPORT_BIND:-0.0.0.0}"    # listen addr: all interfaces (tailnet + LAN)
 

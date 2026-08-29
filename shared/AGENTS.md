@@ -193,7 +193,7 @@ prints.
 
 ```bash
 serve-report <path-to-file-or-dir> [--name NAME]
-# prints e.g.  http://localhost:8787/analysis-3f9a2b.html  — give that to the user
+# prints e.g.  http://localhost:8789/analysis-3f9a2b.html  — give that to the user
 ```
 
 - **Never** run `python3 -m http.server` (or `npx serve`, `http-server`, …)

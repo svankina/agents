@@ -51,11 +51,11 @@ serve-report <path> [--name NAME] [--copy]
 ```bash
 # A generated HTML report (lives in a temp dir you may clean up later)
 serve-report /tmp/analysis.html --name analysis
-# -> http://<tailscale-ip>:8787/analysis-3f9a2b.html
+# -> http://<tailscale-ip>:8789/analysis-3f9a2b.html
 
 # A whole static site / report folder
 serve-report ./build/site --name release-notes
-# -> http://<tailscale-ip>:8787/release-notes-9c1d04/
+# -> http://<tailscale-ip>:8789/release-notes-9c1d04/
 
 # A frozen snapshot that outlives the source
 serve-report ./out/chart.png --name q3-chart --copy
@@ -107,7 +107,8 @@ serve-report restart       # stop + start fresh
 - **Served root:** `~/.local/share/claude-serve/public/` (one symlink/copy per
   report).
 - **Server log:** `~/.local/share/claude-serve/server.log`.
-- **Port:** prefers `8787` and scans upward if busy (`SERVE_REPORT_PORT` to
-  override). Binds `0.0.0.0` (override `SERVE_REPORT_BIND`); the emitted URL host
+- **Port:** prefers `8789` and scans upward if busy (`SERVE_REPORT_PORT` to
+  override; `8787` is taken by limitsd on this machine). Binds `0.0.0.0`
+  (override `SERVE_REPORT_BIND`); the emitted URL host
   is tailscale IP → LAN IP → `localhost` (override `SERVE_REPORT_HOST`). State
   dir overridable via `SERVE_REPORT_HOME`.
