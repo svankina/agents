@@ -1,6 +1,6 @@
 ---
 name: writing-reports
-description: Content rules for any report, analysis, summary, comparison, or writeup delivered to the user. Read BEFORE composing the report, alongside serving-reports (which covers how to serve it). The user has ADHD and no patience for fluff — reports lead with the verdict and stay skimmable.
+description: Content rules for any report, analysis, summary, comparison, or writeup delivered to the user. Read BEFORE composing the report, alongside serving-reports (which covers how to serve it). The user has ADHD, is a visual learner, and has no patience for fluff — reports lead with the verdict, stay skimmable, and show structure as diagrams, not prose.
 ---
 
 # Writing reports
@@ -34,6 +34,32 @@ there. If the verdict is below the fold, the report failed.
 - Narrating the work ("First I examined…", "Next we looked at…"). Report
   findings, not the journey.
 
+## Diagrams (the user is a visual learner)
+
+Whenever the report describes structure, flow, or change, **draw it** — a
+diagram in the visible (uncollapsed) part of the report, near the finding it
+explains. Prose describing a shape is a bug.
+
+Draw a diagram for:
+
+- **Architecture / relationships** — components, services, dependencies → box-and-arrow.
+- **Flows and sequences** — request paths, pipelines, state machines → flowchart or sequence diagram.
+- **Before/after** — refactors, migrations, config changes → two small diagrams side by side, the change highlighted.
+- **Timelines** — incidents, causality chains → ordered horizontal strip.
+- **Trends / distributions / outliers** — chart. But a 3-row table still beats a bar chart of 3 bars.
+
+Rules:
+
+- Diagrams must be **self-contained in the HTML**: inline SVG (hand-written or
+  generated), or Mermaid rendered to SVG before serving. No CDN scripts, no
+  external image URLs.
+- Style them like the report: same fonts/palette, color used for meaning
+  (green/amber/red, changed-part highlighted), every box labeled with the real
+  name (file, service, function) — not "Component A".
+- Keep each diagram to one idea, roughly 5–12 nodes. Past that, split it or
+  collapse the full version in `<details>` with a simplified one visible.
+- A diagram replaces the paragraph it illustrates; don't write both.
+
 ## Style
 
 - Numbers go in tables, not sentences. Comparisons get columns, deltas, and a
@@ -43,8 +69,6 @@ there. If the verdict is below the fold, the report failed.
 - Cap visible lists at 5; the rest goes in a collapsed section.
 - Fragments over sentences where clearer. Every sentence carries a fact,
   decision, or risk.
-- Charts only when a shape matters (trend, distribution, outlier). A 3-row
-  table beats a bar chart of 3 bars.
 
 ## Litmus test
 
