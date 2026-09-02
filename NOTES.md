@@ -175,3 +175,19 @@ matched, no credential). Convention established: the key lives in `~/.config/ope
 (single line, raw key, dir 700 / file 600), and `~/.zshenv` exports it as
 `OPENROUTER_API_KEY` when readable, so every shell (interactive or not) has it. Key verified
 against `GET https://openrouter.ai/api/v1/key` → 200, $10 limit, paid tier.
+
+## 2026-09-02 AGENTS.md fleet audit (103 repos, 590 KB)
+
+Scouts bucketed every `~/src/*/AGENTS.md`: ~20% repo instructions, ~55% NOTES.md
+material (hardware dumps, post-mortems, walkthroughs), ~10% restated global
+rules, ~10% dated session changelogs. Causes were in the tooling: `/wq` bumped
+the `project-map-reviewed` marker every session (herd: 27 `Update project map at
+wrap-up` commits, several marker-only or pure reflows), `project-map lint`
+demanded a dated Decisions entry (agents invented changelog lines to satisfy it),
+lint only measured the map section (3dp had 478 unlinted lines above it), and a
+2026-06-23 bulk pass ("Add AGENTS.md agent guide") stamped 40 repos including
+8 upstream clones and 7 empty folders. Fixes: marker dropped fleet-wide, whole
+file capped at 150, residue/global-rule greps, `project-map owned`, the clone
+commits reverted (`llama.cpp-cuda-b9592` build recipe kept in its NOTES.md),
+stubs deleted, 24 oversized/failing owned repos migrated by subagents.
+Report: /tmp/agents-md-audit.html (served via serve-report).
