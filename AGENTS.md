@@ -78,7 +78,7 @@ live agent dirs, or copied into `~/src/pagent`.
   `git add` it.
 
 ## Project map
-<!-- project-map-reviewed: 2026-08-06 -->
+<!-- project-map-reviewed: 2026-09-02 -->
 
 ### Architecture
 - Not a package: files here are symlinked into live agent dirs by
