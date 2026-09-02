@@ -2,21 +2,29 @@
 # project-map — curated per-project agent context in AGENTS.md.
 #
 # The embedded Project map section is the distilled, auto-read project brief:
-# architecture, where-things-live, invariants, and dated decisions. It is
-# hard-capped so it stays curated; NOTES.md remains the raw append-only log.
+# architecture, where-things-live, invariants, and dated decisions. The WHOLE
+# AGENTS.md is hard-capped so it stays curated; NOTES.md remains the raw
+# append-only log. Review age comes from git, not from an in-file marker.
 #
 # Usage:
+#   project-map owned [DIR]    exit 0 if DIR is a repo the user owns
 #   project-map init [DIR]     add a Project map section to AGENTS.md
-#   project-map lint [DIR]     enforce the embedded section contract
-#   project-map check [DIR]    check review-date age vs repo activity
+#   project-map lint [DIR]     enforce the AGENTS.md contract
+#   project-map check [DIR]    check last-touch age vs repo activity
 set -euo pipefail
 
 MAX_LINES=150
 STALE_COMMITS=30
 STALE_DAYS=60
 PROJECT_MAP_HEADING="## Project map"
-EMPTY_COMMENT="<!-- project-map-empty: Add only facts for which the litmus is yes: would a fresh agent work incorrectly or slowly without this? Remove this comment when the map has its first dated decision. -->"
+EMPTY_COMMENT="<!-- project-map-empty: Add only facts for which the litmus is yes: would a fresh agent work incorrectly or slowly without this? Remove this comment when the map has content. -->"
 SECTIONS=("### Architecture" "### Where things live" "### Invariants & gotchas" "### Decisions")
+# Machine-wide rules already in the generated global instructions. Restating
+# them per repo is duplication, never repo context.
+GLOBAL_FAIL='psudo|serve-report|fair-run|trash-put|agent-worktree|python3 -m http\.server|:8789'
+GLOBAL_WARN='build123d|OpenSCAD|Blender|serve-cad|homer-notify|agent-status|agent-shot|agent-gui'
+# Session residue: commit hashes and scratch paths never belong in a brief.
+RESIDUE='`[0-9a-f]{7,40}`|commit [0-9a-f]{7,40}|/tmp/'
 
 die() { echo "project-map: $*" >&2; exit 1; }
 
@@ -32,21 +40,42 @@ extract_section() {
   ' "$agents"
 }
 
-valid_date() {
-  local value="$1" normalized
-  normalized=$(date -d "$value" +%F 2>/dev/null) || return 1
-  [ "$normalized" = "$value" ]
+# Owned = no origin, or origin under github svankina/ or the local GitLab
+# root/ namespace. Upstream clones (llama.cpp, codex, Hyprland, …) get no map.
+is_owned() {
+  local url
+  url=$(git -C "$dir" remote get-url origin 2>/dev/null) || return 0
+  case "$url" in
+    *github.com[:/]svankina/*) return 0 ;;
+    *localhost:2222/root/*|*gitlab.local[:/]root/*|*gitlab.local:2222/root/*) return 0 ;;
+    "") return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 case "$cmd" in
+  owned)
+    [ -d "$dir" ] || die "$dir is not a directory"
+    if is_owned; then
+      echo "OK $dir: owned"
+    else
+      echo "SKIP $dir: origin is not user-owned ($(git -C "$dir" remote get-url origin)) — no project map for upstream clones" >&2
+      exit 3
+    fi
+    ;;
+
   init)
     [ -d "$dir" ] || die "$dir is not a directory"
+    force=0
+    [ "${2:-}" = "--force" ] && force=1
+    if [ "$force" -eq 0 ] && ! is_owned; then
+      "$0" owned "$dir" || exit $?
+    fi
     if [ -f "$agents" ] && grep -qxF "$PROJECT_MAP_HEADING" "$agents"; then
       die "$agents already contains a Project map section"
     fi
 
     name="$(basename "$(cd "$dir" && pwd)")"
-    reviewed="$(date +%F)"
     if [ ! -e "$agents" ]; then
       printf '# %s\n' "$name" > "$agents"
     elif [ ! -f "$agents" ]; then
@@ -59,7 +88,6 @@ case "$cmd" in
     cat >> "$agents" <<EOF
 
 ## Project map
-<!-- project-map-reviewed: $reviewed -->
 $EMPTY_COMMENT
 
 ### Architecture
@@ -83,15 +111,15 @@ EOF
       rc=1
     fi
 
-    section_file=$(mktemp)
-    trap 'rm -f "$section_file"' EXIT
-    extract_section > "$section_file"
-    lines=$(awk 'END { print NR + 0 }' "$section_file")
+    lines=$(awk 'END { print NR + 0 }' "$agents")
     if [ "$lines" -gt "$MAX_LINES" ]; then
-      echo "FAIL $agents: Project map has $lines lines (cap $MAX_LINES) — prune, don't append" >&2
+      echo "FAIL $agents: $lines lines (cap $MAX_LINES for the whole file) — move facts to NOTES.md, don't append" >&2
       rc=1
     fi
 
+    section_file=$(mktemp)
+    trap 'rm -f "$section_file"' EXIT
+    extract_section > "$section_file"
     actual_sections=$(awk '/^### / { print }' "$section_file")
     expected_sections=$(printf '%s\n' "${SECTIONS[@]}")
     if [ "$actual_sections" != "$expected_sections" ]; then
@@ -99,35 +127,32 @@ EOF
       rc=1
     fi
 
-    marker_count=$(awk '/^<!-- project-map-reviewed: [0-9]{4}-[0-9]{2}-[0-9]{2} -->$/ { count++ } END { print count + 0 }' "$section_file")
-    all_marker_count=$(awk '/project-map-reviewed:/ { count++ } END { print count + 0 }' "$section_file")
-    positioned_marker_count=$(awk 'NR == 2 && /^<!-- project-map-reviewed: [0-9]{4}-[0-9]{2}-[0-9]{2} -->$/ { count++ } END { print count + 0 }' "$section_file")
-    if [ "$marker_count" -ne 1 ] || [ "$all_marker_count" -ne 1 ] || [ "$positioned_marker_count" -ne 1 ]; then
-      echo "FAIL $agents: Project map needs exactly one '<!-- project-map-reviewed: YYYY-MM-DD -->' marker" >&2
+    if grep -nq 'project-map-reviewed:' "$agents"; then
+      echo "FAIL $agents: drop the project-map-reviewed marker; review age is git log -1 -- AGENTS.md" >&2
       rc=1
-    else
-      review_date=$(sed -n 's/^<!-- project-map-reviewed: \([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]\) -->$/\1/p' "$section_file")
-      if ! valid_date "$review_date"; then
-        echo "FAIL $agents: invalid Project map review date '$review_date'" >&2
-        rc=1
-      fi
     fi
 
-    if ! grep -qxF "$EMPTY_COMMENT" "$section_file"; then
-      decisions=$(awk '
-        $0 == "### Decisions" { in_decisions = 1; next }
-        in_decisions && /^### / { exit }
-        in_decisions && /^[[:space:]]*<!--/ { next }
-        in_decisions { print }
-      ' "$section_file")
-      if ! printf '%s\n' "$decisions" | grep -Eq '(^|[^0-9])[0-9]{4}-(0[1-9]|1[0-2])([^0-9]|$)'; then
-        echo "FAIL $agents: Decisions subsection has no YYYY-MM dated entry" >&2
-        rc=1
-      fi
+    if hits=$(grep -nE "$RESIDUE" "$agents"); then
+      echo "FAIL $agents: commit hashes and /tmp paths are session residue, not project context:" >&2
+      echo "$hits" | sed 's/^/  /' >&2
+      rc=1
+    fi
+
+    # The repo that ships these commands (bin/project-map lives there) may
+    # name them; everywhere else they are restated global rules.
+    if [ ! -f "$dir/bin/project-map" ] && hits=$(grep -nE "$GLOBAL_FAIL" "$agents"); then
+      echo "FAIL $agents: restates machine-wide rules already in the global instructions — delete these lines:" >&2
+      echo "$hits" | sed 's/^/  /' >&2
+      rc=1
+    fi
+
+    if hits=$(grep -nE "$GLOBAL_WARN" "$agents"); then
+      echo "WARN $agents: mentions global tools/rules — keep only if the line says something repo-specific:" >&2
+      echo "$hits" | sed 's/^/  /' >&2
     fi
 
     if [ "$rc" -eq 0 ]; then
-      echo "OK $agents: $lines/$MAX_LINES project-map lines"
+      echo "OK $agents: $lines/$MAX_LINES lines"
     fi
     exit "$rc"
     ;;
@@ -138,13 +163,9 @@ EOF
     [ "$lint_rc" -eq 0 ] || exit "$lint_rc"
     git -C "$dir" rev-parse --git-dir >/dev/null 2>&1 || die "$dir is not a git repo"
 
-    review_date=$(sed -n 's/^<!-- project-map-reviewed: \([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]\) -->$/\1/p' <(extract_section))
-    valid_date "$review_date" || die "$agents has invalid Project map review date '$review_date'"
+    review_date=$(git -C "$dir" log -1 --format=%cs -- AGENTS.md)
+    [ -n "$review_date" ] || die "$agents has never been committed"
     today=$(date +%F)
-    if [[ "$review_date" > "$today" ]]; then
-      die "$agents has future Project map review date '$review_date'"
-    fi
-
     review_epoch=$(date -d "$review_date" +%s)
     today_epoch=$(date -d "$today" +%s)
     days=$(( (today_epoch - review_epoch) / 86400 ))
@@ -152,13 +173,13 @@ EOF
     commits=$(git -C "$dir" rev-list --count --since="$day_after 00:00:00" HEAD)
 
     if [ "$days" -gt "$STALE_DAYS" ] || [ "$commits" -gt "$STALE_COMMITS" ]; then
-      echo "STALE $agents: reviewed $review_date ($days days / $commits commits since review) — review and re-date"
+      echo "STALE $agents: last touched $review_date ($days days / $commits commits since) — review it"
       exit 2
     fi
-    echo "OK $agents: reviewed $review_date ($days days / $commits commits since review)"
+    echo "OK $agents: last touched $review_date ($days days / $commits commits since)"
     ;;
 
   *)
-    die "usage: project-map {init|lint|check} [DIR]"
+    die "usage: project-map {owned|init|lint|check} [DIR]"
     ;;
 esac

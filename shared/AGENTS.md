@@ -235,7 +235,11 @@ of the code changes.
 
 Use the nearest `NOTES.md` for accumulated local facts, investigation
 summaries, diagnostics, and other durable-but-non-instructional notes. Keep
-`AGENTS.md` limited to standing instructions and workflow preferences.
+`AGENTS.md` limited to standing instructions and workflow preferences:
+150 lines max for the whole file, no dated changelog entries, no commit
+hashes, and never a restatement of anything in this global file (sudo,
+serve-report, worktrees, fair-run, CAD rules …). `project-map lint <repo>`
+enforces this; it fails on purpose, fix the file rather than the lint.
 
 `NOTES.md` files are append-only logs and some are large (tens of KB) — never
 read one whole into context on spec. When a task may depend on saved local

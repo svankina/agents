@@ -5,27 +5,31 @@ description: Preserve project context, post a wrap-up status, and close the term
 The session is ending, and the terminal it runs in should close with it.
 Do this now, in order:
 
-1. Preserve durable context for the next agent:
-   - Find the current git repository root. If its root `AGENTS.md` lacks an
-     exact `## Project map` section, create it now: run
+1. Preserve durable context for the next agent — only if there is any:
+   - Find the current git repository root. Run `project-map owned <repo-root>`;
+     if it exits non-zero this is an upstream clone: skip this whole step,
+     never add or edit `AGENTS.md` there.
+   - If the root `AGENTS.md` lacks an exact `## Project map` section, run
      `project-map init <repo-root>`. If that created `AGENTS.md` and no
-     `CLAUDE.md` exists, add the conventional symlink:
-     `ln -s AGENTS.md CLAUDE.md`. Then review the section against what this
-     session actually learned.
-   - Add only durable facts that would otherwise make a fresh agent work
-     incorrectly or slowly. Correct or prune stale facts. Keep architecture,
-     paths, invariants, and dated decisions; exclude session chronology,
-     temporary state, generic advice, secrets, personal data, and raw output.
-     Do not read all of `NOTES.md`; search it only when needed to verify a fact.
-   - After genuinely reviewing the section, set
-     `<!-- project-map-reviewed: YYYY-MM-DD -->` to today's date. Do not change
-     the file merely to rewrite an already-current marker.
-   - Run `project-map lint <repo-root>` and fix the embedded section if it
-     fails. Never suppress or skip a lint failure.
-   - If `AGENTS.md` changed and has no unrelated pre-existing edits, stage
-     only that file and commit it as `Update project map at wrap-up`. Never
-     sweep other files into this commit. If unrelated edits make that unsafe,
-     leave it uncommitted and name the conflict in the final reply.
+     `CLAUDE.md` exists, add the conventional symlink: `ln -s AGENTS.md CLAUDE.md`.
+   - Ask one question: did this session learn a fact that would make a fresh
+     agent work incorrectly or slowly, or prove an existing line wrong? If
+     no, do not open `AGENTS.md` at all. If yes, add, correct, or delete
+     exactly those lines — never reword, reflow, or reorganise the lines
+     around them, and never add a line to say what this session did.
+     `AGENTS.md` holds standing instructions and the project map only:
+     no session chronology, dated changelog entries, commit hashes, scratch
+     paths, generic advice, secrets, personal data, raw output, hardware
+     dumps, or restated machine-wide rules (sudo/psudo, serve-report,
+     worktrees, fair-run, …). Those facts go to `NOTES.md` (append, dated).
+     Do not read all of `NOTES.md`; search it only when needed to verify a
+     fact.
+   - If `AGENTS.md` changed, run `project-map lint <repo-root>` and fix
+     what it reports. Never suppress or skip a lint failure. Then, if the
+     file has no unrelated pre-existing edits, stage only that file and
+     commit it as `Update project map at wrap-up`. Never sweep other files
+     into this commit. If unrelated edits make that unsafe, leave it
+     uncommitted and name the conflict in the final reply.
 2. Compose ONE line summarizing what this session actually shipped: past
    tense, concrete, what now works and where. Example:
    `wrapped up: magic-link login merged to master in ~/src/foo`.

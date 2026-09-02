@@ -78,7 +78,6 @@ live agent dirs, or copied into `~/src/pagent`.
   `git add` it.
 
 ## Project map
-<!-- project-map-reviewed: 2026-09-02 -->
 
 ### Architecture
 - Not a package: files here are symlinked into live agent dirs by
@@ -86,9 +85,11 @@ live agent dirs, or copied into `~/src/pagent`.
   `~/.claude/commands/` and `~/.omp/agent/commands/`), no sync needed.
 
 ### Where things live
-- `bin/project-map` — embedded `## Project map` contract: exactly the four
-  `###` subsections in order, one `project-map-reviewed` marker on line 2,
-  150-line cap, Decisions needs a YYYY-MM dated entry once non-empty.
+- `bin/project-map` — `AGENTS.md` contract: whole file ≤150 lines, exactly
+  the four `###` subsections under `## Project map` in order, no
+  `project-map-reviewed` marker, no commit hashes or `/tmp` paths, no
+  restated machine-wide rules (`GLOBAL_FAIL` regex). `owned` refuses
+  upstream clones. Review age = `git log -1 -- AGENTS.md`.
 - `shared/commands/wq.md` — wrap-up flow that creates/reviews project maps.
 
 ### Invariants & gotchas
@@ -97,6 +98,9 @@ live agent dirs, or copied into `~/src/pagent`.
 
 ### Decisions
 - 2026-08-06: project-map pilot ended (was homer, librarian, manager, omp,
-  triage). `/wq` now runs `project-map init` in any repo lacking the section;
-  rollout is lazy at wrap-up — no eager mass-init, third-party clones
-  included only when a session wraps up there.
+  triage). `/wq` runs `project-map init` in any owned repo lacking the
+  section; rollout is lazy at wrap-up — no eager mass-init.
+- 2026-09-02: audit of 103 `AGENTS.md` found ~65% NOTES.md material and
+  marker-only wrap-up commits. Dropped the reviewed marker and the
+  dated-Decisions rule (they forced changelog entries), capped the whole
+  file, lint fails on global-rule restatement, upstream clones excluded.
