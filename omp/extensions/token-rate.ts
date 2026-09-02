@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -91,7 +92,13 @@ function streamDelta(event: AssistantMessageEvent): string | undefined {
 export default function tokenRate(api: ExtensionAPI): void {
 	const buckets = new TokenRateBuckets();
 	const directory = runtimeDirectory();
-	const target = path.join(directory, `${process.pid}.json`);
+	// One file per *session*, not per process. omp runs subagents in-process
+	// and loads this extension again for each of their sessions, so a pid-keyed
+	// file had N writers taking turns overwriting one another every 100 ms: the
+	// meter saw whichever session published last, and a parent plus five
+	// parallel scouts read as one stream. Separate files, and the meter's
+	// per-file scan sums them exactly as it already does across processes.
+	const target = path.join(directory, `${process.pid}-${crypto.randomUUID().slice(0, 8)}.json`);
 	const temporary = `${target}.tmp`;
 	let lastWrittenAt = 0;
 	let dirty = false;
@@ -105,6 +112,37 @@ export default function tokenRate(api: ExtensionAPI): void {
 			}
 		}
 	};
+
+	// A session that dies without `session_shutdown` (kill -9, OOM, a crash)
+	// leaves its file behind, and per-session names never get reused the way a
+	// pid eventually is. The meter reads at most 128 files, so enough leftovers
+	// would crowd out live ones. Each new session sweeps files whose owning
+	// pid is gone; liveness is a signal-0 probe, and EPERM means "alive, not
+	// ours", which is still alive.
+	const sweep = (): void => {
+		let entries: string[];
+		try {
+			entries = fs.readdirSync(directory);
+		} catch {
+			return;
+		}
+		for (const entry of entries) {
+			const owner = Number.parseInt(entry, 10);
+			if (!Number.isInteger(owner) || owner <= 0 || owner === process.pid) continue;
+			try {
+				process.kill(owner, 0);
+				continue;
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "ESRCH") continue;
+			}
+			try {
+				fs.unlinkSync(path.join(directory, entry));
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "ENOENT") api.logger.warn(`token-rate: ${String(error)}`);
+			}
+		}
+	};
+	sweep();
 
 	const publish = (now: number, force = false): void => {
 		if (!dirty || (!force && now - lastWrittenAt < BUCKET_MS)) return;
