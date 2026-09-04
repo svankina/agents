@@ -14,10 +14,10 @@ the agent's checkout -- that is the manager's job, with the user watching.
     karen-context                 # the one blocked agent, if there is exactly one
     karen-context %12             # by pane id
     karen-context agents:2.1      # by tmux label
-    karen-context triage          # by cwd or agent name
+    karen-context herd            # by cwd or agent name
     karen-context --lines 800 %12 # more scrollback
 
-Facts come from triage (`triage status --json`, `triage record`), which already
+Facts come from herd (`herd status --json`, `herd record`), which already
 owns pane identification and the transcript-to-pane inference.
 """
 
@@ -33,13 +33,18 @@ from pathlib import Path
 
 HOME = Path.home()
 
-# Fallback when triage is not on PATH: the checkout it is normally linked from.
-TRIAGE_FALLBACK = HOME / "src" / "triage" / "bin" / "triage"
+# Fallback when herd is not on PATH: the checkout it is normally linked from.
+HERD_FALLBACK = HOME / "src" / "herd" / "bin" / "herd"
+
+# Where the record lives when the panel runs as its own user: herd's system
+# service creates this directory and hands both users access, so one machine
+# has one record. Mirrors herd's health.SHARED_STATE.
+SHARED_STATE = Path("/var/lib/herd")
 
 # Where each agent keeps its transcripts, and how deep under it a *resumable*
 # conversation sits -- subagent logs live further down the same tree, and reading
 # one would hand the manager a subagent's task instead of the pane's. Both are
-# triage's (resurrect.AGENTS); None means the layout is not depth-shaped.
+# herd's (resurrect.AGENTS); None means the layout is not depth-shaped.
 STORES = {
     "claude": (HOME / ".claude" / "projects", 2),
     "codex": (HOME / ".codex" / "sessions", None),
@@ -50,7 +55,7 @@ STORES = {
 # Enough of a transcript to reach the records that name it.
 HEADER_BYTES = 64 * 1024
 
-# The status triage gives an agent that has stopped and wants something. It is
+# The status herd gives an agent that has stopped and wants something. It is
 # the only status worth auto-selecting: "working" is the normal case and "done"
 # is a finished agent, so guessing at either would send a manager at a pane the
 # user did not mean.
@@ -65,11 +70,11 @@ def die(message: str, code: int = 1) -> int:
     return code
 
 
-def triage_bin() -> str | None:
-    found = shutil.which("triage")
+def herd_bin() -> str | None:
+    found = shutil.which("herd")
     if found:
         return found
-    return str(TRIAGE_FALLBACK) if TRIAGE_FALLBACK.is_file() else None
+    return str(HERD_FALLBACK) if HERD_FALLBACK.is_file() else None
 
 
 def run(argv: list[str], *, check: bool = True) -> str:
@@ -79,8 +84,8 @@ def run(argv: list[str], *, check: bool = True) -> str:
     return out.stdout
 
 
-def views(triage: str) -> list[dict]:
-    return json.loads(run([triage, "status", "--json"]) or "[]")
+def views(herd: str) -> list[dict]:
+    return json.loads(run([herd, "status", "--json"]) or "[]")
 
 
 def matches(target: str, panes: list[dict]) -> list[dict]:
@@ -123,7 +128,7 @@ def decoration(token: str) -> bool:
 
     A spinner frame ("⠧"), a program sigil ("π", "✳") or a state marker (">").
     Anything carrying a letter or a digit is the name -- which is where this
-    differs from triage's detect.session_name(): its test is `not
+    differs from herd's detect.session_name(): its test is `not
     token.isalnum()`, so a session called `pane_refresh` or `agent-gui` is
     stripped away to nothing there.
     """
@@ -135,7 +140,7 @@ def pane_name(title: str, agent: str) -> str:
 
     Every agent that advertises one puts it behind its own decoration ("π ⠧
     workspacer", "✳ Fixing the parser", "⠋ … - amp - <thread>"). Read here rather
-    than imported from triage because that is a separate checkout, and the cost
+    than imported from herd because that is a separate checkout, and the cost
     of failing to read a name is only a wider list of candidate conversations.
     """
     parts = [p for p in title.split(" - ") if p.strip().casefold() != agent.casefold()]
@@ -187,7 +192,7 @@ def by_name(agent: str, cwd: str, name: str) -> list[Path]:
     This is the one identification that is not an inference: the agent writes the
     same string into its OSC title and into its transcript, so a name that hits
     exactly one conversation *is* this pane's conversation -- which is more than
-    triage can say, since its record is keyed by cwd rather than by pane.
+    herd can say, since its record is keyed by cwd rather than by pane.
     """
     store, depth = STORES.get(agent, (None, None))
     if store is None or not name or not store.is_dir():
@@ -212,19 +217,37 @@ def resolve(agent: str, ref: str) -> Path | None:
     return next(iter(sorted(store.rglob(f"*{ref}*.jsonl"))), None)
 
 
-def recorded(triage: str, view: dict) -> list[Path]:
+def record_path() -> Path:
+    """The record herd writes, wherever herd decided to put it.
+
+    Mirrors herd's health.state_dir() exactly: an explicit override wins, then
+    XDG, then the machine-wide directory the panel's service shares between
+    users, then the per-user default. Reading a directory herd did not choose
+    costs the manager its candidate list without saying so.
+    """
+    if override := os.environ.get("HERD_STATE_DIR"):
+        state = Path(override)
+    elif base := os.environ.get("XDG_STATE_HOME"):
+        state = Path(base) / "herd"
+    elif SHARED_STATE.is_dir() and os.access(SHARED_STATE, os.R_OK | os.W_OK | os.X_OK):
+        state = SHARED_STATE
+    else:
+        state = HOME / ".local" / "state" / "herd"
+    return state / "agents.json"
+
+
+def recorded(herd: str, view: dict) -> list[Path]:
     """Conversations that could be this pane's, newest first.
 
-    `triage record` re-does the match now rather than trusting a snapshot the
+    `herd record` re-does the match now rather than trusting a snapshot the
     panel wrote minutes ago. It is keyed by agent, cwd and tmux session rather
     than by pane -- which transcript belongs to which pane is an inference there,
     with no lifecycle hook to settle it -- so several agents of one kind in one
     project legitimately come back as several candidates.
     """
-    run([triage, "record"], check=False)
-    state = Path(os.environ.get("XDG_STATE_HOME") or HOME / ".local" / "state")
+    run([herd, "record"], check=False)
     try:
-        blob = json.loads((state / "triage" / "agents.json").read_text(encoding="utf8"))
+        blob = json.loads(record_path().read_text(encoding="utf8"))
     except (OSError, ValueError):
         return []
     found: list[Path] = []
@@ -241,12 +264,12 @@ def recorded(triage: str, view: dict) -> list[Path]:
     return sorted(found, key=lambda p: p.stat().st_mtime, reverse=True)
 
 
-def transcripts(triage: str, view: dict, title: str) -> tuple[list[Path], str]:
+def transcripts(herd: str, view: dict, title: str) -> tuple[list[Path], str]:
     """The pane's conversation and how sure we are, or the candidates.
 
     The pane's own title settles it whenever the agent advertises a name. Failing
     that -- an agent that names nothing, or a name shared by two conversations --
-    fall back to triage's record, which is a shortlist for the cwd rather than an
+    fall back to herd's record, which is a shortlist for the cwd rather than an
     answer for the pane, and say which of the two you are being given.
     """
     name = pane_name(title, view["agent"])
@@ -254,9 +277,9 @@ def transcripts(triage: str, view: dict, title: str) -> tuple[list[Path], str]:
     if hits:
         extra = "" if len(hits) == 1 else f", newest of {len(hits)}"
         return hits[:CANDIDATES], f"matched by session name {name!r}{extra}"
-    found = recorded(triage, view)
+    found = recorded(herd, view)
     if len(found) == 1:
-        return found, "the only conversation triage matched to this pane"
+        return found, "the only conversation herd matched to this pane"
     return found[:CANDIDATES], (
         f"{len(found)} conversations match this pane, newest first -- confirm "
         "against the screen below"
@@ -275,7 +298,7 @@ def report(view: dict, facts: str, title: str, found: list[Path], note: str, tex
     if title:
         print(f"pane title  {title}")
     if not found:
-        print("transcript  none -- triage could not match a conversation to this pane")
+        print("transcript  none -- herd could not match a conversation to this pane")
     else:
         print(f"transcript  {found[0]}  [{note}]")
         for extra in found[1:]:
@@ -288,7 +311,7 @@ def report(view: dict, facts: str, title: str, found: list[Path], note: str, tex
 def screen(pane: str, lines: int) -> str:
     # Negative -S reaches into the scrollback on purpose: the traceback a manager
     # needs has usually scrolled off the visible screen already. (It is also why
-    # triage's own detector uses -S 0 instead -- it must not see that far back.)
+    # herd's own detector uses -S 0 instead -- it must not see that far back.)
     return run(
         ["tmux", "capture-pane", "-p", "-J", "-S", f"-{lines}", "-E", "-", "-t", pane],
         check=False,
@@ -303,13 +326,13 @@ def main(argv: list[str]) -> int:
                    help="how much scrollback to print (default 400)")
     args = p.parse_args(argv)
 
-    triage = triage_bin()
-    if triage is None:
-        return die("triage is not on PATH and ~/src/triage/bin/triage is missing")
+    herd = herd_bin()
+    if herd is None:
+        return die("herd is not on PATH and ~/src/herd/bin/herd is missing")
     if not shutil.which("tmux"):
         return die("tmux is not on PATH")
     try:
-        panes = views(triage)
+        panes = views(herd)
     except (RuntimeError, ValueError) as exc:
         return die(str(exc))
 
@@ -339,7 +362,7 @@ def main(argv: list[str]) -> int:
     title = fact(pane, "#{pane_title}")
     facts = fact(pane, "#{pane_current_command} #{pane_width}x#{pane_height}"
                        "#{?pane_dead, DEAD,}")
-    found, note = transcripts(triage, view, title)
+    found, note = transcripts(herd, view, title)
     report(view, facts, title, found, note, screen(pane, args.lines))
     return 0
 

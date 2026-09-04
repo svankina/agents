@@ -43,10 +43,22 @@ Do this now, in order:
    Use your agent name or the project directory basename as `--source`.
    Verify the command exited 0; if it failed, report the error instead of
    claiming the post was made.
-4. If a `quit_session` tool is available, call it now with
+4. Mark the pane for death so the herd panel can show it going, best-effort:
+
+   ```bash
+   herd doom 2>/dev/null || true
+   ```
+
+   It marks the pane this session runs in (`$HERD_PANE`) as about to exit,
+   which is the only warning the panel gets: a pane otherwise vanishes with no
+   notice and reads as a crash. Never let this step fail the wrap-up — there is
+   no broker under `HERD_HOST=tmux`, and none at all outside herd. The mark
+   lapses by itself after a few seconds, so nothing is left behind if the
+   session does not actually end.
+5. If a `quit_session` tool is available, call it now with
    `kill_terminal: true` — it ends the session gracefully after your final
    reply is delivered, then closes the parent terminal window/pane. If the
    tool does not exist in this harness, skip this step.
-5. Reply with the exact line you posted, plus anything left uncommitted,
+6. Reply with the exact line you posted, plus anything left uncommitted,
    unpushed, or unfinished (or "nothing pending"). Then stop — no further
    work, no follow-up offers.

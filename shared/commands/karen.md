@@ -23,7 +23,7 @@ having, and its screen plus scrollback. Read it before forming any theory.
 - Exit 2 means the target was ambiguous or missing; it printed the candidates.
   Use the user's complaint to pick, and if that is not enough, `ask` **one**
   question listing the candidates. Never manage a pane you are not sure about.
-- More than one `transcript` line means triage could not tell which
+- More than one `transcript` line means herd could not tell which
   conversation is this pane's. Confirm by matching a transcript's tail against
   the screen you were just shown; if none matches, treat the task as unknown
   and work from the screen alone.
@@ -84,11 +84,11 @@ Check the pane's status from step 1 first:
 
 - **`working`** — do **not** type into it. Keys sent to a streaming agent land
   in the middle of whatever it is doing. Either wait for it to stop
-  (`triage status --json` again) or, if it is looping and the user wants it
+  (`herd status --json` again) or, if it is looping and the user wants it
   interrupted, ask the user first.
 
-- **pane gone** — nothing to brief. `triage resurrect --dry-run` shows what
-  triage would bring back; otherwise finish the remaining task yourself in that
+- **pane gone** — nothing to brief. `herd resurrect --dry-run` shows what
+  herd would bring back; otherwise finish the remaining task yourself in that
   cwd and report that you did.
 
 ## 6. Confirm it took.
