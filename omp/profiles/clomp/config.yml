@@ -13,8 +13,8 @@ modelRoles:
   task: openai-codex/gpt-5.5:medium
 task:
   agentModelOverrides:
-    scout: openai-codex/gpt-5.3-codex-spark:medium
-    sonic: openai-codex/gpt-5.4-mini:low
+    scout: anthropic/claude-haiku-4-5:low
+    sonic: anthropic/claude-haiku-4-5:low
 tier:
   openai: priority
 enabledModels:
