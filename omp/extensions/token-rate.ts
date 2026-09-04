@@ -75,7 +75,7 @@ export class TokenRateBuckets {
 
 function runtimeDirectory(): string {
 	const base = process.env.XDG_RUNTIME_DIR || os.tmpdir();
-	return path.join(base, "triage-token-rate");
+	return path.join(base, "herd-token-rate");
 }
 
 function streamDelta(event: AssistantMessageEvent): string | undefined {
@@ -148,7 +148,7 @@ export default function tokenRate(api: ExtensionAPI): void {
 		if (!dirty || (!force && now - lastWrittenAt < BUCKET_MS)) return;
 		try {
 			fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-			// 0644, not 0600: the protected triage panel reads these as its own
+			// 0644, not 0600: the protected herd panel reads these as its own
 			// user through an ACL grant on the directory, and rename replaces the
 			// inode every write, so a per-file grant could never stick. The
 			// directory (0700 + ACL) is the access boundary, not the file bits.

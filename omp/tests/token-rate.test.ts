@@ -76,7 +76,7 @@ describe("tokenRate extension", () => {
 
 	beforeEach(() => {
 		runtime = fs.mkdtempSync(path.join(os.tmpdir(), "token-rate-"));
-		directory = path.join(runtime, "triage-token-rate");
+		directory = path.join(runtime, "herd-token-rate");
 		process.env.XDG_RUNTIME_DIR = runtime;
 	});
 	afterEach(() => {
