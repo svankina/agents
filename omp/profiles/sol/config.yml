@@ -2,7 +2,7 @@
 # Tiers: sol flagship ($5/$30) > terra mid ($2/$12) > luna small ($0.2/$1.2);
 # codex-spark = fast code model, text-only, 128K.
 modelRoles:
-  default: openai-codex/gpt-5.6-sol:medium
+  default: openai-codex/gpt-6-astra:medium
   slow: openai-codex/gpt-5.6-sol:xhigh
   plan: openai-codex/gpt-5.6-sol:high
   # Default worker for delegated implementation (task tool).
