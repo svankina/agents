@@ -1,0 +1,75 @@
+modelRoles:
+  default: google-antigravity/gemini-3.8-flash:medium
+  plan: google-antigravity/gemini-3.8-flash:high
+  slow: google-antigravity/gemini-3.8-flash:high
+  task: google-antigravity/gemini-3.8-flash:medium
+  designer: google-antigravity/gemini-3.8-flash:medium
+  smol: google-antigravity/gemini-3.8-flash:low
+  vision: google-antigravity/gemini-3.8-flash:medium
+  commit: google-antigravity/gemini-3.8-flash:low
+  advisor: google-antigravity/gemini-3.8-flash:medium
+enabledModels:
+  - google-antigravity/gemini-3.8-flash
+  - google-antigravity/gemini-3.7-flash
+defaultThinkingLevel: medium
+startup:
+  quiet: true
+setupVersion: 2
+providers:
+  webSearchGeminiModel: gemini-3.8-flash
+  webSearchExclude:
+    - anthropic
+  webSearchOrder:
+    - exa
+    - perplexity
+    - gemini
+retry:
+  modelFallback: true
+  fallbackChains:
+    default:
+      - google-antigravity/gemini-3.7-flash:medium
+  fallbackRevertPolicy: cooldown-expiry
+dev:
+  autoqaConsent: granted
+symbolPreset: unicode
+theme:
+  dark: titanium
+extensions:
+  - ~/src/agents/omp/extensions
+statusLine:
+  preset: custom
+  leftSegments:
+    []
+  rightSegments:
+    []
+  segmentOptions:
+    model:
+      showThinkingLevel: false
+    path:
+      abbreviate: true
+      maxLength: 40
+      stripWorkPrefix: true
+    git:
+      showBranch: true
+      showStaged: true
+      showUnstaged: true
+      showUntracked: false
+disabledProviders:
+  - claude-plugins
+skills:
+  enableClaudeUser: false
+  enableClaudeProject: false
+task:
+  showResolvedModelBadge: true
+  agentModelOverrides:
+    scout: google-antigravity/gemini-3.8-flash:low
+    sonic: google-antigravity/gemini-3.8-flash:low
+tools:
+  xdevDocs: catalog
+composer:
+  shape: box
+hideThinkingBlock: true
+auth:
+  broker:
+    url: http://127.0.0.1:8766
+    token: "!cat ~/.omp/auth-broker.token"
