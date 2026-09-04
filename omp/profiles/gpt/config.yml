@@ -1,4 +1,4 @@
-# sol profile — GPT-5.6-Sol main agent with tiered subagent routing.
+# gpt profile — OpenAI Codex main agent (astra default) with tiered subagent routing.
 # Tiers: sol flagship ($5/$30) > terra mid ($2/$12) > luna small ($0.2/$1.2);
 # codex-spark = fast code model, text-only, 128K.
 modelRoles:
