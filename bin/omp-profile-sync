@@ -7,6 +7,8 @@
 #   mcp.json    copied when missing (same reason)
 #   skills/     symlinks to every shared skill in ~/src/agents/shared/skills
 #   commands/   symlinks to every shared command in ~/src/agents/shared/commands
+#   models.yml  symlinked to ~/.omp/agent/models.yml (shared custom providers)
+#   agents/     symlinks to every shared subagent in ~/src/agents/shared/agents
 # and  ~/.omp/profiles/<name>/plugins  is symlinked to  ~/.omp/plugins  so every
 # profile shares the base plugin installs and settings (omp-tokrate footer etc.).
 #
@@ -17,6 +19,7 @@ SRC="$HOME/src/agents/omp/profiles"
 DST="$HOME/.omp/profiles"
 COMMANDS_SRC="$HOME/src/agents/shared/commands"
 PLUGINS_BASE="$HOME/.omp/plugins"
+AGENTS_SRC="$HOME/src/agents/shared/agents"
 SKILLS_SRC="$HOME/src/agents/shared/skills"
 FORCE=0
 [[ "${1:-}" == "--force" ]] && FORCE=1
@@ -43,6 +46,13 @@ for dir in "$SRC"/*/; do
   mkdir -p "$agent/commands"
   for c in "$COMMANDS_SRC"/*.md; do
     ln -sfn "$c" "$agent/commands/$(basename "$c")"
+  done
+
+  # Shared models.yml (custom providers) and shared subagent definitions.
+  ln -sfn ../../../agent/models.yml "$agent/models.yml"
+  mkdir -p "$agent/agents"
+  for a in "$AGENTS_SRC"/*.md; do
+    ln -sfn "$a" "$agent/agents/$(basename "$a")"
   done
 
   # Shared plugin store: profiles resolve plugins under their own config root,
