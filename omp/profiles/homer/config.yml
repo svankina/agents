@@ -10,9 +10,7 @@ modelRoles:
   slow: anthropic/claude-sonnet-5:medium
   plan: anthropic/claude-sonnet-5:medium
 enabledModels: 
-  - anthropic/claude-haiku-4-5
-  - anthropic/claude-sonnet-5
-  - anthropic/claude-opus-5
+  - anthropic/*
 defaultThinkingLevel: minimal
 skills: 
   enableClaudeUser: false

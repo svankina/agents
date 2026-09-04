@@ -25,11 +25,10 @@ task:
     sonic: "@mech"
     reviewer: "@review"
     security-reviewer: "@review"
+# Provider glob: every openai-codex model omp knows about is selectable, so new
+# releases (astra, …) show up in /model without editing this file.
 enabledModels:
-  - openai-codex/gpt-5.6-sol
-  - openai-codex/gpt-5.6-terra
-  - openai-codex/gpt-5.6-luna
-  - openai-codex/gpt-5.3-codex-spark
+  - openai-codex/*
 defaultThinkingLevel: medium
 startup:
   quiet: true

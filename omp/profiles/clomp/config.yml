@@ -18,13 +18,8 @@ task:
 tier:
   openai: priority
 enabledModels:
-  - anthropic/claude-sonnet-5
-  - anthropic/claude-opus-5
-  - anthropic/claude-fable-5-1
-  - anthropic/claude-haiku-4-5
-  - openai-codex/gpt-5.5
-  - openai-codex/gpt-5.4-mini
-  - openai-codex/gpt-5.3-codex-spark
+  - anthropic/*
+  - openai-codex/*
 defaultThinkingLevel: medium
 startup:
   quiet: true

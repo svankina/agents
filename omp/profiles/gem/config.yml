@@ -9,8 +9,7 @@ modelRoles:
   commit: google-antigravity/gemini-3.8-flash:low
   advisor: google-antigravity/gemini-3.8-flash:medium
 enabledModels:
-  - google-antigravity/gemini-3.8-flash
-  - google-antigravity/gemini-3.7-flash
+  - google-antigravity/*
 defaultThinkingLevel: medium
 startup:
   quiet: true
