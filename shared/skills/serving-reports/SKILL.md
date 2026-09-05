@@ -61,6 +61,37 @@ serve-report ./build/site --name release-notes
 serve-report ./out/chart.png --name q3-chart --copy
 ```
 
+## Collect explicit review feedback
+
+Use the shared server for report annotations. Do not read browser profiles.
+
+1. Run `serve-report feedback-create <review-id>`. It returns an endpoint,
+   capability token, and private storage directory. Reusing the ID preserves
+   the token. Keep that token in the intended review page only.
+2. Add an explicit submit button. POST JSON `{token, payload}` to the returned
+   same-origin endpoint. Nothing is sent until the user clicks. Show success
+   only after HTTP 201 with a receipt ID; retain browser notes on all outcomes.
+3. Run `serve-report feedback-read <review-id>` to read submitted copies.
+   Feedback lives outside the public directory and is not available over GET.
+
+`templates/context-review.html` provides line-linked annotations, local drafts,
+explicit submission, download/import, and printable notes. Replace
+`__CONTEXT_DATA__` with snapshot JSON and `__FEEDBACK_CONFIG__` with
+`{endpoint, token}` JSON. Escape `<` as `\u003c` in embedded JSON. Preserve the
+published URL and snapshot fingerprint when upgrading an existing review,
+so its browser drafts remain available.
+
+Submissions require same-origin JSON, a valid review token, and at most 1 MiB.
+The server persists the submission before returning its receipt. A timeout can
+leave receipt status uncertain; a retry can create a second submission.
+The page and its token are available to anyone who can open its report URL.
+This is capability-based submission, not authenticated user identity.
+
+The feedback-aware server is `scripts/report_http_server.py`. A running legacy
+`http.server` needs one deliberate shared-service upgrade, retaining its public
+directory and port. Publishing does not restart it automatically. Never restart
+the shared service merely to clean up a report.
+
 ## Managing the server (rarely needed)
 
 ```bash
