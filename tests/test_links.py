@@ -118,12 +118,10 @@ def add_agent(cfg, name):
 def test_desired_agent_links_covers_all_dests(tmp_path):
     cfg = make_cfg(tmp_path)
     src = add_agent(cfg, "cad")
-    (cfg.home / ".omp" / "profiles" / "clomp").mkdir(parents=True)
     links = a.desired_agent_links(cfg)
     dests = {link.parent for link, _ in links}
     assert cfg.home / ".claude" / "agents" in dests
     assert cfg.home / ".omp" / "agent" / "agents" in dests
-    assert cfg.home / ".omp" / "profiles" / "clomp" / "agent" / "agents" in dests
     assert all(target == src for _, target in links)
 
 

@@ -191,3 +191,9 @@ file capped at 150, residue/global-rule greps, `project-map owned`, the clone
 commits reverted (`llama.cpp-cuda-b9592` build recipe kept in its NOTES.md),
 stubs deleted, 24 oversized/failing owned repos migrated by subagents.
 Report: /tmp/agents-md-audit.html (served via serve-report).
+
+## 2026-09-05 — OMP named profiles abolished
+
+OMP now uses only the default config root at `~/.omp/agent/`; named profiles
+and `~/.omp/profiles/` are gone. Existing transcripts were merged under
+`~/.omp/agent/sessions/`, matching the default-session layout.

@@ -207,7 +207,7 @@ serve-report <path-to-file-or-dir> [--name NAME]
 - **CAD *work* is not yours to model.** Parametric modelling, assembly, and
   geometry verification are handed off to the shared `cad` subagent (source:
   `~/src/agents/shared/agents/cad.md`, synced into `~/.claude/agents/` and
-  every omp profile's `agent/agents/` by `agents-sync`). Dispatch it via your
+  `~/.omp/agent/agents/` by `agents-sync`). Dispatch it via your
   harness's subagent/task mechanism with the full part requirements; keep
   interpretation and final delivery yourself. Do not write build123d inline in
   a general session and do not re-invent per-project CAD conventions — that is
@@ -433,16 +433,13 @@ agent-status --source <agent-or-project> "wrapped up: <what changed, where>"
 ```
 
 One line, past tense, concrete: what now works and where. Skip it for trivial
-Q&A turns. `--source` sets the posting identity — use your omp profile name,
-agent name, or the project directory. Delivery goes through the local
-`agent-msgd` daemon (unix socket; Mattermost minutiae live there, with a
-direct fallback built into `agent-status`).
+Q&A turns. `--source` sets the posting identity — use your agent name or the
+project directory. Delivery goes through the local `agent-msgd` daemon (unix
+socket; Mattermost minutiae live there, with a direct fallback built into
+`agent-status`).
 
 If `~/.config/agent-status/bots/<source>.env` exists, the post is made AS
-that dedicated bot account. **Every omp profile gets its own Mattermost bot**
-so work is attributable per profile: when you create a new omp profile, run
-`mm-profile-bot <profile> --description "<what this profile is for>"` — it
-creates the bot, joins it to `#status-updates`, and writes the creds file.
+that dedicated bot account.
 Avatars are generated automatically by the hourly avatar timer.
 
 ## Compute fairness — heavy jobs go through `fair-run`

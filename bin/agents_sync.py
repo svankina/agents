@@ -25,10 +25,8 @@ AGENTS = ["claude", "codex", "pi", "omp"]
 # `claude-plugins` provider loads skills/commands/hooks/tools/MCP straight out
 # of ~/.claude/plugins/cache/, and its `claude` provider scans ~/.claude/skills
 # and every ancestor .claude/skills. Claude Code's plugins are chosen for Claude
-# Code; omp gets its skills from ~/src/agents/shared/skills. Each omp profile
-# carries its own config.yml, so a profile created later starts from omp's
-# defaults (all enabled) unless something enforces this — that is what this is.
-# Only skills/plugins are switched off: the `claude` provider still supplies
+# Code; omp gets its skills from ~/src/agents/shared/skills. Only
+# skills/plugins are switched off: the `claude` provider still supplies
 # ~/.claude/commands, which command_dests() deliberately relies on.
 OMP_ENFORCED_SETTINGS = {
     "disabledProviders": ["claude-plugins"],
@@ -110,12 +108,12 @@ class Config:
 
     def agent_dests(self) -> list[Path]:
         """Where a subagent definition has to land to be discovered. Claude Code
-        reads ~/.claude/agents; omp reads the agent dir's agents/ — per profile,
-        so every profile gets the links. codex/pi have no subagent surface."""
-        out = [self.home / ".claude" / "agents"]
-        for profile in self.omp_profiles():
-            out.append(self.omp_config(profile).parent / "agents")
-        return out
+        reads ~/.claude/agents; omp reads the default agent dir's agents/.
+        codex/pi have no subagent surface."""
+        return [
+            self.home / ".claude" / "agents",
+            self.omp_config().parent / "agents",
+        ]
 
     def home_links(self) -> list[tuple[Path, Path]]:
         return [
@@ -136,16 +134,8 @@ class Config:
             if p.is_file() and os.access(p, os.X_OK) and p.suffix != ".py"
         ]
 
-    def omp_profiles(self) -> list[str | None]:
-        """None is the default profile; the rest are ~/.omp/profiles/<name>."""
-        root = self.home / ".omp" / "profiles"
-        names = sorted(p.name for p in root.iterdir() if p.is_dir()) if root.is_dir() else []
-        return [None, *names]
-
-    def omp_config(self, profile: str | None) -> Path:
-        base = self.home / ".omp"
-        agent = base / "agent" if profile is None else base / "profiles" / profile / "agent"
-        return agent / "config.yml"
+    def omp_config(self) -> Path:
+        return self.home / ".omp" / "agent" / "config.yml"
 
 
 def banner(agent: str, source_rel: str = "shared/AGENTS.md") -> str:
@@ -287,42 +277,38 @@ def _omp_setting(data: dict, key: str):
     return node
 
 
-def omp_drift(cfg: Config) -> list[tuple[str | None, str, object]]:
-    """(profile, key, current) for every enforced omp setting not yet applied."""
+def omp_drift(cfg: Config) -> list[tuple[str, object]]:
+    """(key, current) for every enforced omp setting not yet applied."""
     try:
         import yaml
     except ImportError:  # enforcement is best-effort; never block a sync on it
         return []
+    path = cfg.omp_config()
+    if not path.exists():
+        return []
+    try:
+        data = yaml.safe_load(path.read_text()) or {}
+    except yaml.YAMLError:
+        return []
+    if not isinstance(data, dict):
+        return []
     out = []
-    for profile in cfg.omp_profiles():
-        path = cfg.omp_config(profile)
-        if not path.exists():
-            continue
-        try:
-            data = yaml.safe_load(path.read_text()) or {}
-        except yaml.YAMLError:
-            continue
-        if not isinstance(data, dict):
-            continue
-        for key, want in OMP_ENFORCED_SETTINGS.items():
-            current = _omp_setting(data, key)
-            if isinstance(want, list):
-                ok = isinstance(current, list) and set(want) <= set(current)
-            else:
-                ok = current == want
-            if not ok:
-                out.append((profile, key, current))
+    for key, want in OMP_ENFORCED_SETTINGS.items():
+        current = _omp_setting(data, key)
+        if isinstance(want, list):
+            ok = isinstance(current, list) and set(want) <= set(current)
+        else:
+            ok = current == want
+        if not ok:
+            out.append((key, current))
     return out
 
 
-def apply_omp_setting(cfg: Config, profile: str | None, key: str, value: object) -> bool:
+def apply_omp_setting(cfg: Config, key: str, value: object) -> bool:
     """Write through `omp config set` so omp owns its own file format."""
     import json
 
-    cmd = ["omp"]
-    if profile is not None:
-        cmd += ["--profile", profile]
-    cmd += ["config", "set", key, json.dumps(value)]
+    cmd = ["omp", "config", "set", key, json.dumps(value)]
     # Honour --home: without this a test run would write the real ~/.omp.
     env = {**os.environ, "HOME": str(cfg.home)}
     try:
@@ -357,8 +343,8 @@ def cmd_check(cfg: Config) -> int:
     for orphan in stale_repo_links(cfg):
         print(f"[orphan] {orphan}")
         bad += 1
-    for profile, key, current in omp_drift(cfg):
-        print(f"[omp-setting] {profile or 'default'}: {key} = {current!r}, "
+    for key, current in omp_drift(cfg):
+        print(f"[omp-setting] default: {key} = {current!r}, "
               f"want {OMP_ENFORCED_SETTINGS[key]!r}")
         bad += 1
     if bad == 0:
@@ -411,14 +397,12 @@ def cmd_sync(cfg: Config, force: bool) -> int:
     for orphan in stale_repo_links(cfg):
         orphan.unlink()
         print(f"[pruned] {orphan}")
-    for profile, key, _current in omp_drift(cfg):
+    for key, _current in omp_drift(cfg):
         want = OMP_ENFORCED_SETTINGS[key]
-        label = profile or "default"
-        if apply_omp_setting(cfg, profile, key, want):
-            print(f"[omp-set] {label}: {key} = {want!r}")
+        if apply_omp_setting(cfg, key, want):
+            print(f"[omp-set] default: {key} = {want!r}")
         else:
-            print(f"[failed] omp config set {key} for profile {label} — "
-                  f"is `omp` on PATH?")
+            print(f"[failed] omp config set {key} — is `omp` on PATH?")
             blocked += 1
     return 2 if blocked else 0
 
