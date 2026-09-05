@@ -1,106 +1,47 @@
-# Agents Agent Notes
+# Agent resources
 
-Version control for custom agent resources — Pi extensions/prompts/skills and Claude Code
-commands — kept outside the working Pi resource checkout (`~/src/pagent`). Remote
-`github.com/svankina/agents`. Not an installable package: files here are symlinked into the
-live agent dirs, or copied into `~/src/pagent`.
-
-## Layout
-- `bin/` — machine-wide agent commands, symlinked into `~/.local/bin` by
-  `agents-sync sync`: `agents-sync` (instruction/skill/command sync),
-  `agent-worktree` (per-feature git worktrees), `agent-gui` (launch a GUI onto
-  i3 workspace 9, or `--headless` onto the agent display), `agent-shot`
-  (screenshot one window by identity, never the user's screen), `agent-display`
-  (off-screen Xvfb+i3 display for agent GUI work),
-  `fair-run` (CPU/RAM-capped heavy jobs). Anything executable
-  and non-`.py` dropped here is installed on the next sync — prefer a command
-  here over more etiquette prose in `shared/AGENTS.md`.
-- `pi/extensions/` — Pi (`@earendil-works/pi-coding-agent`) extensions, one self-contained
-  `.ts` per file. **Full catalog + env vars in `pi/extensions/README.md`** — read it before
-  touching any extension. Most behaviour is **off by default**, gated behind an env var.
-- `pi/prompts/` — agent-variant slash prompts (`.md` with YAML frontmatter
-  `description`/`argument-hint`, body consumes `$ARGUMENTS`). One file → `/<name>`.
-- `pi/skills/` — project-local Pi skills; each is a dir with `SKILL.md` (+ optional
-  `scripts/`, `references/`, `templates/`). `pi/skills/.ignore` is a discovery allowlist for
-  slash-invoked skills.
-- `claude/commands/` — Claude Code slash commands (`.md`), symlinked into `~/.claude/commands/`.
-- `scripts/warpfork/warpfork` — bash script to fork a Claude Code session into Warp; installed
-  at `~/.local/bin/warpfork` (symlink back to this repo).
-
-## Config (machine-specific values)
-- Paths/URLs are **not hardcoded**. Copy `.env.example` → `.env` (gitignored) and fill in;
-  prompts/skills reference them as `$VARS`. Keys: `PI_PACKAGE_DIR`, `PISADDLE_DIR`,
-  `CLAUDE_DESIGN_*`, `CONTEXT_SURGEON_URL`.
-
-## Conventions
-- Global instructions: `agents-sync` composes each agent's file from a base +
-  `shared/USER.md` + `<agent>/local.md`. The base is `<agent>/AGENTS.md` when it
-  exists (full per-agent fork), else `shared/AGENTS.md`. **Claude Code is forked**
-  (`claude/AGENTS.md`, since 2026-08-05): edits to `shared/AGENTS.md` no longer
-  reach Claude.
-- Install pattern is symlink, not copy: e.g. `ln -s ~/src/agents/claude/commands/X.md ~/.claude/commands/X.md`,
-  warpfork → `~/.local/bin/`. Claude Code / Pi auto-discover the target dirs.
-- Pi extensions: drop the `.ts` in Pi's extensions dir (or point Pi at the folder); it loads
-  on startup. Behaviour stays inert until you set its opt-in env var.
-- `NOTES.md` is an optional historical archive; do not append routine findings.
-  Keep current behaviour in code, focused docs, and the extensions/prompts themselves.
-
-## Gotchas
-- Work lands on `master`; feature work goes in a worktree under `.worktrees/` (see the
-  branch-activation rule in the global instructions).
-- `pi/skills/browser-harness/` is **gitignored** — it's a symlink mirror into an external
-  `~/src/browser-harness` checkout packaged as a skill in `~/src/pagent`. Don't expect its
-  contents tracked here.
-- `.env`, `agent.json`, `*.disabled`, `*.bak` are gitignored. `eager-skills.ts.disabled` is a
-  kept-but-inactive experiment.
-- Several extensions integrate with **local services**: a dispatch server (`subagent-tracking`,
-  `dispatch-*`), a `limitsd` quota service (`claude-ui`), and herdr (`herdr-agent-state.ts`).
-  These no-op unless their env flags are set.
-- The canonical/working Pi resource checkout is `~/src/pagent` (`.pi/skills/*/SKILL.md`); this
-  repo preserves a curated subset.
-
-## Pointers
-- `pi/extensions/README.md` — every extension, its trigger/env var, and behaviour.
-- `pi/README.md`, `claude/README.md`, `scripts/warpfork/README.md` — per-area setup.
-- `NOTES.md` — historical archive; claims require verification against current state.
-
-## Hard-won notes (from past sessions)
-- **This repo is PUBLIC** (`github.com/svankina/agents`). Before committing, scrub machine-specific
-  identifiers: the tailnet hostname, `svankina.com`, and absolute paths — turn `/home/svankina/...` into
-  `~/`/`$HOME`-derived forms, or move doc/URL values into the gitignored `.env` (referenced as `$VARS`).
-  The bare username `svankina` is fine (public repo owner). Real secrets stay in env vars, never committed.
-- **Prompt frontmatter YAML gotcha:** in single-quoted YAML strings apostrophes must be doubled (`user''s`);
-  a literal `don't` terminates the string early and breaks the frontmatter (bit `pi/prompts/oracle.md`).
-  Validate before committing: `python3 -c "import yaml,sys; yaml.safe_load(open(sys.argv[1]).read().split('---')[1])" <file>`.
-- `gh` (GitHub CLI) is **not installed** on this machine — don't rely on it to check repo visibility/state.
-- `pi/skills/browser-harness/` holds **absolute symlinks** into `/home/svankina/src/browser-harness/`;
-  it's gitignored because committing them would both break on other machines and leak the path. Never
-  `git add` it.
+This repository manages shared agent instructions, skills, commands, and Pi
+extensions. Remote: `github.com/svankina/agents`. It is not an installable package.
 
 ## Project map
 
 ### Architecture
-- Not a package: files here are symlinked into live agent dirs by
-  `bin/agents-sync`; shared/commands/*.md are live immediately (symlinks in
-  `~/.claude/commands/` and `~/.omp/agent/commands/`), no sync needed.
+
+`bin/agents-sync` composes each global instruction file from `shared/AGENTS.md`,
+`shared/USER.md`, and `<agent>/local.md`. All four agents use the shared base.
+The generator supports an explicit per-agent fork, but none is currently used.
+Generated-file ownership is tracked outside prompt content by the sync tool.
+Skills, commands, and executable helpers are linked into their live locations.
 
 ### Where things live
-- `bin/project-map` — `AGENTS.md` contract: whole file ≤150 lines, exactly
-  the four `###` subsections under `## Project map` in order, no
-  `project-map-reviewed` marker, no commit hashes or `/tmp` paths, no
-  restated machine-wide rules (`GLOBAL_FAIL` regex). `owned` refuses
-  upstream clones. Review age = `git log -1 -- AGENTS.md`.
-- `shared/commands/wq.md` — wrap-up flow that creates/reviews project maps.
+
+- `bin/agents_sync.py`: composition, ownership checks, links, and configuration.
+  `tests/`: isolated generator and sync behavior checks.
+- `docs/agent-workflows.md`: on-demand command procedures and source maintenance.
+  `docs/machine-operations.md`: task-specific machine configuration.
+- `pi/extensions/README.md`: extension catalog and activation flags; read before
+  changing an extension. Most extensions are opt-in. `pi/prompts/` contains
+  slash prompts; `pi/skills/` contains curated Pi resources.
+- `shared/skills/`, `shared/commands/`, `shared/agents/`: shared resources.
+  `claude/local.md`, `codex/local.md`, `pi/local.md`, `omp/local.md`: agent deltas.
+- `bin/project-map`: project instruction format checks. `shared/commands/wq.md`:
+  wrap-up procedure. `scripts/warpfork/`: terminal session forking.
 
 ### Invariants & gotchas
-- `project-map init` creates `AGENTS.md` if missing; only then add the
-  `CLAUDE.md -> AGENTS.md` symlink (pre-existing AGENTS.md: leave alone).
+
+- This repository is public. Use home-relative paths and environment variables;
+  keep secrets and machine-specific endpoints in the ignored `.env`.
+- Executable non-`.py` files in `bin/` are installed by `agents-sync`.
+- `.env`, `agent.json`, `*.disabled`, and `*.bak` are ignored. Do not add the
+  ignored `pi/skills/browser-harness/` external symlink mirror.
+- The working Pi resource checkout is `~/src/pagent`; this repository preserves
+  a curated subset. Dispatch, limitsd, and herdr integrations may be inactive.
+- Prompt YAML single-quoted strings escape apostrophes by doubling them.
+- `project-map` requires four subsections in this order, at most 150 lines,
+  no reviewed marker, and no duplication of global policies.
 
 ### Decisions
-- 2026-08-06: project-map pilot ended (was homer, librarian, manager, omp,
-  triage). `/wq` runs `project-map init` in any owned repo lacking the
-  section; rollout is lazy at wrap-up — no eager mass-init.
-- 2026-09-02: audit of 103 `AGENTS.md` found ~65% NOTES.md material and
-  marker-only wrap-up commits. Dropped the reviewed marker and the
-  dated-Decisions rule (they forced changelog entries), capped the whole
-  file, lint fails on global-rule restatement, upstream clones excluded.
+
+Shared policies have one source. Agent-specific behavior belongs in local
+deltas. Detailed procedures stay outside automatically loaded context.
+Current behavior belongs in code and focused documentation, not catch-all notes.

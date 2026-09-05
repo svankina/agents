@@ -12,6 +12,19 @@ This repository tracks custom agent work, including local Pi skills, prompts, ex
 
 Machine-specific paths and URLs are not hardcoded. Copy [`.env.example`](.env.example) to `.env` (gitignored) and fill in values for your machine; prompts and skills reference these as `$VARS`.
 
+## Default context
+
+All four agents use `shared/AGENTS.md` + `shared/USER.md` + their
+`<agent>/local.md`. Detailed procedures live in
+[`docs/agent-workflows.md`](docs/agent-workflows.md) and
+[`docs/machine-operations.md`](docs/machine-operations.md), not in every prompt.
+
+Run `bin/agents-sync sync` after editing sources, then `bin/agents-sync check`.
+Generated text has no maintenance banner. The tool records output hashes in
+`~/.local/state/agents-sync/generated.json`; manual edits block replacement.
+For migration from legacy generated files, inspect `bin/agents-sync diff`,
+then explicitly run `bin/agents-sync sync --force`.
+
 ## Source checkouts
 
 - Primary local Pi resource checkout: `~/src/pagent`

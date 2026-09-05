@@ -16,7 +16,7 @@ def test_sync_creates_all_targets_and_links(tmp_path):
     (cfg.repo / "home" / "AGENTS.md").write_text("# home\n")
     assert run(cfg, "sync") == 0
     for t in cfg.targets():
-        assert t.path.read_text().startswith(a.BANNER_PREFIX)
+        assert t.path.read_text() == a.expected_content(cfg, t)
     assert (cfg.home / ".claude" / "skills" / "serving-reports").is_symlink()
     assert (cfg.home / "CLAUDE.md").is_symlink()
     assert (cfg.home / "AGENTS.md").resolve() == (cfg.repo / "home" / "AGENTS.md").resolve()
@@ -34,12 +34,15 @@ def test_sync_idempotent(tmp_path):
     assert run(cfg, "check") == 0
 
 
-def test_check_flags_drift_and_sync_blocks_without_force(tmp_path):
+def test_headerless_sync_blocks_user_edits_without_force(tmp_path):
     cfg = make_cfg(tmp_path)
     (cfg.repo / "home").mkdir(exist_ok=True)
     (cfg.repo / "home" / "AGENTS.md").write_text("# home\n")
-    run(cfg, "sync")
+    assert run(cfg, "sync") == 0
     t = cfg.targets()[0]
+    assert t.path.read_text().startswith("# Shared core\n")
+    assert run(cfg, "check") == 0
+    assert run(cfg, "sync") == 0
     t.path.write_text(t.path.read_text() + "hand edit\n")
     assert run(cfg, "check") == 1
     assert run(cfg, "sync") == 2          # blocked
@@ -47,6 +50,22 @@ def test_check_flags_drift_and_sync_blocks_without_force(tmp_path):
     assert run(cfg, "sync", "--force") == 0
     assert "hand edit" not in t.path.read_text()
     assert run(cfg, "check") == 0
+
+
+def test_sync_regenerates_only_unchanged_generated_files(tmp_path):
+    cfg = make_cfg(tmp_path)
+    (cfg.repo / "home").mkdir()
+    (cfg.repo / "home" / "AGENTS.md").write_text("# home\n")
+    assert run(cfg, "sync") == 0
+    edited, unchanged = cfg.targets()[:2]
+    edited.path.write_text(edited.path.read_text() + "keep my edit\n")
+    (cfg.repo / "shared" / "AGENTS.md").write_text("# Revised core\n")
+    assert run(cfg, "sync") == 2
+    assert "keep my edit" in edited.path.read_text()
+    assert "# Revised core" not in edited.path.read_text()
+    assert unchanged.path.read_text().startswith("# Revised core\n")
+    assert run(cfg, "sync") == 2
+    assert "keep my edit" in edited.path.read_text()
 
 
 def test_sync_preserves_foreign_block_through_regeneration(tmp_path):
