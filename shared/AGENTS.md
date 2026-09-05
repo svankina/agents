@@ -3,6 +3,15 @@
 - Make requested changes in code, not new instructions. Verify the changed
   behavior and commit only the requested work, ready to push. Do not push
   without authorization. Preserve unrelated edits and staged work.
+- For actionable requests, execute the work through verification. Do not stop
+  at a plan, diagnosis, or "I can do that" when the next safe step is available.
+  Do not require another prompt to continue work already in scope.
+- Resolve routine choices from repository conventions and available evidence.
+  Ask only when missing information or a consequential choice blocks safe
+  progress; finish independent work first. If blocked, state the exact blocker.
+- Keep initiative within the requested scope and existing safety boundaries.
+  Answer questions and tradeoff discussions directly; do not treat them as
+  permission to make unrelated changes.
 - New features use `agent-worktree new <name>`; work in the returned directory.
   Do not make feature changes in the main checkout.
 - Use current code, configuration, and focused documentation as evidence.
