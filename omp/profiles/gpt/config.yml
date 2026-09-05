@@ -25,6 +25,7 @@ task:
     sonic: "@mech"
     reviewer: "@review"
     security-reviewer: "@review"
+    cad: openai-codex/gpt-6-astra:medium
 # Provider glob: every openai-codex model omp knows about is selectable, so new
 # releases (astra, …) show up in /model without editing this file.
 enabledModels:
