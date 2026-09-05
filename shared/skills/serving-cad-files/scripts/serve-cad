@@ -7,6 +7,7 @@ serve-report server. Prints one clickable http:// URL on stdout.
 
 Usage:
   serve-cad <model>... [--name NAME] [--title TITLE]
+            [--preset studio|inspection|assembly] [--drawing SHEET.svg]
 
 Models:
   .stl .glb .gltf .obj   served as-is (.gltf external buffers are copied too)
@@ -16,6 +17,8 @@ Models:
 Flags:
   --name NAME    slug stem for the URL (default: "<first-model-stem>-cad")
   --title TITLE  heading shown in the viewer (default: name)
+  --preset MODE initial presentation (default: studio)
+  --drawing SVG attach a vector drawing sheet; copied into the published viewer
 
 Env:
   SERVE_CAD_HOME    stage dir root (default ~/.local/share/cad-viewer)
@@ -158,6 +161,7 @@ def verify(url: str) -> None:
 
 def main(argv: list[str]) -> None:
     models, name, title = [], None, None
+    preset, drawing = "studio", None
     args = iter(argv)
     for a in args:
         if a in ("-h", "--help", "help"):
@@ -171,12 +175,26 @@ def main(argv: list[str]) -> None:
             title = next(args, None) or die("--title needs a value")
         elif a.startswith("--title="):
             title = a.split("=", 1)[1]
+        elif a == "--preset":
+            preset = next(args, None) or die("--preset needs a value")
+        elif a.startswith("--preset="):
+            preset = a.split("=", 1)[1]
+        elif a == "--drawing":
+            drawing = next(args, None) or die("--drawing needs a value")
+        elif a.startswith("--drawing="):
+            drawing = a.split("=", 1)[1] or die("--drawing needs a value")
         elif a.startswith("-"):
             die(f"unknown flag: {a}")
         else:
             models.append(a)
     if not models:
         die("nothing to serve (give one or more model files; --help for usage)")
+    if preset not in ("studio", "inspection", "assembly"):
+        die("--preset must be studio, inspection, or assembly")
+    if drawing is not None:
+        drawing = Path(drawing)
+        if drawing.suffix.lower() != ".svg" or not drawing.is_file():
+            die("--drawing needs an existing SVG file")
     if not shutil.which("serve-report"):
         die("serve-report not on PATH — install it (see skill://serving-reports)")
 
@@ -193,11 +211,16 @@ def main(argv: list[str]) -> None:
     shutil.copyfile(assets / "index.html", stage / "index.html")
     shutil.copyfile(assets / "app.js", stage / "app.js")
     entries = stage_models(models, stage)
-    (stage / "manifest.json").write_text(json.dumps({
+    metadata = {
         "title": title,
+        "presentation": preset,
         "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "models": entries,
-    }, indent=1))
+    }
+    if drawing is not None:
+        shutil.copyfile(drawing, stage / "drawing.svg")
+        metadata["drawing"] = "drawing.svg"
+    (stage / "manifest.json").write_text(json.dumps(metadata, indent=1))
 
     res = subprocess.run(["serve-report", str(stage), "--name", name],
                          capture_output=True, text=True)

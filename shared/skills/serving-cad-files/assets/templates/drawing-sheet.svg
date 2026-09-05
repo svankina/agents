@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="420mm" height="297mm" viewBox="0 0 420 297" role="img" aria-labelledby="sheet-title sheet-description">
+  <title id="sheet-title">$title — automatic reference drawing</title>
+  <desc id="sheet-description">BREP hidden-line orthographic projections in third-angle arrangement. Millimeters. Overall reference dimensions only; not a manufacturing drawing. $section_description</desc>
+  <defs>
+    <pattern id="section-hatch" patternUnits="userSpaceOnUse" width="$hatch_spacing" height="$hatch_spacing">
+      <path d="M 0 $hatch_spacing L $hatch_spacing 0" fill="none" stroke="#687d8b" stroke-width="$hatch_weight"/>
+    </pattern>
+    <marker id="dimension-arrow" viewBox="0 0 6 6" refX="0" refY="3" markerWidth="2.2" markerHeight="2.2" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+      <path d="M 6 0 L 0 3 L 6 6" fill="none" stroke="#526779" stroke-width="0.65"/>
+    </marker>
+    <marker id="cut-arrow" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="2.8" markerHeight="2.8" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M 0 0 L 6 3 L 0 6 Z" fill="#147c80"/>
+    </marker>
+    <style>
+      text { font-family: Arial, Helvetica, sans-serif; fill: #203342; }
+      .eyebrow { font-size: 2.8px; letter-spacing: .65px; fill: #147c80; font-weight: 700; }
+      .heading { font-size: 7px; font-weight: 700; }
+      .subheading { font-size: 3px; fill: #526779; }
+      .view-title { font-size: 3.4px; font-weight: 700; letter-spacing: .35px; }
+      .view-axis { font-size: 2.6px; fill: #687d8b; }
+      .note { font-size: 3px; fill: #526779; }
+      .small { font-size: 2.5px; fill: #526779; }
+      .value { font-size: 4px; font-weight: 700; }
+      .rule { stroke: #d3dce1; stroke-width: .25; fill: none; }
+      .dimension { stroke: #526779; stroke-width: .18; fill: none; }
+      .dimension-text { font-size: 3px; fill: #526779; text-anchor: middle; paint-order: stroke; stroke: #fff; stroke-width: 1.5; stroke-linejoin: round; }
+      .cut { stroke: #147c80; stroke-width: .3; stroke-dasharray: 5 1 1 1; fill: none; }
+      .cut-label { font-size: 2.7px; fill: #147c80; font-weight: 700; paint-order: stroke; stroke: #fff; stroke-width: 1; }
+    </style>
+  </defs>
+  <rect width="420" height="297" fill="#fff"/>
+  <rect x="10" y="10" width="400" height="277" rx="1" class="rule"/>
+  <path d="M 17 17 H 31" stroke="#147c80" stroke-width="1.2"/>
+  <text x="35" y="18" class="eyebrow">CAD / REFERENCE SHEET</text>
+  <text x="17" y="30" class="heading" $title_fit>$title</text>
+  <text x="17" y="37" class="subheading">Orthographic study · BREP hidden-line projection · Third-angle arrangement</text>
+  <text x="402" y="18" class="small" text-anchor="end">A3 / 01</text>
+  <path d="M 17 42 H 403 M 208 48 V 249" class="rule"/>
+  <text x="20" y="53" class="view-title">02 / TOP</text>
+  <text x="195" y="53" class="view-axis" text-anchor="end">+Z view · X → / Y ↑</text>
+  <text x="20" y="157" class="view-title">01 / FRONT</text>
+  <text x="195" y="157" class="view-axis" text-anchor="end">−Y view · X → / Z ↑</text>
+  <text x="220" y="157" class="view-title">03 / RIGHT</text>
+  <text x="399" y="157" class="view-axis" text-anchor="end">+X view · Y → / Z ↑</text>
+  $views
+  $fourth_panel
+  <path d="M 17 259 H 403 M 274 259 V 282" class="rule"/>
+  <text x="20" y="266" class="eyebrow">SOURCE / $source</text>
+  <text x="20" y="272" class="small">Automatic overall / REF dimensions from STEP BREP bounds; values rounded, no tolerances implied.</text>
+  <text x="20" y="277" class="small">No inferred hole sizes, fits, GD&amp;T, materials or manufacturing completeness. Native feature history not reconstructed.</text>
+  <text x="20" y="282" class="small">Hidden edges dashed. Center marks only on analytic full circles. Hatching denotes actual section material.</text>
+  <text x="280" y="266" class="eyebrow">UNITS / mm</text>
+  <text x="280" y="272" class="value">NOT TO SCALE</text>
+  <text x="280" y="278" class="small">Common geometry fit: $scale × · Do not measure SVG</text>
+</svg>
