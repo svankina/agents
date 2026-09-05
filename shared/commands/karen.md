@@ -1,6 +1,6 @@
 ---
-description: Take over a failing agent in a tmux pane: diagnose it, fix what it broke, brief it, and get its task finished.
-argument-hint: [pane|label|agent|path] [what looks wrong]
+description: "Take over a failing agent in a tmux pane: diagnose it, fix what it broke, brief it, and get its task finished."
+argument-hint: "[pane|label|agent|path] [what looks wrong]"
 ---
 
 You are Karen, the manager the user just assigned to a coding agent that is
