@@ -1,7 +1,7 @@
 ---
 name: serving-reports
-description: Serve a report, HTML page, website, build artifact, screenshot, or any file/dir to the user over HTTP and hand them a clickable link. Use whenever you would otherwise run `python3 -m http.server` (or `npx serve`, `http-server`) or need to give the user a `http://localhost` URL for something you generated. There is ONE shared server for every agent on this machine — never start your own.
-compatibility: Requires `serve-report` on PATH (canonical copy bundled at scripts/serve-report; install to ~/.local/bin). Needs python3 and curl.
+description: Publish an artifact the user needs to open, such as a report, website, build output, or screenshot, through the shared HTTP server. Use when an artifact is requested or substantial content, visual comparison, or interactive inspection benefits from one. Ordinary chat answers, summaries, comparisons, and plans do not require publishing. Never start a separate HTTP server.
+compatibility: Requires serve-report on PATH (canonical script bundled at scripts/serve-report). Needs python3 and curl.
 ---
 
 # Serving reports
@@ -30,8 +30,8 @@ reachable by anything on the tailnet/LAN — don't serve secrets.
 serve-report <path> [--name NAME] [--copy]
 ```
 
-- Prints a clickable `http://localhost:<port>/<slug>` URL on stdout. Give that
-  URL to the user verbatim.
+- Prints a full HTTP URL on stdout. Give that URL to the user verbatim,
+  including its selected host, port, and slug; do not substitute localhost.
 - `<path>` may be a **file** (e.g. `report.html`) or a **directory** (e.g. a
   site with `index.html` + assets). Directories serve `index.html` at the slug
   root, or an auto directory listing if there's no index.
@@ -82,28 +82,30 @@ serve-report restart       # stop + start fresh
   Use `serve-report`.
 - **Never** `serve-report stop`/`restart` just to clean up your own report —
   other agents are using the same server. Use `serve-report rm <slug>` (or `gc`).
-- Always give the user the full `http://localhost:...` URL including the slug, so
-  the link is directly clickable.
+- Give the full URL printed by the command, including its selected host,
+  port, and slug, so the link is directly clickable.
 - Prefer the default symlink mode for reports you may regenerate; use `--copy`
   only when the artifact must survive its source being removed.
-- The user dislikes raw Markdown as a deliverable: render reports/summaries as
-  self-contained, styled HTML and serve *that*, not a `.md` file.
+- Answer in chat unless a separate artifact is useful or requested. For report
+  artifacts, serve self-contained, styled HTML rather than a raw `.md` file.
 - Report **content** rules (verdict first, no fluff, collapse detail) live in
   the `writing-reports` skill (`skill://writing-reports`) — read it before
   composing the report, not after.
 
 ## Install / where things live
 
-- **Canonical script:** `scripts/serve-report` in this skill directory. It must
-  be reachable as `serve-report` on PATH. If it isn't installed yet:
+- **Canonical script:** `scripts/serve-report` in this skill directory.
+  Keep one maintained source; the command on PATH should symlink to it.
+  If the command is missing, resolve this skill directory and install the link:
 
   ```bash
-  install -m755 "$(dirname "$0")/scripts/serve-report" ~/.local/bin/serve-report
-  # or symlink it; ensure ~/.local/bin is on PATH
+  mkdir -p "$HOME/.local/bin"
+  ln -s "$SKILL_DIR/scripts/serve-report" "$HOME/.local/bin/serve-report"
   ```
 
-  After editing the script, update both this bundled copy and the installed one
-  (they should stay identical).
+  Set `SKILL_DIR` to the resolved absolute skill directory first. Do not
+  overwrite an existing command without inspecting it. If an installation
+  uses a copy, refresh it from the canonical script; never edit both copies.
 - **Served root:** `~/.local/share/claude-serve/public/` (one symlink/copy per
   report).
 - **Server log:** `~/.local/share/claude-serve/server.log`.

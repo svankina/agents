@@ -29,8 +29,9 @@ context; do not edit the generated copies.
 
 ## Deliverables
 
-- Hates raw Markdown as a deliverable. Anything meant to be *looked at* is
-  polished, self-contained HTML served over the shared report server.
+- Prefers ordinary answers in chat. Separate artifacts are for requested
+  deliverables, substantial reports, visual comparisons, or interactive
+  inspection. Report artifacts should be styled HTML, not raw Markdown.
 - Wants actual code changes shown in chat as fenced diffs, not summarised away.
 - **Public/technical writeups in ASD-STE100** (Simplified Technical English:
   short sentences, one instruction per sentence, active voice, no idioms).

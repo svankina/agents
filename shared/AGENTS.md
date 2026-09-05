@@ -167,16 +167,13 @@ only; call the binary as `docker` / `/usr/bin/docker` in scripts.)
 
 ## Delivering artifacts
 
-**The user hates raw Markdown. Never hand it to them as a deliverable.** When
-you present something for the user to *look at* — a report, results writeup,
-summary, analysis, comparison, plan, diagram — render it as **polished,
-self-contained HTML** (embedded CSS, no external deps) and serve that. A `.md`
-file viewed in a browser shows as unstyled plaintext, which is exactly what
-they don't want. Write the underlying notes/docs in Markdown if you like, but
-the thing you put in front of the user should be a styled HTML page. Make it
-actually look good: real typography, spacing, a clear visual hierarchy,
-color-coded tables/status where it helps — not a bare `<pre>` dump of
-Markdown.
+**Answer in chat by default.** Short answers, summaries, comparisons, plans,
+and code-change explanations do not need a generated report or browser trip.
+Create an artifact when the user asks for one, or when substantial content,
+visual comparisons, or interactive inspection benefit from a separate page.
+For report artifacts, use polished, self-contained HTML (embedded CSS, no
+external dependencies), not raw Markdown or a bare `<pre>` dump. Use clear
+typography, spacing, and color where it conveys meaning.
 
 **Reports get straight to the point.** Verdict/answer in the first screen,
 key numbers as a table, one next action — then evidence collapsed in
@@ -184,8 +181,8 @@ key numbers as a table, one next action — then evidence collapsed in
 conclusion recap, no methodology up front. Full content rules:
 `skill://writing-reports`.
 
-When presenting the user with a deliverable (a generated file, report,
-diagram, build artifact, screenshot, HTML page, etc.), do **not** just point
+When presenting an artifact for the user to open (a generated report,
+build artifact, screenshot, HTML page, etc.), do **not** just point
 at a local filesystem path, and do **not** start your own HTTP server. There
 is **one shared, always-on server** for every agent on this machine — publish
 to it with `serve-report` and hand the user the clickable `http://` link it
@@ -193,7 +190,7 @@ prints.
 
 ```bash
 serve-report <path-to-file-or-dir> [--name NAME]
-# prints e.g.  http://localhost:8789/analysis-3f9a2b.html  — give that to the user
+# Give the full URL printed by the command verbatim; do not replace its host.
 ```
 
 - **Never** run `python3 -m http.server` (or `npx serve`, `http-server`, …)

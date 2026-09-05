@@ -1,9 +1,12 @@
 ---
 name: writing-reports
-description: Content rules for any report, analysis, summary, comparison, or writeup delivered to the user. Read BEFORE composing the report, alongside serving-reports (which covers how to serve it). The user has ADHD, is a visual learner, and has no patience for fluff — reports lead with the verdict, stay skimmable, and show structure as diagrams, not prose.
+description: Content rules for a separate report artifact requested by the user or warranted by substantial content or visual comparison. Ordinary chat answers, summaries, comparisons, plans, and code explanations do not trigger this skill. Read before composing a report artifact; serving-reports covers publishing it.
 ---
 
 # Writing reports
+
+Answer in chat by default. These rules apply after deciding that a separate
+report artifact is useful or requested; they do not require creating one.
 
 The user reads the first screen. Everything the report exists to say must be
 there. If the verdict is below the fold, the report failed.
