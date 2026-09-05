@@ -17,6 +17,7 @@ link.
 
 ```bash
 serve-cad <model>... [--name NAME] [--title TITLE]
+          [--preset studio|inspection|assembly] [--drawing SHEET.svg]
 ```
 
 - Prints one clickable `http://…/<slug>/` URL on stdout — give it to the user
@@ -26,6 +27,10 @@ serve-cad <model>... [--name NAME] [--title TITLE]
   openscad. Several files → a model dropdown in the viewer.
 - `--name` sets the URL slug stem (default `<first-model-stem>-cad`);
   `--title` sets the heading shown in the viewer.
+- `--preset` selects the initial presentation. Studio is the default; the
+  viewer can switch modes without reloading geometry.
+- `--drawing` attaches an existing SVG sheet and adds an open-drawing link.
+  The sheet is copied into the published directory, not linked to a temp file.
 
 ### Examples
 
@@ -34,7 +39,8 @@ serve-cad bracket.stl
 # -> http://<tailscale-ip>:8787/bracket-cad-3f9a2b/
 
 serve-cad housing.stl lid.stl --name enclosure --title "Enclosure v3"
-serve-cad assembly.glb          # GLB keeps assembly structure + colors
+serve-cad assembly.glb --preset assembly --title "Assembly"
+serve-cad bracket.stl --drawing drawing.svg --title "Bracket"
 serve-cad part.scad             # rendered to STL for you
 ```
 
@@ -45,7 +51,9 @@ as Y-up — both land the right way up.
 
 - **build123d** (use the project venv, `.venv/bin/python`):
   `export_stl(part, "part.stl")` for a single part;
-  `export_gltf(part, "part.glb", binary=True)` when colors/assembly matter.
+  `export_gltf(part, "part.glb", binary=True, unit=Unit.M)` when colors/assembly
+  matter. Confirm a known dimension in the viewer before delivery; do not stack
+  this with a legacy ×1000 geometry transform.
 - **OpenSCAD**: pass the `.scad` straight to serve-cad, or pre-render with
   your own flags: `openscad -o part.stl part.scad`.
 - **STEP**: mesh it first —
@@ -57,16 +65,57 @@ as Y-up — both land the right way up.
 ## The viewer
 
 Controls: **drag** orbits/tilts, **right-drag / shift-drag** pans, **scroll**
-zooms, **double-click** refits. Buttons: Iso/Top/Front/Right standard views,
-Fit, and Grid / Wire / Edges toggles.
+zooms, **double-click** refits. All modes use an orthographic camera.
+Iso/Top/Front/Right, Fit, and Grid/Wire/Edges controls remain available.
 
-It shows the part on an adaptive mm grid with a CAD axis triad (X red, Y
-green, Z blue), a dimensions readout (X × Y × Z mm, CAD Z-up coords), and
-triangle count. Edge overlay is skipped above 300k triangles for performance.
+- **Studio:** warm background, slate satin finish, procedural environment
+  lighting, soft ground shadow; grid and edges hidden. These are presentation
+  materials, not physical material assignments.
+- **Inspection:** original model materials, dark background, grid and edges.
+  Use this for checking geometry rather than product illustrations.
+- **Assembly:** consistent component colors, numbered callouts and legend,
+  visibility controls, and an Explode slider. Separation is an explanatory
+  layout, not a motion simulation. Returning to zero restores original poses.
+  Single-component models disable the slider.
+- **Save PNG:** exports an opaque canvas image without panels or callouts.
+  For annotated assembly illustrations, capture the viewer with its callouts.
+- **Open vector drawing:** shown when the publisher attached an SVG sheet.
 
-For your own verification or screenshots, the page exposes
-`window.cadviewer` (`fit()`, `setView(azDeg, elDeg)`, `bounds`) — drive it
-from the browser tool instead of synthesizing drags.
+Dimensions are approximate **assembled mesh** bounds in CAD X/Y/Z millimeters,
+not the exploded layout envelope. The grid uses a CAD-axis triad (X red, Y
+green, Z blue). Edge overlays are skipped above 300k triangles.
+
+For verification, `window.cadviewer` exposes `fit()`, `setView(azDeg, elDeg)`,
+`bounds`, `setPreset(name)`, `preset`, `setExplode(factor)`, and `explode`.
+Explosion factors range from 0 to 1. API callers can call `fit()` after changing
+explosion; the UI slider fits automatically. Prefer these over simulated drags.
+
+## Generate a vector reference sheet
+
+Use the project's build123d-equipped Python. The generator and reusable A3 SVG
+template live beside this viewer; no new CAD environment or CDN is required.
+
+```bash
+.venv/bin/python "$HOME/src/agents/shared/skills/serving-cad-files/scripts/cad-drawing" \
+  part.step --output drawing.svg --title "Part name"
+# Optional true XY section at a world CAD Z coordinate:
+.venv/bin/python "$HOME/src/agents/shared/skills/serving-cad-files/scripts/cad-drawing" \
+  part.step --output drawing.svg --title "Part name" --section-z 3
+serve-cad part.stl --drawing drawing.svg --title "Part name"
+```
+
+The sheet uses BREP hidden-line projection, not mesh edges: top above front,
+right beside front, with optional hatched section material. Center marks come
+only from analytic full circles. Names are XML-escaped and the SVG works both
+standalone and embedded in HTML. The layout template is
+`assets/templates/drawing-sheet.svg`.
+
+Automatic dimensions are overall/reference values in mm. The sheet is marked
+**NOT TO SCALE**. It does not infer feature dimensions, fits, tolerances, GD&T,
+or manufacturing completeness. Add those deliberately before manufacture.
+Curved SVG output can approximate splines. Section faces in an assembly are
+not boolean-unioned; review overlaps. Invalid or empty sections fail without
+writing a new sheet. STEP does not recreate native parametric history.
 
 ## Rules
 

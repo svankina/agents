@@ -1,0 +1,290 @@
+#!/usr/bin/env python3
+"""Compose a self-contained reference SVG from STEP BREP geometry.
+
+Run with a project Python containing build123d (and its bundled OCP bindings):
+  .venv/bin/python cad-drawing part.step --output drawing.svg --title "Part"
+
+No mesh conversion or model modification is performed. Native STEP imports do
+not reconstruct the original parametric feature history.
+"""
+
+import argparse
+from html import escape
+from io import BytesIO
+import math
+from pathlib import Path
+from string import Template
+import sys
+import xml.etree.ElementTree as ET
+
+
+SVG_NS = "http://www.w3.org/2000/svg"
+ET.register_namespace("", SVG_NS)
+
+
+def element(tag, **attributes):
+    return ET.Element(f"{{{SVG_NS}}}{tag}", {k: str(v) for k, v in attributes.items()})
+
+
+def text(parent, x, y, value, css="note", **attributes):
+    node = element("text", x=x, y=y, **{"class": css}, **attributes)
+    node.text = value
+    parent.append(node)
+    return node
+
+
+def line(parent, x1, y1, x2, y2, css="dimension", **attributes):
+    parent.append(element("line", x1=x1, y1=y1, x2=x2, y2=y2,
+                          **{"class": css}, **attributes))
+
+
+def number(value):
+    """Display reference values, not a claim of engineering precision."""
+    return f"{value:.3f}".rstrip("0").rstrip(".") if abs(value) >= 0.001 else f"{value:.3g}"
+
+
+def finite_float(value):
+    try:
+        result = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("section Z must be a finite number in mm") from exc
+    if not math.isfinite(result):
+        raise argparse.ArgumentTypeError("section Z must be finite (not NaN or infinity)")
+    return result
+
+
+def exported_shapes(shapes, css, scale, exporter_type):
+    """Keep build123d's analytic SVG curves, discarding its page wrapper only."""
+    if not shapes:
+        return None
+    exporter = exporter_type(precision=9)
+    exporter.add_shape(shapes)
+    stream = BytesIO()
+    exporter.write(stream)
+    root = ET.fromstring(stream.getvalue())
+    group = element("g", **{"class": css, "fill": "none", "stroke": "#203342",
+                            "stroke-width": 0.35 / scale, "stroke-linecap": "round",
+                            "stroke-linejoin": "round"})
+    # ExportSVG's outer group flips Y. Our view transform does that once instead.
+    for layer in root.find(f"{{{SVG_NS}}}g"):
+        group.extend(layer)
+    if css == "hidden":
+        group.set("stroke", "#8796a1")
+        group.set("stroke-width", str(0.18 / scale))
+        group.set("stroke-dasharray", f"{2 / scale} {1 / scale}")
+    elif css == "section-material":
+        group.set("fill", "url(#section-hatch)")
+        group.set("fill-rule", "evenodd")
+        group.set("stroke-width", str(0.45 / scale))
+    return group
+
+
+def center_marks(edges, scale, circle_type):
+    """Mark only actual full circular projected edges, never inferred symmetry."""
+    group = element("g", **{"class": "center-marks", "fill": "none",
+                            "stroke": "#147c80", "stroke-width": 0.16 / scale,
+                            "stroke-dasharray": f"{4 / scale} {1 / scale} {0.7 / scale} {1 / scale}"})
+    seen = set()
+    for edge in edges:
+        if edge.geom_type != circle_type or not edge.is_closed:
+            continue
+        center, radius = edge.arc_center, edge.radius
+        key = (round(center.X, 7), round(center.Y, 7), round(radius, 7))
+        if key in seen:
+            continue
+        seen.add(key)
+        reach = radius + 2 / scale
+        group.append(element("path", d=(f"M {center.X - reach} {center.Y} H {center.X + reach} "
+                                         f"M {center.X} {center.Y - reach} V {center.Y + reach}")))
+    return group
+
+
+def dimension(parent, cx, cy, width, height, value, axis, vertical=False):
+    if value <= 0:
+        return
+    left, right, top, bottom = cx - width / 2, cx + width / 2, cy - height / 2, cy + height / 2
+    arrows = {"marker-start": "url(#dimension-arrow)", "marker-end": "url(#dimension-arrow)"}
+    if vertical:
+        x = right + 9
+        for y in (top, bottom):
+            line(parent, right + 1.5, y, x + 2, y)
+        line(parent, x, top, x, bottom, **arrows)
+        text(parent, x + 4, cy, f"{axis} {number(value)} REF", "dimension-text",
+             transform=f"rotate(-90 {x + 4} {cy})")
+    else:
+        y = bottom + 9
+        for x in (left, right):
+            line(parent, x, bottom + 1.5, x, y + 2)
+        line(parent, left, y, right, y, **arrows)
+        text(parent, cx, y - 1.5, f"{axis} {number(value)} REF", "dimension-text")
+
+
+def cut_location(parent, cx, cy, width, z_from_center, scale, z):
+    y = cy - z_from_center * scale
+    left, right = cx - width / 2 - 4, cx + width / 2 + 4
+    line(parent, left, y, right, y, "cut")
+    for x in (left, right):
+        line(parent, x, y - 7, x, y, "cut", **{"marker-end": "url(#cut-arrow)"})
+        text(parent, x, y - 8, "A", "cut-label", **{"text-anchor": "middle"})
+    text(parent, cx, y + 4, f"A–A / Z = {number(z)} mm", "cut-label", **{"text-anchor": "middle"})
+
+
+def compose(shape, bounds, section_z, api):
+    """Use one bbox-centered camera frame and one scale for all four panels."""
+    ExportSVG, GeomType, Location, Plane, Vector, section = api
+    size = bounds.size
+    center = (bounds.min + bounds.max) * 0.5
+    # Shared third-angle layout: top above front, right to the right of front.
+    scale = min(142 / size.X if size.X > 0 else math.inf,
+                142 / size.Y if size.Y > 0 else math.inf,
+                68 / size.Y if size.Y > 0 else math.inf,
+                68 / size.Z if size.Z > 0 else math.inf)
+    view_specs = (
+        ("front", (0, -1, 0), (0, 0, 1), 106, 201),
+        ("top", (0, 0, 1), (0, 1, 0), 106, 97),
+        ("right", (1, 0, 0), (0, 0, 1), 308, 201),
+    )
+    section_area = None
+    if section_z is not None:
+        if not shape.solids():
+            raise ValueError("--section-z requires a STEP containing solid material")
+        if section_z < bounds.min.Z or section_z > bounds.max.Z:
+            raise ValueError(f"empty XY section at Z={number(section_z)} mm; "
+                             f"BREP Z range is {number(bounds.min.Z)} to {number(bounds.max.Z)} mm")
+        cut_plane = Plane.XY.offset(section_z)
+        cut = section(shape, section_by=cut_plane)
+        faces = list(cut.faces())
+        section_area = sum(face.area for face in faces)
+        if not faces or not math.isfinite(section_area) or section_area <= 0:
+            raise ValueError(f"empty XY material section at Z={number(section_z)} mm; "
+                             "choose a plane through solid material, not a tangent or void")
+    views = element("g", id="orthographic-views")
+    edge_counts = {}
+    for name, direction, up, cx, cy in view_specs:
+        visible, hidden = shape.project_to_viewport(
+            viewport_origin=center + Vector(direction) * max(bounds.diagonal, 1),
+            viewport_up=up, look_at=center,
+        )
+        if not visible and not hidden:
+            raise ValueError(f"{name} BREP projection produced no edges")
+        frame = element("g", id=f"view-{name}",
+                        transform=f"translate({cx} {cy}) scale({scale} {-scale})")
+        for edges, css in ((hidden, "hidden"), (visible, "visible")):
+            drawing = exported_shapes(edges, css, scale, ExportSVG)
+            if drawing is not None:
+                frame.append(drawing)
+        frame.append(center_marks([*visible, *hidden], scale, GeomType.CIRCLE))
+        views.append(frame)
+        edge_counts[name] = {"visible": len(visible), "hidden": len(hidden)}
+    dimension(views, 106, 201, size.X * scale, size.Z * scale, size.X, "X")
+    dimension(views, 106, 201, size.X * scale, size.Z * scale, size.Z, "Z", vertical=True)
+    dimension(views, 308, 201, size.Y * scale, size.Z * scale, size.Y, "Y")
+
+    panel = element("g", id="reference-panel")
+    if section_z is None:
+        text(panel, 220, 53, "REFERENCE / READING THE SHEET", "view-title")
+        text(panel, 220, 64, "Overall envelope · STEP BREP", "note")
+        for index, (axis, value) in enumerate(zip("XYZ", (size.X, size.Y, size.Z))):
+            x = 220 + index * 59
+            text(panel, x, 75, axis, "eyebrow")
+            text(panel, x, 83, f"{number(value)} mm", "value")
+        line(panel, 220, 90, 395, 90, "rule")
+        for y, label in ((99, "Solid: visible contour / dashed: hidden edge"),
+                         (107, "Teal: center marks on analytic full circles only"),
+                         (115, "Views share a common fit; dimension labels govern."),
+                         (123, "No automatic feature or manufacturing dimensions."),
+                         (135, "Optional: --section-z Z adds a true XY material cut.")):
+            text(panel, 220, y, label, "note")
+    else:
+        # Translate actual section faces into the same centered XY frame as top.
+        planar_faces = [face.moved(Location((-center.X, -center.Y, -section_z))) for face in faces]
+        frame = element("g", id="view-section",
+                        transform=f"translate(308 97) scale({scale} {-scale})")
+        frame.append(exported_shapes(planar_faces, "section-material", scale, ExportSVG))
+        frame.append(center_marks([edge for face in planar_faces for edge in face.edges()],
+                                  scale, GeomType.CIRCLE))
+        panel.append(frame)
+        text(panel, 220, 53, f"04 / SECTION A–A · Z = {number(section_z)} mm", "view-title")
+        text(panel, 308, 144, "XY material intersection · looking from +Z · hatched material only",
+             "small", **{"text-anchor": "middle"})
+        cut_location(views, 106, 201, size.X * scale, section_z - center.Z, scale, section_z)
+    return views, panel, scale, edge_counts, section_area
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Create a self-contained A3 reference SVG from STEP using actual BREP hidden-line projection.",
+        epilog="Interpreter requirement: run with a build123d-equipped project Python, e.g. "
+               ".venv/bin/python cad-drawing part.step --output drawing.svg --title Part. "
+               "Dimensions are overall/reference in mm, not manufacturing dimensions. "
+               "Third-angle views: front from -Y, top from +Z, right from +X. "
+               "Section is the material at world CAD Z (not a cutaway view); assemblies retain their placements. "
+               "Complex BREP HLR can be slow. Tangencies and overlaps need manual review. "
+               "SVG curve conversion may approximate splines; no mesh edges are used. "
+               "STEP import does not preserve the original parametric feature history.",
+    )
+    parser.add_argument("input", type=Path, metavar="INPUT.step")
+    parser.add_argument("--output", required=True, type=Path, metavar="OUTPUT.svg")
+    parser.add_argument("--title", required=True, help="sheet title (XML escaped)")
+    parser.add_argument("--section-z", type=finite_float, metavar="Z",
+                        help="actual XY material section at finite world CAD Z in mm")
+    args = parser.parse_args(argv)
+    if args.input.suffix.lower() not in {".step", ".stp"}:
+        parser.error("input must be a STEP file (.step or .stp), not a mesh")
+    if not args.input.is_file():
+        parser.error(f"input file not found: {args.input}")
+    if args.output.suffix.lower() != ".svg":
+        parser.error("--output must end in .svg")
+    if args.output.resolve() == args.input.resolve():
+        parser.error("output cannot replace the source STEP")
+    # --help and argument errors must work even outside a CAD Python environment.
+    try:
+        from build123d import ExportSVG, GeomType, Location, Plane, Vector, import_step, section
+    except ImportError as exc:
+        parser.exit(1, "cad-drawing: build123d is required; use the CAD project's Python "
+                       f"(e.g. .venv/bin/python cad-drawing ...): {exc}\n")
+    try:
+        shape = import_step(args.input)
+        if not shape.is_valid or not shape.faces():
+            raise ValueError("STEP must contain valid BREP faces")
+        bounds = shape.bounding_box(optimal=True)
+        if not all(math.isfinite(v) for v in (*bounds.min, *bounds.max)) or bounds.diagonal <= 0:
+            raise ValueError("STEP has empty or nonfinite BREP bounds")
+        views, panel, scale, counts, section_area = compose(
+            shape, bounds, args.section_z, (ExportSVG, GeomType, Location, Plane, Vector, section))
+        template_path = Path(__file__).resolve().parent.parent / "assets/templates/drawing-sheet.svg"
+        template = Template(template_path.read_text(encoding="utf-8"))
+        title = " ".join(args.title.split())
+        source = args.input.name
+        # Fit only long labels; preserve their full text without truncating names.
+        title_fit = 'textLength="365" lengthAdjust="spacingAndGlyphs"' if len(title) > 70 else ""
+        description = (f"Section A–A at world Z={number(args.section_z)} mm shows actual XY material."
+                       if args.section_z is not None else "No section requested.")
+        # build123d registers its own global ET prefix during import. Inline HTML
+        # requires plain SVG tags, not XML-prefixed tags such as <svg:g>.
+        ET.register_namespace("", SVG_NS)
+        sheet = template.substitute(
+            title=escape(title), title_fit=title_fit, source=escape(source),
+            section_description=escape(description), scale=number(scale),
+            hatch_spacing=2 / scale, hatch_weight=0.15 / scale,
+            views=ET.tostring(views, encoding="unicode"),
+            fourth_panel=ET.tostring(panel, encoding="unicode"),
+        )
+        # Validate composed XML before writing, including arbitrary supplied names.
+        ET.fromstring(sheet)
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(sheet, encoding="utf-8")
+    except Exception as exc:
+        parser.exit(1, f"cad-drawing: generation failed: {exc}\n")
+    print(args.output)
+    print("cad-drawing: BREP overall/reference X × Y × Z = "
+          f"{number(bounds.size.X)} × {number(bounds.size.Y)} × {number(bounds.size.Z)} mm", file=sys.stderr)
+    for name, count in counts.items():
+        print(f"cad-drawing: {name}: {count['visible']} visible / {count['hidden']} hidden BREP edges", file=sys.stderr)
+    if section_area is not None:
+        print(f"cad-drawing: XY section Z={number(args.section_z)} mm: "
+              f"{number(section_area)} mm² summed face area (not assembly-unioned)", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

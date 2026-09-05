@@ -7,11 +7,16 @@
 <title>CAD viewer</title>
 <style>
   :root {
-    --bg0: #10161d; --bg1: #1b2530;
-    --panel: rgba(16, 22, 29, 0.82); --border: #2c3947;
-    --fg: #dce6f0; --dim: #8fa3b5; --accent: #5aa9e6;
+    --bg0: #eae7e0; --bg1: #f4f1eb;
+    --panel: rgba(250, 248, 244, 0.92); --border: #ccc9c1;
+    --fg: #283431; --dim: #626e69; --accent: #39766e;
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body[data-preset="inspection"] {
+    --bg0: #131c26; --bg1: #1b2530; --panel: rgba(16,22,29,.92);
+    --border: #354453; --fg: #dce6f0; --dim: #9aadbd; --accent: #5aa9e6;
+  }
   html, body { height: 100%; margin: 0; }
   body {
     font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -97,17 +102,61 @@
   }
   .lg-tri:hover { color: var(--fg); }
   .lg-kids { padding-left: 20px; }
+  #presentation { display: flex; align-items: center; gap: 10px; margin: 10px 0 8px; }
+  #preset { font: inherit; color: var(--fg); background: var(--bg1); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; }
+  #eyebrow { font-size: 10px; text-transform: uppercase; letter-spacing: .16em; color: var(--dim); margin-bottom: 5px; }
+  #drawing { color: var(--accent); display: inline-block; margin-top: 8px; font-weight: 600; }
+  #assembly-controls { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 10px; }
+  #assembly-controls label { display: flex; justify-content: space-between; }
+  #explode { width: 100%; accent-color: var(--accent); margin: 9px 0; }
+  #assembly-note { color: var(--dim); font-size: 11px; max-width: 290px; }
+  #callouts { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
+  #callouts path { stroke: #66766f; stroke-width: 1; fill: none; }
+  #callouts circle { fill: #faf8f2; stroke: #52685e; stroke-width: 1; }
+  #callouts text { fill: #283431; text-anchor: middle; dominant-baseline: central; font: 600 11px system-ui; }
+  #hint { text-shadow: none; }
+  #toolbar button:focus-visible, select:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  #meta { overflow-wrap: anywhere; }
+  @media (max-width: 720px) {
+    #hud { top: 10px; left: 10px; max-width: calc(100vw - 20px); padding: 9px 11px; }
+    #title { font-size: 14px; }
+    #presentation { margin: 5px 0; }
+    #meta, #gridstep, #eyebrow { display: none; }
+    #dims { font-size: 11px; }
+    #legend { top: auto; right: 10px; bottom: 102px; max-height: 22vh; width: 190px; padding: 6px 8px; }
+    #toolbar { bottom: 10px; left: 10px; right: 10px; gap: 5px; justify-content: center; }
+    #toolbar button { padding: 6px 8px; }
+    #hint { display: none; }
+    #assembly-controls { padding-top: 6px; margin-top: 6px; }
+    #assembly-note { max-width: 290px; }
+  }
 </style>
 </head>
 <body>
 <canvas id="view"></canvas>
+<svg id="callouts" aria-hidden="true"></svg>
 
 <div id="hud" class="panel">
+  <div id="eyebrow">CAD / Presentation</div>
   <p id="title">CAD viewer</p>
   <select id="model"></select>
+  <div id="presentation">
+    <label for="preset">View style</label>
+    <select id="preset">
+      <option value="studio">Studio</option>
+      <option value="inspection">Inspection</option>
+      <option value="assembly">Assembly</option>
+    </select>
+  </div>
   <div id="dims"></div>
   <div id="meta"></div>
   <div id="gridstep"></div>
+  <a id="drawing" hidden target="_blank" rel="noopener">Open vector drawing ↗</a>
+  <div id="assembly-controls" hidden>
+    <label for="explode">Explode <output id="explode-value">0%</output></label>
+    <input id="explode" type="range" min="0" max="1" step="0.01" value="0" disabled>
+    <div id="assembly-note"></div>
+  </div>
 </div>
 
 <div id="toolbar" class="panel">
@@ -121,6 +170,8 @@
   <button id="btn-grid">Grid</button>
   <button id="btn-wire">Wire</button>
   <button id="btn-edges">Edges</button>
+  <span class="sep"></span>
+  <button id="btn-png" title="Download the model canvas without panels or callouts">Save PNG</button>
 </div>
 
 <div id="legend" class="panel">
