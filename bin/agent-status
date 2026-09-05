@@ -8,8 +8,8 @@
 # Fast path: hands the message to agent-msgd over its unix socket
 # ($XDG_RUNTIME_DIR/agent-msgd.sock); the daemon owns all Mattermost
 # minutiae (bot tokens, channel ids, keep-alive connections).
-# Fallback (daemon down): posts directly — as the profile bot if
-# ~/.config/agent-status/bots/<source>.env exists (see mm-profile-bot),
+# Fallback (daemon down): posts directly — as a dedicated bot if
+# ~/.config/agent-status/bots/<source>.env exists,
 # else through the incoming webhook with a username override.
 #
 # --source defaults to $AGENT_STATUS_SOURCE, then the basename of $PWD.
