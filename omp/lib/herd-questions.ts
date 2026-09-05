@@ -104,7 +104,7 @@ class QuestionBridge {
 				!path.isAbsolute(runtime) ||
 				!stat.isDirectory() ||
 				stat.uid !== uid ||
-				(stat.mode & 0o077) !== 0
+				(stat.mode & 0o022) !== 0
 			)
 				throw new Error("Unsafe XDG runtime directory");
 		}
