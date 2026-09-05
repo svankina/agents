@@ -3,8 +3,8 @@
 #
 # The embedded Project map section is the distilled, auto-read project brief:
 # architecture, where-things-live, invariants, and dated decisions. The WHOLE
-# AGENTS.md is hard-capped so it stays curated; NOTES.md remains the raw
-# append-only log. Review age comes from git, not from an in-file marker.
+# AGENTS.md is hard-capped so it stays curated. Existing NOTES.md files are
+# optional archives. Review age comes from git, not from an in-file marker.
 #
 # Usage:
 #   project-map owned [DIR]    exit 0 if DIR is a repo the user owns
@@ -113,7 +113,7 @@ EOF
 
     lines=$(awk 'END { print NR + 0 }' "$agents")
     if [ "$lines" -gt "$MAX_LINES" ]; then
-      echo "FAIL $agents: $lines lines (cap $MAX_LINES for the whole file) — move facts to NOTES.md, don't append" >&2
+      echo "FAIL $agents: $lines lines (cap $MAX_LINES for the whole file) — remove duplication; keep only operating constraints and the project map here" >&2
       rc=1
     fi
 

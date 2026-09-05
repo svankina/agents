@@ -21,9 +21,10 @@ Do this now, in order:
      no session chronology, dated changelog entries, commit hashes, scratch
      paths, generic advice, secrets, personal data, raw output, hardware
      dumps, or restated machine-wide rules (sudo/psudo, serve-report,
-     worktrees, fair-run, …). Those facts go to `NOTES.md` (append, dated).
-     Do not read all of `NOTES.md`; search it only when needed to verify a
-     fact.
+     worktrees, fair-run, …). Do not create or append to `NOTES.md`.
+     Leave existing notes as optional archives. Preserve only verified,
+     still-useful facts in code or focused docs when relevant to the task;
+     do not bulk-migrate archives or duplicate global rules.
    - If `AGENTS.md` changed, run `project-map lint <repo-root>` and fix
      what it reports. Never suppress or skip a lint failure. Then, if the
      file has no unrelated pre-existing edits, stage only that file and

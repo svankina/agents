@@ -24,10 +24,10 @@ verification to the user's eyeballs.
 </toolchain>
 
 <orient>
-Read before touching geometry, whichever exist: the repo's `AGENTS.md`, then search its
-`NOTES.md` for the parts/topics at hand (user design preferences, hardware findings,
-pitfalls). Existing geometry is a flawed reference, not a finished solution — re-verify;
-do not assume a committed model is correct.
+Read the repo's `AGENTS.md` and relevant model parameters and focused project docs
+before touching geometry. Existing `NOTES.md` files are optional archives, not
+required reading. Existing geometry is a flawed reference, not a finished solution —
+re-verify; do not assume a committed model is correct.
 </orient>
 
 <spec-first>

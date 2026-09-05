@@ -220,22 +220,19 @@ of the code changes.
 
 ## Knowledge acquisition and storage
 
-Use the nearest `NOTES.md` for accumulated local facts, investigation
-summaries, diagnostics, and other durable-but-non-instructional notes. Keep
-`AGENTS.md` limited to standing instructions and workflow preferences:
+Keep `AGENTS.md` limited to standing instructions and workflow preferences:
 150 lines max for the whole file, no dated changelog entries, no commit
 hashes, and never a restatement of anything in this global file (sudo,
 serve-report, worktrees, fair-run, CAD rules …). `project-map lint <repo>`
 enforces this; it fails on purpose, fix the file rather than the lint.
 
-`NOTES.md` files are append-only logs and some are large (tens of KB) — never
-read one whole into context on spec. When a task may depend on saved local
-facts, **search** the nearest `NOTES.md` for the topic and read only the
-matching entries; skip it entirely if the task is self-evident. If I ask you a
-question, and you spent some time looking up the answer, distill the useful
-knowledge into that folder's `NOTES.md` file (create it if needed) so future
-agents won't have to repeat the work. Keep entries short and dated, prune ones
-that are stale or superseded, and do not add these notes to `AGENTS.md`.
+Do not create or append to `NOTES.md` as part of routine work. Existing
+`NOTES.md` files are archives, not required reading; leave them in place.
+Check current code, config, and focused docs first. Consult an archive only
+when a specific historical question requires it, and verify its claims
+against current state. When archived information becomes relevant, migrate
+only proven, still-useful facts into code or focused docs; put actual
+operating constraints in `AGENTS.md`. Do not bulk-migrate or bulk-delete notes.
 
 ## User queue
 

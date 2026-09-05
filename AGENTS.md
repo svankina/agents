@@ -42,8 +42,8 @@ live agent dirs, or copied into `~/src/pagent`.
   warpfork → `~/.local/bin/`. Claude Code / Pi auto-discover the target dirs.
 - Pi extensions: drop the `.ts` in Pi's extensions dir (or point Pi at the folder); it loads
   on startup. Behaviour stays inert until you set its opt-in env var.
-- `NOTES.md` holds **durable investigation facts** (dated entries), not standing instructions.
-  Append findings there; keep run-time rules in the extensions/prompts themselves.
+- `NOTES.md` is an optional historical archive; do not append routine findings.
+  Keep current behaviour in code, focused docs, and the extensions/prompts themselves.
 
 ## Gotchas
 - Work lands on `master`; feature work goes in a worktree under `.worktrees/` (see the
@@ -62,7 +62,7 @@ live agent dirs, or copied into `~/src/pagent`.
 ## Pointers
 - `pi/extensions/README.md` — every extension, its trigger/env var, and behaviour.
 - `pi/README.md`, `claude/README.md`, `scripts/warpfork/README.md` — per-area setup.
-- `NOTES.md` — dated facts (Codex usage headers, claude-ui quota footer, serving-reports, …).
+- `NOTES.md` — historical archive; claims require verification against current state.
 
 ## Hard-won notes (from past sessions)
 - **This repo is PUBLIC** (`github.com/svankina/agents`). Before committing, scrub machine-specific
