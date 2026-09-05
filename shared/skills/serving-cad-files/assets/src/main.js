@@ -30,13 +30,34 @@ controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.screenSpacePanning = true;
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0x39424d, 1.1));
-const key = new THREE.DirectionalLight(0xffffff, 1.6);
-key.position.set(1, 2, 1.5);
-scene.add(key);
-const fill = new THREE.DirectionalLight(0xdfe8ff, 0.5);
-fill.position.set(-1.5, 0.6, -1);
-scene.add(fill);
+// --- lighting ---------------------------------------------------------------
+// A world-fixed rig leaves whatever face you orbit to (typically the bottom)
+// in the dark, so the key/fill pair rides the camera instead: both are offset
+// off the view axis, which keeps directional shading — and therefore relief —
+// readable from every angle. The hemisphere light is base fill only, kept low
+// enough not to wash the part flat.
+scene.add(new THREE.HemisphereLight(0xffffff, 0x7c8794, 0.55));
+const key = new THREE.DirectionalLight(0xffffff, 1.5);
+const fill = new THREE.DirectionalLight(0xdfe8ff, 0.45);
+scene.add(key, key.target, fill, fill.target);
+
+const camAxes = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+const lightDir = new THREE.Vector3();
+// Aim a camera-relative light: dir = back + up*u + right*r, from controls.target.
+function aimLight(light, u, r, dist) {
+  const [right, up, back] = camAxes;
+  lightDir.copy(back).addScaledVector(up, u).addScaledVector(right, r).setLength(dist);
+  light.target.position.copy(controls.target);
+  light.position.copy(controls.target).add(lightDir);
+}
+
+function updateLights() {
+  camera.updateMatrixWorld(); // controls.update() only touched the transform
+  camera.matrixWorld.extractBasis(camAxes[0], camAxes[1], camAxes[2]);
+  const dist = camera.position.distanceTo(controls.target) || 1;
+  aimLight(key, 0.55, 0.45, dist);   // upper right of the viewer
+  aimLight(fill, -0.35, -0.7, dist); // lower left, softens the terminator
+}
 
 // --- state ------------------------------------------------------------------
 let manifest = null;
@@ -589,7 +610,12 @@ async function boot() {
 
 window.addEventListener('resize', resize);
 resize();
-renderer.setAnimationLoop(() => { controls.update(); updateHover(); renderer.render(scene, camera); });
+renderer.setAnimationLoop(() => {
+  controls.update();
+  updateLights();
+  updateHover();
+  renderer.render(scene, camera);
+});
 boot();
 
 // Small API for automated checks (agents drive this from a browser tool).
