@@ -15,6 +15,7 @@ task:
   agentModelOverrides:
     scout: anthropic/claude-haiku-4-5:low
     sonic: anthropic/claude-haiku-4-5:low
+    cad: openai-codex/gpt-6-astra:medium
 tier:
   openai: priority
 enabledModels:
