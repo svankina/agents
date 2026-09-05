@@ -1,0 +1,92 @@
+---
+name: modelling-cad
+description: Generate, modify, and verify dimensioned CAD parts and assemblies. Use for CAD modelling, fit checks, geometry audits, and fabrication preparation. Defaults to build123d; use native FreeCAD when editable sketches, feature trees, or FEM are required. Main agents and optional CAD workers use the same procedure.
+---
+
+# Model and verify CAD
+
+## Choose the execution path
+
+- Work directly for a single part or local edit. The `cad` worker is optional:
+  use it for independently owned parts or a separate review. Pass the measured
+  requirements, datums, acceptance checks, and file ownership with the task.
+- Default to **build123d** for code-generated mechanical parts. Preserve existing
+  project layout and use its Python environment. Consult installed APIs or
+  official documentation rather than guessing geometry calls.
+- Use **native FreeCAD** when the deliverable needs manually editable sketches,
+  constraints, a feature tree, or FEM. Importing STEP does not reconstruct the
+  original parametric history. Preserve native source alongside neutral exports.
+- Do not introduce OpenSCAD. Use three.js for lightweight model viewing, not
+  Blender/Cycles. Read `serving-cad-files` for the interactive delivery path.
+
+## Specify before modelling
+
+1. Record controlling dimensions, units, datums, and intended fits. Resolve
+   ambiguous edge references and overall-versus-added dimensions before building.
+2. Use measured mating hardware when available. Identify catalog values and
+   assumptions. Keep hardware dimensions in source parameters or focused specs.
+3. State allowances as signed radial or diametral values. Positive clearance is
+   not mechanical interference. Select fits for the process, material, size,
+   coating, and measured printer/machine behavior; use calibration coupons when
+   needed. Do not apply a universal press-fit number.
+4. Define observable acceptance checks independently of the generator. Expected
+   dimensions and positions come from the spec, not imported model constants.
+
+## Build maintainable geometry
+
+- Name load-bearing parameters and derive dependent dimensions explicitly.
+  Use millimeters by default and document coordinate frames and assembly datums.
+- Prefer part-builder functions with generation/export under a main entrypoint.
+  Keep part identities, labels, and colors through assembly export.
+- Use feature-based mating where authoritative references exist. Otherwise use
+  placements derived from named datums and parameters, not unexplained coordinates.
+- Check that each intended solid part is a valid solid. Assemblies may contain
+  multiple solids; do not fuse independent moving parts merely to pass a check.
+- Keep nominal hardware/thread envelopes distinct from detailed interfaces.
+  Do not present proxy threads, rigid finger animation, or cutaways as evidence
+  of engagement, elastic behavior, collision-free motion, or manufacturability.
+- Check units at the CAD-to-viewer boundary. With the current serve-cad path,
+  build123d GLB exports use `unit=Unit.M` for the viewer's millimeter coordinates.
+  Confirm a known dimension in the viewer; do not stack legacy scale corrections.
+
+## Verify the result
+
+Use the existing project gate where available. Add focused executable checks for
+load-bearing requirements, not assertions about source text or copied constants.
+
+- Check overall bounds, feature sizes and **positions**, intended solid count,
+  BREP validity, and the specified fit clearances. Probe both sides of shoulders
+  to distinguish bore diameter, counterbore diameter, direction, and depth.
+- Compare volume with an independently derived formula when practical. Complex
+  blends or lofts may need local sections and feature checks instead. Choose
+  tolerances that detect the relevant defect; ±0.1% is not a universal rule.
+- Check exported mesh watertightness and winding where applicable. Euler
+  characteristic `2 - 2*g` applies to a connected, closed, orientable surface;
+  `g` counts handles, not arbitrary nominal holes. Cavities and disconnected
+  components need separate treatment. Validity alone does not prove the spec.
+- For assemblies, measure intersections and clearances in the intended installed
+  placements and relevant motion states. Endpoint checks do not prove full travel.
+  Explain every intentional overlap using the actual thread, contact, or
+  deformation model. A whitelist is not mechanical verification.
+- Inspect multiple three.js views, including an inner/back view that exposes
+  hidden exits and connections. Use images for topology/placement, not precise
+  diameters or depths. State when visual verification was not performed.
+- Reimport final STEP and verify validity, bounds, and critical dimensions.
+  Preserve Python or native FreeCAD source for parametric editing.
+- Gates must report failures and return nonzero. A build crash rejects a design
+  but is not a successful assertion diagnosis. If mutation-testing a high-stakes
+  gate, report assertion detections, construction crashes, and misses separately.
+  Do not treat zero volume change as evidence that no defect exists.
+
+## Fabrication and delivery
+
+- Check wall thickness, support needs, tool access, stock, fasteners, and assembly
+  sequence against the actual fabrication process. Geometry checks do not prove
+  strength, fatigue, sealing, dispensing behavior, or food-contact suitability.
+- For mini-lathe parts, respect the project's turning, drilling, hand-slitting,
+  thread-tool, and coating constraints. Separate finish dimensions from allowances.
+- Preserve the printer gatekeeper workflow. Do not send a print without explicit
+  user authorization. Delegate privileged operations to the parent when a worker.
+- Report measured results and remaining uncertainty. Deliver the model through
+  `serving-cad-files`; use `writing-reports` and `serving-reports` for longer
+  evidence. Do not substitute a render for editable model source and checks.

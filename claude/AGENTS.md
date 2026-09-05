@@ -201,6 +201,11 @@ serve-report <path-to-file-or-dir> [--name NAME]
   interactive orbit/pan/zoom viewer through the same server — never deliver a
   part as a raw `.stl` path or a static render. Full usage:
   `skill://serving-cad-files`.
+- **CAD modelling and verification:** read the shared `modelling-cad` skill
+  and work directly by default. The `cad` worker is optional for independent
+  parts or a separate review; it uses the same procedure. Keep measured
+  hardware and fit requirements in model parameters or focused project specs.
+  Delegation does not replace geometry checks.
 
 Before presenting any URL to the user, verify it works and shows the expected
 content. Use an appropriate check for the URL type (for example, `curl`/HTTP
