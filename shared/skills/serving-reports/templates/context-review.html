@@ -1,0 +1,80 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mark up default agent context</title><style>body{margin:0;background:#f4f6f8;color:#203040;font:15px system-ui}header{padding:18px 24px;background:#17354b;color:white}h1{font-size:23px;margin:0 0 8px}header p{margin:6px 0;font-size:14px}button,select,textarea,input{font:inherit}button,select{padding:8px 12px;border:1px solid #acbac6;border-radius:5px;cursor:pointer}button{background:white;color:#17354b}nav{display:flex;gap:10px;flex-wrap:wrap;padding:12px 24px;background:#e4ebf0;position:sticky;top:0;z-index:2}main{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:20px;padding:20px}.context{background:white;border:1px solid #d6dfe5;border-radius:7px;overflow:hidden}.line{display:flex;align-items:flex-start;min-height:24px}.line:hover{background:#edf4fa}.line.selected{background:#fff0bd}.line.marked{border-right:5px solid #c48700}.number{width:52px;flex-shrink:0;padding:3px 8px;background:#f3f6f8;border:0;border-radius:0;color:#6a7b8c;font:12px ui-monospace;user-select:none}.text{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.65 ui-monospace,monospace;padding:1px 12px;flex:1;min-width:0}aside{position:sticky;top:74px;align-self:start;background:white;padding:18px;border:1px solid #d6dfe5;border-radius:7px;max-height:calc(100vh - 130px);overflow:auto}h2{font-size:18px;margin:0 0 10px}textarea{box-sizing:border-box;width:100%;min-height:120px;padding:10px;margin:8px 0;border:1px solid #a9b8c4;border-radius:5px}#meta,#status,.hint{font-size:13px;color:#566b7d}.note{border-top:1px solid #dce3e8;padding:12px 0;white-space:pre-wrap;overflow-wrap:anywhere}.note button{font-size:12px;margin:4px 5px 0 0}.actions{display:flex;gap:6px;flex-wrap:wrap}#status{min-height:20px;margin-top:8px}#storageWarning{color:#ae2424}.badge{background:#fff0bd;padding:3px 6px}input[type=file]{display:none}@media(max-width:850px){main{grid-template-columns:1fr;padding:10px}aside{position:static;max-height:none;grid-row:1}nav{padding:10px}.text{font-size:12px}}button:disabled{cursor:wait;opacity:.65}#sendStatus{padding:8px 24px;overflow-wrap:anywhere;min-height:20px}#sendStatus[data-state=error]{color:#a51f1f}#sendStatus[data-state=received]{color:#176231}#printNotes{display:none}
+@media print{@page{margin:15mm}body{background:white;color:black;font-size:11pt}header{background:white;color:black;padding:0 0 12pt}nav,#sendStatus,aside{display:none}main{display:block;padding:0}.context{border:0;overflow:visible}.line,.line:hover,.line.selected{background:white}.line.marked{border-right:2px solid #777}.number{display:block;background:white;color:#555;padding:2px 5px;width:36px}.text{font-size:9pt;line-height:1.4;white-space:pre-wrap;overflow-wrap:anywhere}.line{break-inside:avoid}#printNotes{display:block;break-before:page}#printNotes .note{break-inside:avoid}#printNotes pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:9pt}#printNotes h2{margin-top:12pt}}
+</style></head><body><header><h1>Mark up the current default context</h1><p>Original live global files, captured before compression. Choose an agent. Select line numbers, then write a note.</p><p>These files exclude built-in harness prompts, tools, dynamic memory, and project context. Live defaults are unchanged.</p></header><nav><label>Agent <select id="agent"><option value="omp">omp</option><option value="claude">Claude</option><option value="codex">Codex</option><option value="pi">Pi</option></select></label><button id="send">Send notes to agent</button><button id="export">Download notes</button><button id="import">Import notes</button><input id="file" type="file" accept="application/json,.json"><span id="meta"></span></nav><div id="sendStatus" role="status" aria-live="polite"></div><main><section id="context" class="context" aria-label="Default context lines"></section><aside><h2>Your notes</h2><p class="hint">Click a line number. Shift-click another to select a range. Save each note, then use Send notes to agent when ready. Nothing is sent automatically; sending includes saved notes for all agents, not unsaved text.</p><p id="selection" class="badge">Whole document</p><label for="note">What should change?</label><textarea id="note" placeholder="Cut this, move it to a skill, keep this rule, rewrite…"></textarea><div class="actions"><button id="save">Save note</button><button id="whole">Whole document</button></div><div id="status" role="status"></div><p id="storageWarning"></p><p class="hint">Send notes to agent submits a copy and leaves your browser notes intact. Download and import remain available as a fallback. Submissions and downloads include the exact selected text and source fingerprint.</p><div id="notes"></div></aside></main><section id="printNotes" aria-label="All saved notes"></section><script id="feedbackConfig" type="application/json">__FEEDBACK_CONFIG__</script><script id="data" type="application/json">__CONTEXT_DATA__</script><script>
+const data=JSON.parse(document.getElementById('data').textContent),key='agent-context-review-v1-'+data.omp.sha256;let notes=[],start=null,end=null;const $=id=>document.getElementById(id),agent=()=>$('agent').value;try{notes=JSON.parse(localStorage.getItem(key)||'[]');if(!Array.isArray(notes))notes=[]}catch(e){$('storageWarning').textContent='Browser storage unavailable. New notes stay only in this page until you send or download them.'}function persist(){try{localStorage.setItem(key,JSON.stringify(notes));return true}catch(e){$('storageWarning').textContent='Could not save to browser storage. Notes remain in this page; send or download a copy before closing.';return false}}function selected(){return start===null?'Whole document':`Lines ${Math.min(start,end)}–${Math.max(start,end)}`}function highlight(){document.querySelectorAll('.line').forEach(row=>{const n=Number(row.dataset.line);row.classList.toggle('selected',start!==null&&n>=Math.min(start,end)&&n<=Math.max(start,end));row.classList.toggle('marked',notes.some(x=>x.agent===agent()&&x.start!==null&&n>=x.start&&n<=x.end))});$('selection').textContent=selected()}function renderNotes(){$('notes').replaceChildren();for(const note of notes.filter(x=>x.agent===agent())){const el=document.createElement('div');el.className='note';const label=document.createElement('strong');label.textContent=note.start===null?'Whole document':`Lines ${note.start}–${note.end}`;const body=document.createElement('p');body.textContent=note.note;const jump=document.createElement('button');jump.textContent='Show lines';jump.onclick=()=>{start=note.start;end=note.end;highlight();if(start!==null)document.querySelector(`[data-line="${start}"]`).scrollIntoView({block:'center'})};const del=document.createElement('button');del.textContent='Delete';del.onclick=()=>{if(!confirm('Delete this note?'))return;notes=notes.filter(x=>x.id!==note.id);persist();renderNotes();highlight()};el.append(label,body,jump,del);$('notes').append(el)}}function render(){start=end=null;$('context').replaceChildren();const lines=data[agent()].text.split('\n');if(lines.at(-1)==='')lines.pop();lines.forEach((text,i)=>{const row=document.createElement('div');row.className='line';row.dataset.line=i+1;const n=document.createElement('button');n.className='number';n.textContent=i+1;n.setAttribute('aria-label',`Select line ${i+1}`);n.onclick=e=>{if(e.shiftKey&&start!==null)end=i+1;else start=end=i+1;highlight()};const content=document.createElement('span');content.className='text';content.textContent=text||' ';row.append(n,content);$('context').append(row)});$('meta').textContent=`${data[agent()].path} · ${lines.length} lines`;highlight();renderNotes()}
+$('agent').onchange=render;$('whole').onclick=()=>{start=end=null;highlight()};$('save').onclick=()=>{const text=$('note').value.trim();if(!text){$('status').textContent='Write a note first.';return}const lo=start===null?null:Math.min(start,end),hi=start===null?null:Math.max(start,end);notes.push({id:crypto.randomUUID?crypto.randomUUID():String(Date.now())+'-'+Math.random(),agent:agent(),path:data[agent()].path,sha256:data[agent()].sha256,start:lo,end:hi,quote:lo===null?'':data[agent()].text.split('\n').slice(lo-1,hi).join('\n'),note:text,created:new Date().toISOString()});const stored=persist();$('note').value='';$('status').textContent=stored?'Note saved in this browser.':'Note added to this page. Send or download a copy to keep it.';renderNotes();highlight()};$('export').onclick=()=>{const blob=new Blob([JSON.stringify(exportPayload(),null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='agent-context-notes.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);$('status').textContent=`Downloaded ${notes.length} notes.`};$('import').onclick=()=>$('file').click();$('file').onchange=async()=>{try{const doc=JSON.parse(await $('file').files[0].text());if(doc.schema!=='agent-context-notes.v1'||!Array.isArray(doc.notes))throw Error('Wrong notes format');for(const n of doc.notes){if(!data[n.agent]||n.sha256!==data[n.agent].sha256||typeof n.note!=='string'||typeof n.id!=='string'||!((n.start===null&&n.end===null)||(Number.isInteger(n.start)&&Number.isInteger(n.end)&&n.start>0&&n.end>=n.start&&n.end<=data[n.agent].text.split('\n').length)))throw Error('Notes refer to a different snapshot or have invalid fields')}for(const n of doc.notes)if(!notes.some(x=>x.id===n.id))notes.push(n);persist();renderNotes();highlight();$('status').textContent='Notes imported.'}catch(e){$('status').textContent='Import failed: '+e.message}finally{$('file').value=''}};render();
+
+const feedbackConfig=JSON.parse($('feedbackConfig').textContent);
+function exportPayload(){
+  return {schema:'agent-context-notes.v1',exported:new Date().toISOString(),
+    snapshots:Object.fromEntries(Object.entries(data).map(([name,snapshot])=>[name,{path:snapshot.path,sha256:snapshot.sha256}])),notes};
+}
+function sendStatus(state,message){
+  $('sendStatus').dataset.state=state;
+  $('sendStatus').textContent=message;
+}
+$('send').onclick=async()=>{
+  if($('send').disabled)return;
+  if($('note').value.trim()){
+    sendStatus('error','Save the note in the editor before sending. Nothing was sent.');
+    return;
+  }
+  let endpoint;
+  try{
+    if(!feedbackConfig||typeof feedbackConfig.endpoint!=='string'||typeof feedbackConfig.token!=='string'||!feedbackConfig.token)throw Error();
+    endpoint=new URL(feedbackConfig.endpoint,location.href);
+    if(endpoint.origin!==location.origin||!/^https?:$/.test(endpoint.protocol)||endpoint.username||endpoint.password||endpoint.search||endpoint.hash||!/^\/_feedback\/[A-Za-z0-9_-]+$/.test(endpoint.pathname))throw Error();
+  }catch{
+    sendStatus('error','Sending is not configured for this page. Your notes are unchanged; download a copy as a fallback.');
+    return;
+  }
+  const count=notes.length;
+  const body=JSON.stringify({token:feedbackConfig.token,payload:exportPayload()});
+  if(new Blob([body]).size>1024*1024){
+    sendStatus('error','These notes exceed the 1 MiB submission limit. Nothing was sent; download a copy instead.');
+    return;
+  }
+  $('send').disabled=true;
+  $('send').textContent='Sending…';
+  sendStatus('sending',`Sending ${count} saved notes…`);
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),20000);
+  try{
+    const response=await fetch(endpoint.href,{method:'POST',mode:'same-origin',credentials:'omit',redirect:'error',headers:{'Content-Type':'application/json'},body,signal:controller.signal});
+    if(response.status!==201){
+      const reason={400:'The server rejected the submission format.',403:'This page’s sending token was rejected.',404:'This review is not registered on the server.',413:'The server rejected the submission as too large.'}[response.status]||`The server returned HTTP ${response.status}.`;
+      sendStatus('error',`${reason} No receipt was confirmed. Your notes are unchanged; retry or download a copy.`);
+      return;
+    }
+    const receipt=await response.json();
+    if(!receipt||typeof receipt.id!=='string'||!receipt.id.trim())throw Error('invalid-receipt');
+    sendStatus('received',`Received ${count} saved notes. Receipt: ${receipt.id}. Your browser notes are unchanged. Notes added or changed after this send need another send.`);
+  }catch(error){
+    const reason=controller.signal.aborted?'Sending timed out.':error.message==='invalid-receipt'?'The server did not provide a valid receipt.':'The connection failed or the receipt could not be read.';
+    sendStatus('error',`${reason} Receipt is unconfirmed: the server may already have received this submission. Your notes are unchanged. Retry when ready (a retry may create another submission), or download a copy.`);
+  }finally{
+    clearTimeout(timeout);
+    $('send').disabled=false;
+    $('send').textContent='Send notes to agent';
+  }
+};
+window.addEventListener('beforeprint',()=>{
+  const container=$('printNotes');
+  container.replaceChildren();
+  const title=document.createElement('h2');
+  title.textContent='All saved review notes';
+  const exported=document.createElement('p');
+  exported.textContent=`Printed ${new Date().toISOString()} · ${notes.length} saved notes. Unsaved editor text is not included.`;
+  container.append(title,exported);
+  for(const note of notes){
+    const item=document.createElement('article');item.className='note';
+    const heading=document.createElement('strong');
+    heading.textContent=`${note.agent} · ${note.start===null?'Whole document':`Lines ${note.start}–${note.end}`}`;
+    const snapshot=document.createElement('p');snapshot.textContent=`${note.path} · SHA-256 ${note.sha256}`;
+    const body=document.createElement('p');body.textContent=note.note;
+    item.append(heading,snapshot,body);
+    if(note.quote){const quote=document.createElement('pre');quote.textContent=note.quote;item.append(quote)}
+    container.append(item);
+  }
+});
+</script></body></html>

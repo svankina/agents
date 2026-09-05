@@ -16,6 +16,8 @@
 #   serve-report gc                              Remove dead (broken) entries
 #   serve-report stop                            Stop the shared server
 #   serve-report restart                         Stop then start fresh
+#   serve-report feedback-create <review-id>     Register explicit note delivery
+#   serve-report feedback-read <review-id>       Read private submitted notes
 #
 # Flags:
 #   --name NAME   Friendly slug base (default: source basename)
@@ -36,6 +38,8 @@ LOCK="$STATE/.lock"
 PREF_PORT="${SERVE_REPORT_PORT:-8789}"  # 8787 is squatted by limitsd on this box
 HOST="127.0.0.1"                        # loopback; used for local health checks
 BIND="${SERVE_REPORT_BIND:-0.0.0.0}"    # listen addr: all interfaces (tailnet + LAN)
+SCRIPT_DIR="$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")"
+HTTP_SERVER="$SCRIPT_DIR/report_http_server.py"
 
 mkdir -p "$PUBLIC"
 
@@ -58,12 +62,12 @@ public_host() {
 server_pid() { [[ -f "$PIDFILE" ]] && cat "$PIDFILE" 2>/dev/null || true; }
 server_port() { [[ -f "$PORTFILE" ]] && cat "$PORTFILE" 2>/dev/null || true; }
 
-# True if pid is alive and is our http.server.
+# True if pid is alive and is either the legacy or feedback-aware server.
 pid_alive() {
   local pid="$1"
   [[ -n "$pid" ]] || return 1
   kill -0 "$pid" 2>/dev/null || return 1
-  grep -qa 'http.server' "/proc/$pid/cmdline" 2>/dev/null || return 1
+  grep -qaE 'http\.server|report_http_server\.py' "/proc/$pid/cmdline" 2>/dev/null || return 1
 }
 
 server_up() {
@@ -97,7 +101,7 @@ start_server() {
   local port
   port="$(pick_port)"
   echo "[serve-report] $(date -Is) START port=$port by pid=$$ ppid=$PPID ($(ps -o comm= -p $PPID 2>/dev/null || echo '?'))" >>"$LOG"
-  setsid python3 -m http.server "$port" --bind "$BIND" --directory "$PUBLIC" \
+  setsid python3 "$HTTP_SERVER" "$port" --bind "$BIND" --directory "$PUBLIC" --state "$STATE" \
     >>"$LOG" 2>&1 </dev/null &
   local pid=$!
   echo "$pid" >"$PIDFILE"
@@ -241,6 +245,12 @@ cmd_open() {
   echo "http://$(public_host):$(server_port)/$1$suffix"
 }
 
+cmd_feedback() {
+  local action="$1"; shift
+  [[ $# == 1 ]] || die "usage: serve-report feedback-$action <review-id>"
+  python3 "$HTTP_SERVER" --state "$STATE" "--feedback-$action" "$1"
+}
+
 # --- dispatch ---------------------------------------------------------------
 
 cmd="${1:-}"
@@ -256,5 +266,7 @@ case "$cmd" in
   gc)      shift; cmd_gc "$@" ;;
   stop)    shift; stop_server; echo "stopped" ;;
   restart) shift; stop_server; ensure_server; echo "restarted: $(root_url)" ;;
+  feedback-create) shift; cmd_feedback create "$@" ;;
+  feedback-read)   shift; cmd_feedback read "$@" ;;
   *)       cmd_publish "$@" ;;   # default: treat args as a publish request
 esac
