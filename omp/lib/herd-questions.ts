@@ -3,6 +3,7 @@ import * as path from "node:path";
 import type { Server } from "bun";
 import type {
 	AgentToolResult,
+	ExtensionAPI,
 	ExtensionContext,
 } from "@oh-my-pi/pi-coding-agent";
 import type {
@@ -83,6 +84,18 @@ export function parseAnswers(
 	return results;
 }
 
+type Model = NonNullable<ExtensionContext["model"]>;
+
+interface ModelControl {
+	owner: symbol;
+	ctx: ExtensionContext;
+	setModel: ExtensionAPI["setModel"];
+}
+
+function modelIdentity(model: Model | undefined) {
+	return model ? { provider: model.provider, id: model.id, name: model.name } : null;
+}
+
 /** Shared by extension instances in one OMP process; each instance owns its lifecycle. */
 class QuestionBridge {
 	#owners = new Set<symbol>();
@@ -90,6 +103,8 @@ class QuestionBridge {
 	#server?: Server<undefined>;
 	#socket?: { path: string; dev: number; ino: number };
 	#onExit = () => this.#close();
+	#control?: ModelControl;
+	#switching = false;
 
 	connect(owner: symbol): void {
 		this.#owners.add(owner);
@@ -143,8 +158,25 @@ class QuestionBridge {
 		}
 	}
 
+	/** Only the interactive owner may control models; child contexts have no UI. */
+	controlModels(
+		owner: symbol,
+		ctx: ExtensionContext,
+		setModel: ExtensionAPI["setModel"],
+	): void {
+		if (!ctx.hasUI || !this.#owners.has(owner)) return;
+		if (this.#control && this.#control.owner !== owner)
+			throw new Error("Another interactive session owns model control");
+		this.#control = { owner, ctx, setModel };
+	}
+
+	invalidateModels(owner: symbol): void {
+		if (this.#control?.owner === owner) this.#control = undefined;
+	}
+
 	disconnect(owner: symbol): void {
 		this.#owners.delete(owner);
+		this.invalidateModels(owner);
 		if (this.#owners.size === 0) this.#close();
 	}
 
@@ -167,6 +199,7 @@ class QuestionBridge {
 
 	#close(): void {
 		this.#pending.clear();
+		this.#control = undefined;
 		this.#server?.stop(true);
 		this.#server = undefined;
 		process.removeListener("exit", this.#onExit);
@@ -186,6 +219,11 @@ class QuestionBridge {
 		const pathname = new URL(request.url).pathname;
 		const json = (body: unknown, status = 200) =>
 			Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
+		if (
+			(request.method === "GET" && pathname === "/models") ||
+			(request.method === "POST" && pathname === "/model")
+		)
+			return this.#handleModel(request);
 		if (request.method === "GET" && pathname === "/questions") {
 			return json({
 				version: 1,
@@ -225,6 +263,79 @@ class QuestionBridge {
 		this.#pending.delete(entry.requestId);
 		entry.accept(answers);
 		return json({ ok: true });
+	}
+
+	async #handleModel(request: Request): Promise<Response> {
+		const json = (body: unknown, status = 200) =>
+			Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
+		const control = this.#control;
+		if (!control)
+			return json({ error: "Interactive model control is unavailable" }, 503);
+		const { ctx } = control;
+		const ref = ctx.sessionManager.getSessionFile();
+		if (!ref || !path.isAbsolute(ref))
+			return json({ error: "Current session has no absolute file reference" }, 503);
+		const stale = () =>
+			this.#control !== control || ctx.sessionManager.getSessionFile() !== ref;
+		const busy = () => !ctx.isIdle() || ctx.hasPendingMessages() || this.#pending.size > 0;
+		const conflict = () => {
+			if (stale()) return json({ error: "Session reference is stale" }, 409);
+			if (busy()) return json({ error: "Session is busy" }, 409);
+			return undefined;
+		};
+		try {
+			if (request.method === "GET") {
+				const models = await ctx.models.list();
+				if (stale()) return json({ error: "Session reference is stale" }, 409);
+				return json({
+					version: 1, pid: process.pid, ref,
+					current: modelIdentity(ctx.models.current()),
+					models: models.map(modelIdentity),
+					canChange: !this.#switching && !busy(),
+				});
+			}
+			let body: unknown;
+			try {
+				body = await request.json();
+			} catch {
+				return json({ error: "Invalid JSON" }, 400);
+			}
+			if (
+				!record(body) ||
+				typeof body.ref !== "string" ||
+				typeof body.provider !== "string" || !body.provider ||
+				typeof body.id !== "string" || !body.id ||
+				Object.keys(body).some(key => !["ref", "provider", "id"].includes(key))
+			)
+				return json({ error: "Expected ref, provider and id" }, 400);
+			if (body.ref !== ref || stale())
+				return json({ error: "Session reference is stale" }, 409);
+			if (this.#switching) return json({ error: "Model switch is already in progress" }, 409);
+			const initialConflict = conflict();
+			if (initialConflict) return initialConflict;
+			this.#switching = true;
+			try {
+				const models = await ctx.models.list();
+				const availabilityConflict = conflict();
+				if (availabilityConflict) return availabilityConflict;
+				const { provider, id } = body;
+				const model = models.find(model => model.provider === provider && model.id === id);
+				if (!model) return json({ error: "Model is not available for this session" }, 400);
+				// The public setter performs its own async authentication. Do not retry
+				// or roll back after it: either could mutate a newly selected session.
+				const changed = await control.setModel(model);
+				const switchConflict = conflict();
+				if (switchConflict) return switchConflict;
+				const current = ctx.models.current();
+				if (!changed || current?.provider !== model.provider || current.id !== model.id)
+					return json({ error: "Model switch was not confirmed by the session" }, 503);
+				return json({ ok: true, version: 1, pid: process.pid, ref, current: modelIdentity(current) });
+			} finally {
+				this.#switching = false;
+			}
+		} catch {
+			return conflict() ?? json({ error: "Model control is unavailable" }, 503);
+		}
 	}
 }
 

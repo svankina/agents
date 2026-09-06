@@ -32,6 +32,7 @@ export default function herdQuestionsExtension(pi: ExtensionAPI) {
 		if (!ctx.hasUI) return;
 		try {
 			questionBridge.connect(owner);
+			questionBridge.controlModels(owner, ctx, model => pi.setModel(model));
 			connected = true;
 		} catch (error) {
 			questionBridge.disconnect(owner);
@@ -44,11 +45,13 @@ export default function herdQuestionsExtension(pi: ExtensionAPI) {
 
 	pi.on("session_start", (_event, ctx) => start(ctx));
 	pi.on("session_switch", (_event, ctx) => start(ctx));
-	pi.on("session_branch", () => {
-		for (const controller of active) controller.abort();
-	});
-	pi.on("session_tree", () => {
-		for (const controller of active) controller.abort();
+	pi.on("session_branch", (_event, ctx) => start(ctx));
+	pi.on("session_tree", (_event, ctx) => start(ctx));
+	pi.on("agent_start", (_event, ctx) => {
+		// Rotate the control identity so a turn that starts and ends during
+		// authentication still invalidates the outstanding request.
+		if (connected)
+			questionBridge.controlModels(owner, ctx, model => pi.setModel(model));
 	});
 	pi.on("session_shutdown", stop);
 

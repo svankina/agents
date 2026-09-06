@@ -48,6 +48,24 @@ expose plan-mode state, so plan mode does not disable that timeout.
 Set `ask.timeout` to `0` to require an explicit answer in every mode.
 It does not use OMP's private speech vocalizer.
 
+The same socket exposes `GET /models` and `POST /model` for the interactive
+OMP session only. The catalog comes from `ctx.models.list()` and identifies
+models by both provider and id. A switch requires the exact absolute session
+file reference, an idle session with no queued messages or pending questions,
+and available authentication. Competing switches, stale references and busy
+sessions receive HTTP 409; unavailable models receive 400, and unavailable
+control/authentication receives 503. Success is confirmed against the live
+session model after the public `pi.setModel()` call.
+
+The bridge rechecks session identity and idle state around asynchronous work.
+OMP's public setter also performs asynchronous authentication internally and
+offers no atomic idle/session guard: a terminal action during that internal
+await can still race the mutation. A detected race returns an error without
+retrying or rolling back against a potentially different session. Source
+changes take effect in newly launched OMP processes, not already-loaded
+extension instances; no generated instruction files or OMP core files need
+editing.
+
 ## Source checkouts
 
 - Primary local Pi resource checkout: `~/src/pagent`
