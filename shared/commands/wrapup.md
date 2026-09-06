@@ -1,5 +1,5 @@
 ---
-description: Post a wrap-up status to Mattermost #status-updates and end the session
+description: Record a local wrap-up, post to Mattermost #status-updates, and end the session
 ---
 
 The session is ending. Do this now, in order:
@@ -15,6 +15,8 @@ The session is ending. Do this now, in order:
    ```
 
    Use your agent name or the project directory basename as `--source`.
+   Run from the folder where you did the work. The command also saves the
+   summary to that project's local `agent-history`, before network delivery.
    Verify the command exited 0; if it failed, report the error instead of
    claiming the post was made.
 3. If a `quit_session` tool is available, call it now — it ends the session

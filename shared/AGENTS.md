@@ -78,3 +78,5 @@ Use `user-queue`, preserve the wording, and report its ID. Send Android
 notifications only for important events or required user action; report failed
 delivery honestly. On substantive completion, post one concrete past-tense
 line through `agent-status`; skip trivial Q&A.
+Use `agent-history` to look up earlier work in the current project before
+repeating an investigation. Status posts are recorded there automatically.

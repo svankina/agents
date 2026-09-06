@@ -267,6 +267,31 @@ project directory. Delivery goes through the local `agent-msgd` daemon (unix
 socket; Mattermost minutiae live there, with a direct fallback built into
 `agent-status`).
 
+Run `agent-status` from the work folder. It saves the summary locally before
+network delivery. A failed Mattermost post still has a local record; it is not
+evidence of successful delivery. A local storage error stops the command before
+posting. Repeating the command adds another record.
+
+Read earlier work from any agent with:
+
+```bash
+agent-history                              # newest 20 summaries for this project
+agent-history --search "login" --limit 50   # literal, case-insensitive search
+agent-history --cwd ~/src/foo --json        # full records for another project
+agent-history add --source omp "Verified the offline import"  # local only
+```
+
+Git subdirectories and linked worktrees share the main checkout's history.
+Separate repositories remain separate. Non-Git folders use their exact resolved
+path. Records include UTC time, source, original folder, branch, commit, intended
+channel, and summary. History reports past work; check current code before relying
+on it. Old Mattermost posts and session transcripts are not imported.
+
+Storage is `$XDG_STATE_HOME/agent-history/history.sqlite3`, or
+`~/.local/state/agent-history/history.sqlite3` by default. SQLite serializes
+concurrent writers. The command does not add files to project checkouts.
+New folders have no history until a summary is recorded.
+
 If `~/.config/agent-status/bots/<source>.env` exists, the post is made AS
 that dedicated bot account.
 When creating an omp profile, provision its dedicated Mattermost bot with
