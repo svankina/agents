@@ -251,55 +251,6 @@ already visible in the active session. The command returns success only after
 Homer durably accepts and audits the notification; if it fails, report that
 failure in the session instead of claiming the user was notified.
 
-## Status posts
-
-When you finish a piece of work (feature done, investigation concluded, long
-task wrapped up), post a one-line status to the Mattermost `#status-updates`
-channel:
-
-```bash
-agent-status --source <agent-or-project> "wrapped up: <what changed, where>"
-```
-
-One line, past tense, concrete: what now works and where. Skip it for trivial
-Q&A turns. `--source` sets the posting identity — use your agent name or the
-project directory. Delivery goes through the local `agent-msgd` daemon (unix
-socket; Mattermost minutiae live there, with a direct fallback built into
-`agent-status`).
-
-Run `agent-status` from the work folder. It saves the summary locally before
-network delivery. A failed Mattermost post still has a local record; it is not
-evidence of successful delivery. A local storage error stops the command before
-posting. Repeating the command adds another record.
-
-Read earlier work from any agent with:
-
-```bash
-agent-history                              # newest 20 summaries for this project
-agent-history --search "login" --limit 50   # literal, case-insensitive search
-agent-history --cwd ~/src/foo --json        # full records for another project
-agent-history add --source omp "Verified the offline import"  # local only
-```
-
-Git subdirectories and linked worktrees share the main checkout's history.
-Separate repositories remain separate. Non-Git folders use their exact resolved
-path. Records include UTC time, source, original folder, branch, commit, intended
-channel, and summary. History reports past work; check current code before relying
-on it. Old Mattermost posts and session transcripts are not imported.
-
-Storage is `$XDG_STATE_HOME/agent-history/history.sqlite3`, or
-`~/.local/state/agent-history/history.sqlite3` by default. SQLite serializes
-concurrent writers. The command does not add files to project checkouts.
-New folders have no history until a summary is recorded.
-
-If `~/.config/agent-status/bots/<source>.env` exists, the post is made AS
-that dedicated bot account.
-When creating an omp profile, provision its dedicated Mattermost bot with
-`mm-profile-bot <profile> --description "<purpose>"`. Use the profile name as
-the status source. The command joins the bot to `#status-updates` and writes
-its credentials under the bot configuration directory.
-Avatars are generated automatically by the hourly avatar timer.
-
 ## Compute fairness
 
 This machine is shared by the user and multiple concurrent agents. Any

@@ -15,7 +15,7 @@ death or call `quit_session` while delivery is blocked.
    and worktrees. Verify completed changes if not already verified, then commit
    only those changes. Preserve unrelated edits, staged work, and unfinished
    work; never use `git add -A`, automatic stashing, or destructive resets.
-   Do not add unrelated cleanup, project-map updates, or duplicate status posts.
+   Do not add unrelated cleanup or project-map updates.
    If there is no Git work to deliver, skip to step 5.
 2. Resolve each feature branch's intended integration branch and push remote
    from repository configuration and session context. Do not assume `main`,

@@ -22,7 +22,7 @@ SECTIONS=("### Architecture" "### Where things live" "### Invariants & gotchas" 
 # Machine-wide rules already in the generated global instructions. Restating
 # them per repo is duplication, never repo context.
 GLOBAL_FAIL='psudo|serve-report|fair-run|trash-put|agent-worktree|python3 -m http\.server|:8789'
-GLOBAL_WARN='build123d|OpenSCAD|Blender|serve-cad|homer-notify|agent-status|agent-shot|agent-gui'
+GLOBAL_WARN='build123d|OpenSCAD|Blender|serve-cad|homer-notify|agent-shot|agent-gui'
 # Session residue: commit hashes and scratch paths never belong in a brief.
 RESIDUE='`[0-9a-f]{7,40}`|commit [0-9a-f]{7,40}|/tmp/'
 

@@ -62,7 +62,6 @@ Read only the section needed for the operation in
 | Interpret unfamiliar shell shorthand | `shell-aliases` |
 | Deferred user work | `user-queue` |
 | Android notification | `android-notifications` |
-| Completion status or new agent profile | `status-posts` |
 
 Use the isolated tester when independent verification is useful; do not ask
 the user to test something an agent can exercise. Never include unrelated
@@ -76,7 +75,4 @@ shows the expected content and return the emitted URL unchanged.
 Queue only work the user explicitly defers, not active work or prerequisites.
 Use `user-queue`, preserve the wording, and report its ID. Send Android
 notifications only for important events or required user action; report failed
-delivery honestly. On substantive completion, post one concrete past-tense
-line through `agent-status`; skip trivial Q&A.
-Use `agent-history` to look up earlier work in the current project before
-repeating an investigation. Status posts are recorded there automatically.
+delivery honestly.

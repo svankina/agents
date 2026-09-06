@@ -7,8 +7,8 @@
  * turn's final reply has been delivered (see extension-ui-controller.ts,
  * "Defer the actual teardown to the main loop"). So calling it mid-turn is
  * exactly right: reply streams first, then the session exits like /quit.
- * Used by the /wrapup and /wq commands: post agent-status, call quit_session,
- * reply. /wq additionally passes kill_terminal: true, which spawns a detached
+ * Used by the /wrapup and /wq commands: call quit_session, then reply.
+ * /wq additionally passes kill_terminal: true, which spawns a detached
  * watcher that waits for this omp process to exit and then SIGHUPs its parent
  * (the launching shell), closing the terminal window / tmux pane too.
  * Loaded via `extensions: [~/src/agents/omp/extensions]` in each profile's config.yml.
