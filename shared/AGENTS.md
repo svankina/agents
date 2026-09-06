@@ -44,8 +44,8 @@ information cannot be resolved from available sources. No emojis.
 ## Task-specific procedures
 
 For user screenshots or pictures, check `~/shared/`, `~/Pictures/`, and
-`~/Pictures/Screenshots/` before asking for an upload or path. Also check
-`~/Pictires/` if it exists. Use newest modification time to find recent images.
+`~/Pictures/Screenshots/` before asking for an upload or path. Use newest
+modification time to find recent images.
 
 Read only the section needed for the operation in
 `~/src/agents/docs/agent-workflows.md`:
