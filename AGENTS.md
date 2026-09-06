@@ -34,11 +34,6 @@ Skills, commands, and executable helpers are linked into their live locations.
 - Executable non-`.py` files in `bin/` are installed by `agents-sync`.
 - `.env`, `agent.json`, `*.disabled`, and `*.bak` are ignored. Do not add the
   ignored `pi/skills/browser-harness/` external symlink mirror.
-- The working Pi resource checkout is `~/src/pagent`; this repository preserves
-  a curated subset. Dispatch, limitsd, and herdr integrations may be inactive.
-- Prompt YAML single-quoted strings escape apostrophes by doubling them.
-- `project-map` requires four subsections in this order, at most 150 lines,
-  no reviewed marker, and no duplication of global policies.
 
 ### Decisions
 
