@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""Run the shared CAD engine without sharing another agent's mutable project."""
+import argparse
+import os
+from pathlib import Path
+import shutil
+import sys
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, epilog='Set CAD_WORKBENCH_HOME to override the engine checkout. Launch servers through your harness process supervisor. Cloud instruction editing is opt-in.')
+    sub = parser.add_subparsers(dest='command', required=True)
+    sub.add_parser('path', help='Print the engine checkout')
+    python = sub.add_parser('python', help='Run a script or -m module in the CAD environment; preserve working directory')
+    python.add_argument('args', nargs=argparse.REMAINDER)
+    serve = sub.add_parser('serve', help='Serve one isolated project on loopback')
+    serve.add_argument('--project', type=Path, required=True, help='Project directory; state is stored under .cad-workbench/')
+    serve.add_argument('--port', type=int, required=True, help='Dedicated port, 1024..65535; never reuse another agent server')
+    serve.add_argument('--agent', action='store_true', help='Allow OMP to send instructions/dimensions/face metadata to its configured provider')
+    arguments = sys.argv[1:]
+    if len(arguments) > 1 and arguments[0] == 'python' and arguments[1] not in ('--', '--help', '-h'):
+        arguments = ['python', '--', *arguments[1:]]
+    options = parser.parse_args(arguments)
+    root = Path(os.environ.get('CAD_WORKBENCH_HOME', '~/src/cad/.worktrees/cad-workbench')).expanduser().resolve()
+    if not (root / 'app.py').is_file() or not (root / 'workbench' / 'engineering.py').is_file():
+        parser.error(f'CAD engine not found at {root}; set CAD_WORKBENCH_HOME to the committed cad-workbench checkout')
+    if options.command == 'path':
+        print(root)
+        return
+    executable = root / '.venv' / 'bin' / 'python'
+    if not executable.is_file():
+        parser.error(f'CAD environment missing; run uv sync --frozen in {root}')
+    fairness = shutil.which('fair-run')
+    if not fairness:
+        parser.error('fair-run is required; install the shared agent commands with agents-sync sync')
+    environment = os.environ.copy()
+    environment['PYTHONPATH'] = str(root) + (os.pathsep + environment['PYTHONPATH'] if environment.get('PYTHONPATH') else '')
+    for name in ('OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS'):
+        environment[name] = '6'
+    if options.command == 'python':
+        args = options.args
+        if args and args[0] == '--':
+            args = args[1:]
+        if not args:
+            parser.error('python requires a script or -m module; use a supervised process for interactive Python')
+    else:
+        if not 1024 <= options.port <= 65535:
+            parser.error('--port must be between 1024 and 65535')
+        project = options.project.expanduser().resolve()
+        if not project.is_dir():
+            parser.error('--project must be an existing directory')
+        state = project / '.cad-workbench'
+        args = [str(root / 'app.py'), '--port', str(options.port), '--data-dir', str(state)]
+        if not options.agent:
+            args.append('--disable-agent')
+        print(f'CAD Workbench: http://127.0.0.1:{options.port}; state: {state}; cloud editing: {options.agent}', file=sys.stderr, flush=True)
+    command = [fairness, '--cpus', '6', '--', str(executable), *args]
+    os.execve(fairness, command, environment)
+
+
+if __name__ == '__main__':
+    main()

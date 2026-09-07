@@ -19,6 +19,35 @@ description: Generate, modify, and verify dimensioned CAD parts and assemblies. 
 - Do not introduce OpenSCAD. Use three.js for lightweight model viewing, not
   Blender/Cycles. Read `serving-cad-files` for the interactive delivery path.
 
+## Shared CAD workbench
+
+The `cad-workbench` command exposes the local build123d engine, component library,
+DFM checks, CalculiX/gmsh analysis, and source/STEP/STL release packaging.
+Use `cad-workbench path` to locate its checkout and `OPERATING.txt` for limits.
+Set `CAD_WORKBENCH_HOME` only when using a different installed engine checkout.
+
+- Run scripts in its environment with `cad-workbench python script.py` or
+  `cad-workbench python -m workbench.catalog components`. The caller's working
+  directory is preserved. Python APIs include `workbench.engineering.dfm`,
+  `face_catalog`, `solve`, and `workbench.catalog` component/release functions.
+- For interactive editing, launch `cad-workbench serve --project /path/to/project
+  --port 18766` through the harness process supervisor. Use one project directory
+  and unused loopback port per agent. State lives in that project's
+  `.cad-workbench/`; exclude it from source commits. Never operate on another
+  agent's running workbench or mutable project.
+- Cloud instruction editing is disabled by default. Add `--agent` only when
+  sending instructions, dimensions and selected-face metadata to the configured
+  OMP model provider is permitted. Local parameter and feature editing still work.
+- Face selections and load cases belong to a project revision. Apply invalidates
+  analysis. STEP imports preserve geometry, not original parametric history.
+- DFM is conservative screening, not proven tool access or a manufacturing plan.
+  FEM supports single-solid linear elasticity, not contact, fatigue or buckling.
+  Run `cad-workbench python -m workbench.engineering_reference /tmp/cad-reference`
+  for the analytical axial reference; also check application-specific convergence.
+- Components are nominal screw/nut/washer geometry, not detailed thread fits or
+  verified supplier inventory. Release bundles include rebuild and integrity
+  instructions. Keep native source and independent acceptance checks.
+
 ## Specify before modelling
 
 1. Record controlling dimensions, units, datums, and intended fits. Resolve
