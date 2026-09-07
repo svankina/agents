@@ -32,7 +32,7 @@ def main():
         parser.error(f'CAD environment missing; run uv sync --frozen in {root}')
     fairness = shutil.which('fair-run')
     if not fairness:
-        parser.error('fair-run is required; install the shared agent commands with agents-sync sync')
+        parser.error('fair-run is required; install the agent commands with omp-install')
     environment = os.environ.copy()
     environment['PYTHONPATH'] = str(root) + (os.pathsep + environment['PYTHONPATH'] if environment.get('PYTHONPATH') else '')
     for name in ('OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS'):

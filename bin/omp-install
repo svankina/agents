@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""Link this checkout's instructions, resources and helpers into OMP's home.
+
+No instruction generation, configuration writes, or other harness installation.
+Existing files and foreign links are conflicts, never overwritten.
+"""
+
+import argparse
+import os
+from pathlib import Path
+import sys
+
+
+def link_target(path: Path) -> Path:
+    """Normalize the link itself without following its target's symlinks."""
+    return Path(os.path.abspath(path.parent / os.readlink(path)))
+
+
+def desired_links(repo: Path, home: Path) -> tuple[list, list]:
+    omp = home / ".omp" / "agent"
+    links = [
+        (omp / "AGENTS.md", repo / "omp" / "AGENTS.md"),
+        (home / "AGENTS.md", repo / "home" / "AGENTS.md"),
+    ]
+    for _link, source in links:
+        if not source.is_file():
+            raise FileNotFoundError(f"Required instruction file missing: {source}")
+    groups = [
+        (repo / "shared" / "skills", omp / "skills", "skills"),
+        (repo / "shared" / "commands", omp / "commands", "markdown"),
+        (repo / "shared" / "agents", omp / "agents", "markdown"),
+        (repo / "bin", home / ".local" / "bin", "executables"),
+    ]
+    for source, destination, kind in groups:
+        if not source.is_dir():
+            continue
+        for path in sorted(source.iterdir()):
+            if kind == "skills":
+                include = path.is_dir()
+            elif kind == "markdown":
+                include = path.is_file() and path.suffix == ".md"
+            else:
+                include = path.is_file() and path.suffix != ".py" and os.access(path, os.X_OK)
+            if include:
+                links.append((destination / path.name, path))
+    return links, groups
+
+
+def installation_plan(repo: Path, home: Path) -> tuple[list, list, list]:
+    links, groups = desired_links(repo, home)
+    changes, orphans, conflicts = [], [], []
+    for link, target in links:
+        if not target.exists():
+            conflicts.append(f"[missing-source] {target}")
+            continue
+        if link.is_symlink():
+            current = link_target(link)
+            if current == target:
+                continue
+            if not current.is_relative_to(repo):
+                conflicts.append(f"[conflict] {link} -> {current}")
+                continue
+        elif link.exists():
+            conflicts.append(f"[conflict] {link} is not an installer-owned link")
+            continue
+        for parent in link.parents:
+            if parent.exists() and parent.is_dir():
+                break
+            if parent.exists() or parent.is_symlink():
+                conflicts.append(f"[conflict] {parent} is not a directory")
+                break
+        else:
+            conflicts.append(f"[conflict] no usable parent for {link}")
+        changes.append((link, target))
+    wanted = {link for link, _ in links}
+    for source, destination, _kind in groups:
+        if not destination.is_dir():
+            continue
+        for path in sorted(destination.iterdir()):
+            if (path not in wanted and path.is_symlink() and not path.exists()
+                    and link_target(path).is_relative_to(source)):
+                orphans.append(path)
+    return changes, orphans, conflicts
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", nargs="?", choices=("install", "check"), default="install")
+    parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parent.parent)
+    parser.add_argument("--home", type=Path, default=Path.home())
+    args = parser.parse_args(argv)
+    try:
+        repo, home = args.repo.expanduser().resolve(), args.home.expanduser().resolve()
+        changes, orphans, conflicts = installation_plan(repo, home)
+        for message in conflicts:
+            print(message)
+        if args.command == "check":
+            for link, target in changes:
+                print(f"[unlinked] {link} -> {target}")
+            for path in orphans:
+                print(f"[orphan] {path}")
+            if conflicts or changes or orphans:
+                return 1
+        elif conflicts:
+            print("Installation blocked; resolve conflicts before retrying. No changes made.")
+            return 2
+        else:
+            for link, target in changes:
+                link.parent.mkdir(parents=True, exist_ok=True)
+                if link.is_symlink():
+                    link.unlink()
+                link.symlink_to(target)
+                print(f"[linked] {link} -> {target}")
+            for path in orphans:
+                path.unlink()
+                print(f"[pruned] {path}")
+        if not changes and not orphans and not conflicts:
+            print("clean")
+        return 0
+    except OSError as error:
+        print(f"omp-install: {error}", file=sys.stderr)
+        return 1 if args.command == "check" else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,48 +1,54 @@
 # Agent workflows
 
-Operational reference for the standing rules in `~/src/agents/shared/AGENTS.md`.
+Operational reference for the standing rules in `~/src/agents/omp/AGENTS.md`.
 Read the named section before its operation. Report and CAD procedures live in
 the matching skills, not here.
 
 ## Source maintenance
 
-The global instruction files of every agent on this machine
-(`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.pi/agent/AGENTS.md`,
-`~/.omp/agent/AGENTS.md`) are GENERATED from `~/src/agents` by `agents-sync`.
-The base for each agent is `~/src/agents/<agent>/AGENTS.md` when that file
-exists (a full per-agent fork), otherwise `~/src/agents/shared/AGENTS.md`.
-All four agents use the shared base. To change standing instructions: edit
-the relevant base file or
-`~/src/agents/<agent>/local.md` (agent-specific delta), then run
-`~/src/agents/bin/agents-sync sync`. Never edit generated files directly.
-The generator tracks their hashes in `~/.local/state/agents-sync/generated.json`,
-outside prompt content. Source-only changes regenerate automatically when the
-previous output is unchanged. Manual edits block replacement; review
-`agents-sync diff` before explicitly using `agents-sync sync --force`.
+OMP standing instructions and durable user facts — preferences, environment,
+systems — live directly in `~/src/agents/omp/AGENTS.md`, linked to
+`~/.omp/agent/AGENTS.md`. Edit that source; no composition or generation step
+is needed. Keep facts in its user preferences and workstation sections.
+Home project context lives in `~/src/agents/home/AGENTS.md`, linked to
+`~/AGENTS.md`. The installer does not create a `CLAUDE.md` alias.
 
-Durable facts about the user — preferences, environment, systems — go in
-`~/src/agents/shared/USER.md`, which is concatenated in between the shared
-instructions and the agent-specific delta. Keep instructions in the base/delta
-and facts in USER.
+Run `~/src/agents/bin/omp-install` (or `omp-install install`) to install links
+or add new resources, then `omp-install check` to inspect drift without changes.
+The default repository is derived from the executable's resolved path.
+Use `--repo PATH` and `--home PATH` to select another repository or home.
+Edits to already-linked sources take effect without rerunning the installer.
 
-Shared skills live in `~/src/agents/shared/skills/` and are symlinked into
-each agent's skills dir by the same tool.
+Installed resources:
 
-Shared agent commands live in `~/src/agents/bin/` (`agent-worktree`,
-`agent-gui`, `agent-shot`, `agent-display`, `fair-run`, …) and are symlinked
-into `~/.local/bin` by the same tool. Prefer teaching a recurring procedure to
-a command there over writing more etiquette here: drop an executable in `bin/`,
-run `agents-sync sync`, and every agent on the machine has it.
+- `shared/skills/` child directories → `~/.omp/agent/skills/`.
+- `shared/commands/*.md` → `~/.omp/agent/commands/`.
+- `shared/agents/*.md` → `~/.omp/agent/agents/`.
+- Executable non-`.py` files in `bin/` → `~/.local/bin/`.
 
-Shared slash commands live in `~/src/agents/shared/commands/*.md` and are
-symlinked into `~/.claude/commands/` and `~/.omp/agent/commands/` by the same
-tool, so `/name` works in either harness. One exists today: `/karen` takes over
-a coding agent that is failing in another tmux pane — it reads the pane with
-`karen-context`, diagnoses the failure itself, fixes the cause, and briefs the
-agent to carry on with its original task.
+Shared helpers include `agent-worktree`, `agent-gui`, `agent-shot`,
+`agent-display`, and `fair-run`. Prefer implementing a recurring procedure
+in a command over adding more etiquette here: add an executable to `bin/`
+and run `omp-install`.
 
-Per-project convention: repos have `AGENTS.md` as the source file and
-`CLAUDE.md` as a symlink to it (`ln -s AGENTS.md CLAUDE.md`).
+Shared slash commands are installed into OMP only. For example, `/karen`
+takes over a coding agent that is failing in another tmux pane: it reads
+the pane with `karen-context`, diagnoses the failure, fixes the cause, and
+briefs the agent to carry on with its original task.
+
+The installer leaves correct links unchanged and installs missing links.
+It may replace incorrect links pointing lexically within the repository.
+Foreign files, directories, or links block installation with exit code 2,
+as do missing required instruction sources. The whole plan is checked before
+any changes. `check` returns 0 when clean and 1 for drift and never mutates.
+Pruning only removes dangling links into the corresponding source subtree
+from OMP resource directories and `~/.local/bin`; foreign links are preserved.
+Inspect conflicts and resolve them explicitly before rerunning the installer.
+
+OMP configuration, extensions, and `~/.omp/agent/managed-skills` are not managed.
+Pi and Claude skills, prompts, extensions, and commands remain historical
+resources, not install targets; other harness directories are untouched.
+Historical design and plan documents remain records of earlier workflows.
 
 ## Privileged commands
 
