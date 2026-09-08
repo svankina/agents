@@ -25,6 +25,11 @@ export interface PeerMessage {
 	body: string;
 	replyTo?: string;
 	expectsReply?: boolean;
+	/** Session identity survives transport restarts; used only for channel history routing. */
+	senderSessionId?: string;
+	senderName?: string;
+	/** Replies must not launch another request worker. */
+	kind?: "request" | "reply";
 	/** Preserve wake-relay suppression across process boundaries to avoid reply loops. */
 	wakeRelay?: boolean;
 }
@@ -123,6 +128,9 @@ function validMessage(value: unknown): value is PeerMessage {
 		Buffer.byteLength(value.body, "utf8") <= MESSAGE_LIMIT &&
 		(value.replyTo === undefined || (typeof value.replyTo === "string" && value.replyTo.length <= 1024)) &&
 		(value.expectsReply === undefined || typeof value.expectsReply === "boolean") &&
+		(value.senderSessionId === undefined || (typeof value.senderSessionId === "string" && value.senderSessionId.length > 0 && value.senderSessionId.length <= 1024)) &&
+		(value.senderName === undefined || (typeof value.senderName === "string" && value.senderName.length <= 256)) &&
+		(value.kind === undefined || value.kind === "request" || value.kind === "reply") &&
 		(value.wakeRelay === undefined || typeof value.wakeRelay === "boolean")
 	);
 }

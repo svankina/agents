@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext, HubDetails, MessageRenderer, ToolDefinition } from "@oh-my-pi/pi-coding-agent";
 import {
@@ -9,6 +12,9 @@ import {
 	type PeerDeliveryReceipt,
 	type PeerMessage,
 } from "../lib/peers-transport";
+import { PeerChannels } from "../lib/peer-channels";
+import { createPeerWorker } from "../lib/peer-worker";
+import { createPeerChannelReporter } from "../lib/peer-channel-ui";
 
 type NativeResult = AgentToolResult<unknown>;
 type HubParams = Record<string, unknown> & {
@@ -50,6 +56,8 @@ interface Connection {
 	lastActivity: number;
 	waits: Set<PendingWait>;
 	abort: AbortController;
+	channels: PeerChannels;
+	channelBusy: boolean;
 }
 
 /** Public-extension adapter; the transport deliberately lives outside the auto-loaded directory. */
@@ -60,6 +68,7 @@ export default function peersExtension(pi: ExtensionAPI) {
 	let lifecycle: Promise<void> = Promise.resolve();
 	let generation = 0;
 	const peerNames = new Map<string, string>();
+	const reporter = createPeerChannelReporter(pi);
 
 	function peerLabel(id: string | undefined): string {
 		if (!id) return "any peer";
@@ -122,7 +131,7 @@ export default function peersExtension(pi: ExtensionAPI) {
 			sessionId,
 			displayName: ctx.sessionManager.getSessionName() || `OMP ${sessionId}`,
 			kind: "main",
-			status: ctx.isIdle() ? "idle" : "running",
+			status: connection.channelBusy || !ctx.isIdle() ? "running" : "idle",
 			cwd: ctx.cwd,
 			pid: process.pid,
 			pane: process.env.TMUX_PANE,
@@ -171,6 +180,16 @@ export default function peersExtension(pi: ExtensionAPI) {
 			return { to: message.to, outcome: "failed" as const, error: "Peer session is no longer available" };
 		}
 		connection.lastActivity = Date.now();
+		if (message.senderName) peerNames.set(message.from, message.senderName);
+		const request = message.from !== "external:herd" && !message.wakeRelay && message.kind !== "reply";
+		if (request) {
+			try {
+				await connection.channels.accept(message, peerLabel(message.from));
+				return { to: message.to, outcome: "injected" as const };
+			} catch (error) {
+				return { to: message.to, outcome: "failed" as const, error: error instanceof Error ? error.message : String(error) };
+			}
+		}
 		// A correlated reply takes priority over a broad wait. One delivery has one consumer.
 		let pending: PendingWait | undefined;
 		for (const candidate of connection.waits) {
@@ -216,7 +235,8 @@ export default function peersExtension(pi: ExtensionAPI) {
 		}
 		unavailable = ctx ? "Peer session is starting" : "Peer session shut down";
 		lifecycle = lifecycle.then(async () => {
-			await old?.network.close();
+			await Promise.all([old?.network.close(), old?.channels.close()]);
+			if (old) reporter.clear(old.ctx);
 			if (!ctx || requestedGeneration !== generation) return;
 			const directory = peerDirectory();
 			if (!directory) {
@@ -229,13 +249,35 @@ export default function peersExtension(pi: ExtensionAPI) {
 				peers: () => current === connection ? [descriptor(connection)] : [],
 				receive: message => receive(connection, message),
 			});
-			connection = { network, ctx, sessionId: ctx.sessionManager.getSessionId(), lastActivity: Date.now(), waits: new Set(), abort: new AbortController() };
+			const sessionKey = createHash("sha256").update(ctx.sessionManager.getSessionId()).digest("hex");
+			const channels = new PeerChannels({
+				directory: join(process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"), "omp", "peer-channels", sessionKey),
+				permitDirectory: join(process.env.XDG_RUNTIME_DIR || join(homedir(), ".cache"), "omp-channel-permits"),
+				worker: (channelDir, message, signal, onActivity) => createPeerWorker(pi, connection.ctx, {
+					channelDir, peerId: message.from, peerName: peerLabel(message.from), signal, onActivity,
+				}),
+				reply: async (request, answer) => {
+					const receipt = await network.send({
+						from: qualifyPeer(network.instanceId, "Main"), to: request.from, body: answer,
+						replyTo: request.replyTo, kind: "reply", senderSessionId: connection.sessionId,
+						senderName: connection.ctx.sessionManager.getSessionName()?.slice(0, 256),
+					});
+					if (receipt.outcome === "failed") throw new Error(`Reply delivery failed: ${receipt.error ?? "recipient unavailable"}`);
+				},
+				report: rows => {
+					connection.channelBusy = rows.some(row => row.state === "running" || row.state === "queued");
+					if (current === connection) reporter.update(connection.ctx, rows);
+				},
+			});
+			connection = { network, channels, channelBusy: false, ctx, sessionId: ctx.sessionManager.getSessionId(), lastActivity: Date.now(), waits: new Set(), abort: new AbortController() };
 			try {
 				await network.start();
+				await channels.start();
 				if (requestedGeneration === generation) current = connection;
-				else await network.close();
+				else await Promise.all([network.close(), channels.close()]);
+				if (current === connection) channels.refresh();
 			} catch (error) {
-				await network.close().catch(() => {});
+				await Promise.allSettled([network.close(), channels.close()]);
 				throw error;
 			}
 		}).catch(error => {
@@ -286,7 +328,7 @@ export default function peersExtension(pi: ExtensionAPI) {
 		loadMode: "essential",
 		interruptible: args => args.op === "wait" || (args.op === "logs" && args.follow === true),
 		parameters: parameters as typeof native.parameters,
-		description: native.description + "\nCross-session routing: list also shows live loaded OMP session endpoints; scope all (default) or project (exact cwd) filters these endpoints. Qualified omp:<instance>/<local-id> addresses route send/from waits across processes; local IDs, jobs and process operations remain native. Foreign lifecycle control is unsupported; parked remote sessions are not discoverable. Remote send await:true waits for a correlated reply (default 60 seconds); preserve received replyTo when replying, without await. Receipts mean accepted, not completed; never retry failed or unknown delivery automatically. Remote waits observe only future arrivals: unmatched messages are immediately injected as agent asides, consumed exactly once and never replayed by inbox or wait. Inbox retains native consumption/peek semantics. Bare wait observes native jobs/messages and future remote messages; no-job native snapshots wait for remote arrival or the deadline (default 60 seconds, 0 indefinite). Timeout does not cancel remote work; late replies arrive as asides. external:herd cannot receive replies.",
+		description: native.description + "\nCross-session routing: list also shows live OMP sessions; scope all (default) or project (exact cwd) filters discovery. Qualified omp:<instance>/<local-id> addresses route across processes; local IDs/jobs/process operations remain native. Each incoming peer request is handled by an isolated persistent worker for that sender, with the receiver's role and relevant context, not in the receiver's main conversation. Workers run FIFO per channel, at most four machine-wide; /channels shows progress/results/transcripts without adding them to main model context. Session identities retain channel history across transport restarts. A send receipt means durable queue acceptance, not finished work. Remote send await:true waits for a correlated reply (default 60 seconds); timeout does not cancel work. Preserve replyTo on replies and omit await. Replies go to the matching wait, or once as an aside in the requesting main session; requests never satisfy a main-session wait. Do not reply automatically to replies. external:herd and wake relays retain direct aside delivery. Remote lifecycle control is unsupported; closed sessions cannot be launched by messaging. Never retry unknown delivery automatically.",
 		// ToolInfo does not expose the native approval callback. Mirror known read operations;
 		// process stdin and unknown/future operations conservatively require exec approval.
 		approval(params) {
@@ -441,7 +483,12 @@ export default function peersExtension(pi: ExtensionAPI) {
 				const id = params.replyTo ?? crypto.randomUUID();
 				const pending = params.await ? waitForMessage(connection, params.to, id, timeoutMs, combinedSignal) : undefined;
 				try {
-					const receipt = await connection.network.send({ from: qualifyPeer(connection.network.instanceId, "Main"), to: params.to, body: params.message, replyTo: id, expectsReply: params.await === true });
+					const receipt = await connection.network.send({
+						from: qualifyPeer(connection.network.instanceId, "Main"), to: params.to, body: params.message,
+						replyTo: id, expectsReply: params.await === true, senderSessionId: connection.sessionId,
+						senderName: connection.ctx.sessionManager.getSessionName()?.slice(0, 256),
+						kind: params.replyTo === undefined ? "request" : "reply",
+					});
 					if (receipt.outcome === "failed") pending?.cancel("Delivery failed or acceptance is unknown");
 					return result({ id, receipt, ...(pending ? { reply: await pending.promise } : {}) });
 				} finally { pending?.cancel("Send finished"); }

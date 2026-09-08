@@ -43,6 +43,8 @@ type Definition = { name: string; execute: (id: string, params: Params, signal: 
 const result = (details: Details): Result => ({ content: [{ type: "text", text: JSON.stringify(details) }], details });
 interface Session {
 	asides: PeerMessage[];
+	requests: PeerMessage[];
+	onRequest: ((message: PeerMessage) => Promise<string>) | undefined;
 	jobs: Set<string>;
 	mailbox: string[];
 	tools: Map<string, Definition>;
@@ -62,6 +64,8 @@ function session(name: string, cwd: string): Session {
 	const hooks = new Map<string, Array<(event: unknown, ctx: ExtensionContext) => unknown>>();
 	const tools = new Map<string, Definition>();
 	const asides: PeerMessage[] = [];
+	const requests: PeerMessage[] = [];
+	let onRequest: ((message: PeerMessage) => Promise<string>) | undefined;
 	const jobs = new Set([`${name}-job`]);
 	const mailbox: string[] = [];
 	const waitStarted = Promise.withResolvers<void>();
@@ -114,14 +118,36 @@ function session(name: string, cwd: string): Session {
 	};
 	const ctx = {
 		cwd, hasUI: false, isIdle: () => true,
-		sessionManager: { getSessionId: () => name, getSessionName: () => name },
+		sessionManager: { getSessionId: () => name, getSessionName: () => name, getBranch: () => [] },
+		model: { id: "test", provider: "test" },
+		getSystemPrompt: () => ["Read-only design reviewer"],
 		invokeTool: native,
 	} as unknown as ExtensionContext;
 	const pi = {
 		setLabel() {},
 		// Stock-OMP smoke checks schema composition; these tests exercise delivery directly.
 		arktype: (schema: unknown) => ({ and: () => schema }),
-		pi: { hubToolRenderer: { renderCall() {}, renderResult() {} }, Text: class {} },
+		pi: {
+			hubToolRenderer: { renderCall() {}, renderResult() {} }, Text: class {},
+			AgentRegistry: class {},
+			SessionManager: { open: async () => ({ getSessionId: () => crypto.randomUUID(), close: async () => {}, flush: async () => {} }) },
+			createAgentSession: async () => {
+				let listener: (event: unknown) => void;
+				return { session: {
+					subscribe(fn: (event: unknown) => void) { listener = fn; return () => {}; },
+					async sendCustomMessage(message: { details: { peerMessage: PeerMessage } }) {
+						const request = message.details.peerMessage;
+						requests.push(request);
+						const answer = await onRequest?.(request) ?? "";
+						listener({ type: "message_end", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: answer }] } });
+					},
+					dispose: async () => {},
+				} };
+			},
+		},
+		getActiveTools: () => [],
+		getThinkingLevel: () => "low",
+		registerCommand() {},
 		getAllTools: () => [{
 			name: "hub", description: "Native host coordination",
 			parameters: { op: "string" },
@@ -144,7 +170,8 @@ function session(name: string, cwd: string): Session {
 		for (const handler of hooks.get(event) ?? []) await handler({}, ctx);
 	};
 	return {
-		asides, jobs, mailbox, tools, waitStarted,
+		asides, requests, jobs, mailbox, tools, waitStarted,
+		set onRequest(handler: ((message: PeerMessage) => Promise<string>) | undefined) { onRequest = handler; },
 		get activeWaits() { return activeWaits; },
 		set onAside(handler: ((message: PeerMessage) => void) | undefined) { onAside = handler; },
 		set completeOnAbort(id: string | undefined) { completeOnAbort = id; },
@@ -161,6 +188,10 @@ function session(name: string, cwd: string): Session {
 async function isolated(run: (a: Session, b: Session, aId: string, bId: string) => Promise<void>) {
 	const directory = mkdtempSync(join(tmpdir(), "peer-hub-"));
 	const previous = process.env.OMP_PEERS_DIR;
+	const previousState = process.env.XDG_STATE_HOME;
+	const previousRuntime = process.env.XDG_RUNTIME_DIR;
+	process.env.XDG_STATE_HOME = join(directory, "state");
+	process.env.XDG_RUNTIME_DIR = join(directory, "runtime");
 	process.env.OMP_PEERS_DIR = join(directory, "sockets");
 	const a = session("Alpha", directory);
 	const b = session("Beta", directory);
@@ -176,6 +207,8 @@ async function isolated(run: (a: Session, b: Session, aId: string, bId: string) 
 		await Promise.all([a.close(), b.close()]);
 		if (previous === undefined) delete process.env.OMP_PEERS_DIR;
 		else process.env.OMP_PEERS_DIR = previous;
+		if (previousState === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = previousState;
+		if (previousRuntime === undefined) delete process.env.XDG_RUNTIME_DIR; else process.env.XDG_RUNTIME_DIR = previousRuntime;
 		rmSync(directory, { recursive: true, force: true });
 	}
 }
@@ -185,25 +218,31 @@ async function isolated(run: (a: Session, b: Session, aId: string, bId: string) 
 test("correlated await captures an immediate socket reply without stealing an unrelated message", async () => {
 	await isolated(async (a, b, aId, bId) => {
 		const replies = Promise.withResolvers<void>();
+		const unrelated = Promise.withResolvers<void>();
+		a.onRequest = async () => { unrelated.resolve(); return ""; };
 		let replyError: unknown;
-		b.onAside = message => {
-			void (async () => {
+		b.onRequest = async message => {
+			try {
 				await b.call({ op: "send", to: message.from, message: "unrelated" });
-				await b.call({ op: "send", to: message.from, replyTo: message.replyTo, message: "answer" });
-			})().catch(error => { replyError = error; }).finally(() => replies.resolve());
+				return "answer";
+			} catch (error) { replyError = error; return ""; }
+			finally { replies.resolve(); }
 		};
 		const response = await a.call({ op: "send", to: bId, message: "question", await: true, timeoutMs: 1000 });
 		await replies.promise;
 		expect(replyError).toBeUndefined();
 		expect(response.details.peerHub?.reply).toMatchObject({ outcome: "message", message: { from: bId, to: aId, body: "answer" } });
-		expect(b.asides.map(message => message.body)).toEqual(["question"]);
-		expect(a.asides.map(message => message.body)).toEqual(["unrelated"]);
+		expect(b.requests.map(message => message.body)).toEqual(["question"]);
+		expect(b.asides).toEqual([]);
+		expect(a.asides).toEqual([]);
+		await unrelated.promise;
+		expect(a.requests.map(message => message.body)).toEqual(["unrelated"]);
 	});
 });
 
-test("an aside delivered before wait is not replayed by wait or inbox", async () => {
+test("a reply delivered before wait is not replayed by wait or inbox", async () => {
 	await isolated(async (a, b, aId, bId) => {
-		await a.call({ op: "send", to: bId, message: "already delivered" });
+		await a.call({ op: "send", to: bId, message: "already delivered", replyTo: "completed-request" });
 		expect(b.asides.map(message => message.body)).toEqual(["already delivered"]);
 		const waited = await b.call({ op: "wait", from: aId, timeoutMs: 20 });
 		expect(waited.details.peerHub?.outcome).toBe("timeout");
@@ -233,7 +272,7 @@ test("a peer-winning wait retains a native completion consumed during cancellati
 		a.completeOnAbort = "Alpha-job";
 		const waiting = a.call({ op: "wait", timeoutMs: 1000 });
 		await a.waitStarted.promise;
-		await b.call({ op: "send", to: aId, message: "peer wake" });
+		await b.call({ op: "send", to: aId, message: "peer wake", replyTo: "pending-request" });
 		const response = await waiting;
 		expect(response.details.peerHub).toMatchObject({ outcome: "message", message: { from: bId, body: "peer wake" } });
 		expect(response.details.peerHub?.native?.details.jobs).toEqual([{ id: "Alpha-job", status: "completed", output: "native job finished" }]);
@@ -251,7 +290,7 @@ test("a successful remote wake is not reported as its losing native wait's abort
 	await isolated(async (a, b, aId) => {
 		const waiting = a.call({ op: "wait", timeoutMs: 1000 });
 		await a.waitStarted.promise;
-		await b.call({ op: "send", to: aId, message: "remote result" });
+		await b.call({ op: "send", to: aId, message: "remote result", replyTo: "pending-request" });
 		const response = await waiting;
 		expect(response.isError).not.toBe(true);
 		expect(response.details.peerHub).toMatchObject({ outcome: "message", message: { body: "remote result" } });
@@ -274,7 +313,7 @@ test("remote lifecycle targets are refused while local jobs and messaging remain
 		await a.call({ op: "send", to: "Alpha-child", message: "local delivery" });
 		expect((await a.call({ op: "inbox" })).details.messages).toEqual(["local delivery"]);
 		expect((await b.call({ op: "inbox" })).details.messages).toEqual([]);
-		await a.call({ op: "send", to: bId, message: "remote still alive" });
+		await a.call({ op: "send", to: bId, message: "remote still alive", replyTo: "completed-request" });
 		expect(b.asides.map(message => message.body)).toEqual(["remote still alive"]);
 	});
 });

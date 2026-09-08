@@ -106,22 +106,45 @@ Remote `send` and `wait` use the existing same-user Unix socket transport.
 Remote job cancellation, process control, and parked-session revival are not
 supported. Local ownership stays with native OMP.
 
-Message cards show **TO** or **FROM**, the peer name, and the complete body.
-Incoming cards have an accent border. Outgoing cards have a quiet border.
-Unique names need no routing ID; duplicate names retain a short distinguishing
-ID. Expand an entry for addresses and thread IDs. Delivery status is separate:
-accepted delivery does not mean completed work.
+Incoming peer requests run in isolated channel workers, not in the receiving
+agent's main conversation. Each sender session has one persistent channel.
+Messages run in order within that channel. Other channels can run concurrently.
+Kernel file locks limit active channel workers to four across OMP processes.
+Idle channels retain history on disk, not a live model session.
+
+Each worker receives the receiver's current model, effective system prompt,
+and bounded, topic-selected excerpts from its human task conversation.
+Peer messages and mixed-provenance compaction summaries are not copied.
+Workers retain their own channel history. Important older constraints should
+remain in the receiver's project guidance. Worker tools are restricted to the
+receiver's active built-in tools; extension/MCP tools, delegation, peer sends,
+and human UI questions are not inherited.
+
+The receiving screen shows sender, task, queue, activity, result, and errors.
+Run `/channels` to inspect every channel. Enter opens details; `t` opens the
+persisted request/answer transcript; Escape returns. Reporting is UI-only.
+It does not add worker activity to the receiving model's context.
+
+Channel state is stored under `$XDG_STATE_HOME/omp/peer-channels`
+(default `~/.local/state/omp/peer-channels`). Receiver and sender session IDs
+retain histories across transport restarts. Accepted queued work resumes when
+the receiving session loads. Interrupted active work is not retried because it
+may have partially executed. Up to 64 messages can be outstanding per receiver.
 
 `send` with `await: true` registers its reply wait before sending.
-Replies preserve `replyTo` and omit `await`. Unmatched incoming messages are
-delivered once as agent-attributed asides. They are not replayed by later
-`wait` or `inbox` calls. A bare wait can observe native work or a remote message.
-`OMP_PEERS_DIR=off` disables the remote transport without disabling native hub.
+Replies preserve `replyTo` and omit `await`. A receipt means queue acceptance,
+not completed work. Requests never satisfy the receiving main agent's waits.
+Replies go to the matching wait or arrive once as an aside in the requesting
+main session. Later waits and inbox reads do not replay them. Timeouts do not
+cancel channel work. Delivery failures are visible and are not retried.
+`external:herd` and wake-relay messages keep their direct aside route.
+`OMP_PEERS_DIR=off` disables remote transport without disabling native hub.
 
 The configured extension directory loads the plugin in new OMP processes.
-Already-running processes retain their loaded extension. The plugin uses
-dynamic tool registration and same-name `ctx.invokeTool` delegation, verified
-with stock OMP 18.1.14.
+Use `/reload` in an existing session to load changes without restarting OMP.
+Reload preserves channel histories and completed results. The plugin uses
+public SDK sessions and same-name `ctx.invokeTool` delegation, verified with
+stock OMP 18.1.14.
 
 ## Historical Pi source checkouts
 
