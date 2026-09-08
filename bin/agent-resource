@@ -1,0 +1,296 @@
+#!/usr/bin/env python3
+"""Owned process leases in private systemd user cgroups; JSON on stdout."""
+import argparse
+import contextlib
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import signal
+import sqlite3
+import stat
+import subprocess
+import sys
+import time
+import uuid
+
+WATCHDOG = "agent-resource-watchdog.service"
+
+
+def identity(pid):
+    try:
+        path = Path(f"/proc/{pid}")
+        if path.stat().st_uid != os.getuid():
+            return None
+        fields = (path / "stat").read_text().rsplit(")", 1)[1].split()
+        return None if fields[0] in ("Z", "X") else fields[19]
+    except (OSError, IndexError):
+        return None
+
+
+def state_dir():
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if not runtime:
+        raise RuntimeError("XDG_RUNTIME_DIR is required (systemd user session)")
+    root = Path(runtime)
+    info = root.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o022:
+        raise RuntimeError("XDG_RUNTIME_DIR must be user-owned and not writable by other users")
+    path = root / "agent-resource"
+    path.mkdir(mode=0o700, exist_ok=True)
+    info = path.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise RuntimeError("unsafe agent-resource state directory")
+    return path
+
+
+@contextlib.contextmanager
+def registry(root):
+    with open(root / "lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        db = sqlite3.connect(root / "leases.sqlite3")
+        db.row_factory = sqlite3.Row
+        db.execute("CREATE TABLE IF NOT EXISTS leases (id TEXT PRIMARY KEY, ownerId TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, state TEXT NOT NULL, unit TEXT NOT NULL, pid INTEGER, ownerPid INTEGER NOT NULL, ownerStart TEXT NOT NULL, log TEXT NOT NULL, error TEXT)")
+        if "cleanupDir" not in {row[1] for row in db.execute("PRAGMA table_info(leases)")}:
+            db.execute("ALTER TABLE leases ADD COLUMN cleanupDir TEXT")
+            db.commit()
+        try:
+            yield db
+        finally:
+            db.close()
+
+
+def run(argv, timeout=25):
+    result = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout)
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or f"{argv[0]} failed ({result.returncode})")
+    return result.stdout.strip()
+
+
+def properties(unit):
+    text = run(["systemctl", "--user", "show", unit, "--property=LoadState,ActiveState,MainPID"])
+    return dict(line.split("=", 1) for line in text.splitlines() if "=" in line)
+
+
+def stopped(unit):
+    props = properties(unit)
+    return props.get("LoadState") == "not-found" or props.get("ActiveState") in ("inactive", "failed")
+
+
+def cleanup_path(root, value):
+    path = Path(value)
+    if path.parent != root or not re.fullmatch(r"profile-[0-9a-f]{32}", path.name):
+        raise RuntimeError("cleanup directory must be a new profile-<32 hex> child of the broker state directory")
+    return path
+
+
+def remove_profile(value):
+    path = cleanup_path(state_dir(), value)
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise RuntimeError("refusing to remove unsafe cleanup directory")
+    shutil.rmtree(path)
+
+
+def release(db, row):
+    if row["state"] == "released":
+        return dict(row)
+    try:
+        if not stopped(row["unit"]):
+            run(["systemctl", "--user", "stop", row["unit"]])
+        if not stopped(row["unit"]):
+            raise RuntimeError("unit remains active after stop")
+        if row["cleanupDir"]:
+            remove_profile(row["cleanupDir"])
+        db.execute("UPDATE leases SET state='released', error=NULL WHERE id=?", (row["id"],))
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+        db.execute("UPDATE leases SET state='cleanup-failed', error=? WHERE id=?", (str(exc), row["id"]))
+    db.commit()
+    return dict(db.execute("SELECT * FROM leases WHERE id=?", (row["id"],)).fetchone())
+
+
+def reclaim(db):
+    for row in db.execute("SELECT * FROM leases WHERE state != 'released'").fetchall():
+        if identity(row["ownerPid"]) != row["ownerStart"]:
+            release(db, row)
+        elif row["state"] != "cleanup-failed" and stopped(row["unit"]):
+            release(db, row)
+
+
+def ensure_watchdog(root):
+    if properties(WATCHDOG).get("ActiveState") in ("active", "activating"):
+        return
+    run(["systemd-run", "--user", "--quiet", "--collect", f"--unit={WATCHDOG}",
+         "--property=Type=exec", "--property=Restart=on-failure", "--property=RestartSec=1",
+         "--property=KillMode=control-group", "--property=TimeoutStopSec=5s",
+         f"--property=StandardOutput=append:{root / 'watchdog.log'}",
+         f"--property=StandardError=append:{root / 'watchdog.log'}",
+         f"--setenv=XDG_RUNTIME_DIR={root.parent}", sys.executable,
+         str(Path(__file__).resolve()), "watchdog"])
+
+
+def guarded_exec(root, lease_id, command):
+    # A client can die after submitting StartTransientUnit but before its reply.
+    # Refuse late starts after cleanup, even if systemd received the request late.
+    with registry(root) as db:
+        row = db.execute("SELECT * FROM leases WHERE id=?", (lease_id,)).fetchone()
+        if row is None or row["state"] not in ("reserved", "active"):
+            return 1
+        if identity(row["ownerPid"]) != row["ownerStart"]:
+            return 1
+    os.execv(command[0], command)
+
+
+def acquire(db, root, args):
+    command = args.command
+    if command[:1] == ["--"]:
+        command = command[1:]
+    if not command:
+        raise RuntimeError("acquire requires -- COMMAND ARGS")
+    executable = shutil.which(command[0])
+    if not executable:
+        raise RuntimeError(f"executable not found: {command[0]}")
+    owner_pid = args.owner_pid
+    start = identity(owner_pid)
+    if start is None:
+        raise RuntimeError("owner PID must identify a live same-user process")
+    profile = cleanup_path(root, args.cleanup_dir) if args.cleanup_dir else None
+    if profile is not None and (profile.exists() or profile.is_symlink()):
+        raise RuntimeError("cleanup directory must not already exist")
+    if profile is not None and db.execute("SELECT 1 FROM leases WHERE cleanupDir=?", (str(profile),)).fetchone():
+        raise RuntimeError("cleanup directory is already registered")
+    run(["systemctl", "--user", "set-property", "--runtime", "agent-resources.slice",
+         f"CPUQuota={max(1, (os.cpu_count() or 2) // 2) * 100}%",
+         "CPUWeight=20", "MemoryHigh=50%", "TasksMax=4096"])
+    ensure_watchdog(root)
+    reclaim(db)
+    existing = db.execute("SELECT ownerPid, ownerStart FROM leases WHERE ownerId=? AND state != 'released'", (args.owner,)).fetchall()
+    if any(row["ownerPid"] != owner_pid or row["ownerStart"] != start for row in existing):
+        raise RuntimeError("owner already bound to another process identity")
+    count = db.execute("SELECT count(*) FROM leases WHERE state != 'released'").fetchone()[0]
+    if len(existing) >= 8 or count >= 32:
+        raise RuntimeError("resource quota exceeded (8 per owner, 32 total)")
+    lease_id = uuid.uuid4().hex
+    unit = f"agent-resource-{lease_id}.service"
+    log = str(root / f"{lease_id}.log")
+    db.execute("INSERT INTO leases (id, ownerId, kind, name, state, unit, pid, ownerPid, ownerStart, log, error, cleanupDir) VALUES (?, ?, ?, ?, 'reserved', ?, NULL, ?, ?, ?, NULL, ?)",
+               (lease_id, args.owner, args.kind, args.name, unit, owner_pid, start, log,
+                str(profile) if profile is not None else None))
+    db.commit()  # watchdog can recover even if this client is killed during launch
+    try:
+        if profile is not None:
+            try:
+                profile.mkdir(mode=0o700)
+            except OSError:
+                # Never remove a path we failed to create, including a racing
+                # same-user creation after the preflight check.
+                db.execute("UPDATE leases SET cleanupDir=NULL WHERE id=?", (lease_id,))
+                db.commit()
+                raise
+        argv = ["systemd-run", "--user", "--quiet", "--collect", "--expand-environment=no",
+                "--slice=agent-resources.slice", "--property=Nice=10",
+                f"--unit={unit}", "--property=Type=exec", "--property=ExitType=cgroup",
+                "--property=KillMode=control-group", "--property=TimeoutStopSec=5s",
+                "--property=SendSIGKILL=yes", "--property=UMask=0077",
+                *([] if args.action == "exec" else [
+                    f"--property=StandardOutput=append:{log}", f"--property=StandardError=append:{log}"]),
+                f"--working-directory={os.getcwd()}"]
+        # systemd-run copies each named variable from its own environment. Values
+        # must not appear in argv, where other users can read /proc/*/cmdline.
+        argv.extend(f"--setenv={key}" for key in os.environ)
+        guarded = [sys.executable, str(Path(__file__).resolve()), "guard", lease_id,
+                   executable, *command[1:]]
+        proc = None
+        if args.action == "exec":
+            proc = subprocess.Popen([*argv, "--pipe", "--wait", "--", *guarded])
+            deadline = time.monotonic() + 25
+            while properties(unit).get("ActiveState") not in ("active", "failed") and proc.poll() is None:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("timed out starting resource unit")
+                time.sleep(0.05)
+        else:
+            run([*argv, "--", *guarded])
+        pid = int(properties(unit).get("MainPID", "0"))
+        db.execute("UPDATE leases SET state='active', pid=? WHERE id=?", (pid, lease_id))
+        db.commit()
+        row = db.execute("SELECT * FROM leases WHERE id=?", (lease_id,)).fetchone()
+        if identity(owner_pid) != start:
+            release(db, row)
+            raise RuntimeError("owner died during resource launch")
+        return (dict(row), proc) if args.action == "exec" else dict(row)
+    except BaseException:
+        release(db, db.execute("SELECT * FROM leases WHERE id=?", (lease_id,)).fetchone())
+        raise
+
+
+def main(argv=None):
+    os.umask(0o077)
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="action", required=True)
+    for action in ("acquire", "exec", "release", "list", "cleanup"):
+        sub = commands.add_parser(action)
+        sub.add_argument("--owner", default=os.environ.get("AGENT_RESOURCE_OWNER"))
+        if action != "exec":
+            sub.add_argument("--json", action="store_true", help="JSON output (also the default)")
+        if action in ("acquire", "exec"):
+            sub.add_argument("--owner-pid", type=int, default=os.environ.get("AGENT_RESOURCE_PID", os.getppid()))
+            sub.add_argument("--name", required=True)
+            sub.add_argument("--kind", required=True)
+            sub.add_argument("--cleanup-dir", help="create and reclaim a private profile directory")
+            sub.add_argument("command", nargs=argparse.REMAINDER)
+        elif action == "release":
+            sub.add_argument("id")
+    commands.add_parser("watchdog", help=argparse.SUPPRESS)
+    guard = commands.add_parser("guard", help=argparse.SUPPRESS)
+    guard.add_argument("id")
+    guard.add_argument("command", nargs=argparse.REMAINDER)
+    args = parser.parse_args(argv)
+    if args.action == "exec":
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    try:
+        if args.action not in ("watchdog", "guard") and not args.owner:
+            raise RuntimeError("--owner or AGENT_RESOURCE_OWNER is required")
+        root = state_dir()
+        if args.action == "guard":
+            return guarded_exec(root, args.id, args.command)
+        if args.action == "watchdog":
+            while True:
+                try:
+                    with registry(root) as db:
+                        reclaim(db)
+                except Exception as exc:
+                    print(f"reclamation failed: {exc}", file=sys.stderr, flush=True)
+                time.sleep(1)
+        with registry(root) as db:
+            if args.action in ("acquire", "exec"):
+                result = acquire(db, root, args)
+            elif args.action == "release":
+                row = db.execute("SELECT * FROM leases WHERE id=?", (args.id,)).fetchone()
+                if row is None or row["ownerId"] != args.owner:
+                    raise RuntimeError("unknown lease for owner")
+                result = release(db, row)
+            else:
+                rows = db.execute("SELECT * FROM leases WHERE ownerId=? AND state != 'released'", (args.owner,)).fetchall()
+                result = [release(db, row) for row in rows] if args.action == "cleanup" else [dict(row) for row in rows]
+        if args.action == "exec":
+            lease, proc = result
+            try:
+                return proc.wait()
+            finally:
+                with registry(root) as db:
+                    release(db, db.execute("SELECT * FROM leases WHERE id=?", (lease["id"],)).fetchone())
+        print(json.dumps(result))
+        rows = result if isinstance(result, list) else [result]
+        return 1 if any(row["state"] == "cleanup-failed" for row in rows) else 0
+    except (OSError, RuntimeError, ValueError, sqlite3.Error, subprocess.TimeoutExpired) as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr if args.action in ("exec", "guard") else sys.stdout)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

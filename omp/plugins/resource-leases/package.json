@@ -1,0 +1,11 @@
+{
+	"name": "@svankina/omp-resource-leases",
+	"version": "1.0.0",
+	"private": true,
+	"type": "module",
+	"omp": {
+		"extensions": [
+			"./index.ts"
+		]
+	}
+}

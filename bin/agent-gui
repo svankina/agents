@@ -7,13 +7,13 @@ Doing that by hand means launching, guessing the window class, and firing an
 nothing when the class guess is wrong. This does it by identity instead:
 
   1. snapshot the con_ids already on the i3 tree,
-  2. launch the command detached (its own session, output to a log file),
+  2. acquire an owned systemd process lease (output to its private log),
   3. poll for a NEW window belonging to the launched process tree,
   4. move exactly that container to the agent workspace, without switching to it.
 
 Usage:
-  agent-gui [--workspace N] [--timeout SECS] [--match SUBSTR] [--log PATH]
-            [--headless] [--focus] -- <command> [args...]
+  agent-gui [--owner OWNER] [--workspace N] [--timeout SECS] [--match SUBSTR]
+            [--log PATH] [--headless] [--focus] -- <command> [args...]
 
 Examples:
   agent-gui -- freecad model.FCStd
@@ -32,20 +32,23 @@ Options:
                   unmapped and cannot be captured, one on the agent display
                   always can (`agent-shot --class …`).
   --focus         switch to the workspace afterwards (default: do not disturb)
-  --log PATH      where to send the app's stdout/stderr (default a temp file)
+  --owner OWNER  session identity (default $AGENT_RESOURCE_OWNER; required)
+  --owner-pid PID live owner process (default $AGENT_RESOURCE_PID or caller PID)
+  --log PATH      create a new symlink to the lease-owned app log
 
-Prints the app pid, the log path, and the window that was moved. Exit codes:
-0 moved, 2 usage error, 3 launched but no window found before the timeout
-(the app keeps running; move it yourself with i3-msg).
+Prints only the container id on stdout; lease id and log path go to stderr.
+Exit codes: 0 moved, 2 usage/launch error, 3 no window or isolation failure.
+Errors and timeouts release the lease; successful launches retain it until
+`agent-resource release ID --owner OWNER --json` or owner death.
 """
 
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -110,6 +113,20 @@ def descendants(root_pid: int) -> set[int]:
     return seen
 
 
+def window_pid(node: dict) -> int | None:
+    if node.get("pid"):
+        return node["pid"]
+    if not node.get("window"):
+        return None
+    # Older i3 versions omit the PID even when the X11 window publishes it.
+    result = subprocess.run(
+        ["xprop", "-id", str(node["window"]), "_NET_WM_PID"],
+        capture_output=True, text=True, env=ENV,
+    )
+    match = re.search(r"=\s*(\d+)", result.stdout)
+    return int(match[1]) if match else None
+
+
 def describe(node: dict) -> str:
     props = node.get("window_properties") or {}
     label = props.get("class") or node.get("app_id") or "?"
@@ -123,6 +140,9 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--timeout", type=float, default=30.0)
     ap.add_argument("--match")
     ap.add_argument("--log")
+    ap.add_argument("--owner", default=os.environ.get("AGENT_RESOURCE_OWNER"))
+    ap.add_argument("--owner-pid", type=int,
+                    default=os.environ.get("AGENT_RESOURCE_PID", os.getppid()))
     ap.add_argument("--headless", action="store_true")
     ap.add_argument("--focus", action="store_true")
     ap.add_argument("-h", "--help", action="store_true")
@@ -139,6 +159,9 @@ def main(argv: list[str]) -> int:
     if not cmd:
         print("agent-gui: no command given (use -- before the command)", file=sys.stderr)
         return 2
+    if not args.owner:
+        print("agent-gui: --owner or AGENT_RESOURCE_OWNER is required", file=sys.stderr)
+        return 2
 
     if args.headless:
         display = agent_display()
@@ -152,75 +175,73 @@ def main(argv: list[str]) -> int:
 
     try:
         before = {n["id"] for n in windows(tree())}
-    except (FileNotFoundError, subprocess.CalledProcessError) as exc:
-        print(f"agent-gui: i3 not reachable ({exc}); running the command as-is",
+    except (FileNotFoundError, subprocess.CalledProcessError, ValueError) as exc:
+        print(f"agent-gui: i3 not reachable ({exc}); refusing an unisolated launch",
               file=sys.stderr)
-        os.execvpe(cmd[0], cmd, ENV)
-
-    if args.log:
-        log_path = args.log
-        log = open(log_path, "ab")
-    else:
-        fd, log_path = tempfile.mkstemp(prefix=f"agent-gui-{os.path.basename(cmd[0])}-",
-                                        suffix=".log")
-        log = os.fdopen(fd, "ab")
-
-    with log:
-        try:
-            proc = subprocess.Popen(
-                cmd, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                start_new_session=True, env=ENV,
-            )
-        except OSError as exc:
-            print(f"agent-gui: cannot launch {cmd[0]}: {exc}", file=sys.stderr)
-            return 2
-
-    print(f"agent-gui: launched pid {proc.pid}, log {log_path}", file=sys.stderr)
-
-    deadline = time.monotonic() + args.timeout
-    target = None
-    while time.monotonic() < deadline:
-        time.sleep(0.4)
-        fresh = [n for n in windows(tree()) if n["id"] not in before]
-        if fresh:
-            pids = descendants(proc.pid)
-            target = next((n for n in fresh if n.get("pid") in pids), None)
-            if target is None and args.match:
-                needle = args.match.lower()
-                target = next(
-                    (n for n in fresh if needle in describe(n).lower()), None
-                )
-            if target is None and len(fresh) == 1 and proc.poll() is None:
-                target = fresh[0]  # only one new window on screen; it is ours
-        if target:
-            break
-        if proc.poll() is not None and not fresh:
-            print(f"agent-gui: {cmd[0]} exited (status {proc.returncode}) "
-                  f"without opening a window; see {log_path}", file=sys.stderr)
-            return 3
-
-    if target is None:
-        print(f"agent-gui: no window found within {args.timeout:g}s; "
-              f"{cmd[0]} (pid {proc.pid}) is still running", file=sys.stderr)
         return 3
 
-    if args.headless:
-        print(f"agent-gui: {describe(target)} is on the agent display "
-              f'{ENV["DISPLAY"]} — capture it with '
-              f'`agent-shot --con-id {target["id"]}`', file=sys.stderr)
+    broker = shutil.which("agent-resource") or str(Path(__file__).with_name("agent-resource"))
+    lease = None
+    keep = False
+    try:
+        launched = subprocess.run(
+            [broker, "acquire", "--owner", args.owner, "--owner-pid", str(args.owner_pid),
+             "--name", os.path.basename(cmd[0]), "--kind", "gui", "--json", "--", *cmd],
+            capture_output=True, text=True, env=ENV,
+        )
+        payload = json.loads(launched.stdout)
+        if launched.returncode:
+            raise RuntimeError(payload.get("error", "resource acquisition failed"))
+        lease = payload
+        log_path = lease["log"]
+        if args.log:
+            os.symlink(log_path, args.log)
+        print(f'agent-gui: launched pid {lease["pid"]}, lease {lease["id"]}, log {log_path}',
+              file=sys.stderr)
+        deadline = time.monotonic() + args.timeout
+        target = None
+        while time.monotonic() < deadline:
+            time.sleep(0.4)
+            fresh = [n for n in windows(tree()) if n["id"] not in before]
+            pids = descendants(lease["pid"]) if lease["pid"] else set()
+            target = next((n for n in fresh if window_pid(n) in pids), None)
+            if target is None and args.match:
+                needle = args.match.lower()
+                matches = [n for n in fresh if needle in describe(n).lower()]
+                if len(matches) == 1:
+                    target = matches[0]
+            if target:
+                break
+        if target is None:
+            print(f"agent-gui: no window found within {args.timeout:g}s; releasing lease; "
+                  f"see {log_path}", file=sys.stderr)
+            return 3
+        if args.headless:
+            print(f"agent-gui: {describe(target)} is on the agent display "
+                  f'{ENV["DISPLAY"]} — capture it with '
+                  f'`agent-shot --con-id {target["id"]}`', file=sys.stderr)
+        else:
+            i3("-q", f'[con_id={target["id"]}]',
+               f"move container to workspace number {args.workspace}")
+            if args.focus:
+                i3("-q", f"workspace number {args.workspace}")
+            print(f"agent-gui: moved {describe(target)} to workspace {args.workspace}; "
+                  "use --headless for screenshots", file=sys.stderr)
         print(target["id"])
+        keep = True
         return 0
-
-    i3("-q", f'[con_id={target["id"]}]',
-       f"move container to workspace number {args.workspace}")
-    if args.focus:
-        i3("-q", f"workspace number {args.workspace}")
-
-    print(f"agent-gui: moved {describe(target)} to workspace {args.workspace}; "
-          f"it is not visible, so it cannot be screenshotted — relaunch with "
-          f"--headless if you need pixels", file=sys.stderr)
-    print(target["id"])
-    return 0
+    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as exc:
+        print(f"agent-gui: {exc}", file=sys.stderr)
+        return 2
+    finally:
+        if lease is not None and not keep:
+            released = subprocess.run(
+                [broker, "release", lease["id"], "--owner", args.owner, "--json"],
+                capture_output=True, text=True, env=ENV,
+            )
+            if released.returncode:
+                print(f'agent-gui: cleanup failed for lease {lease["id"]}: {released.stdout.strip()}',
+                      file=sys.stderr)
 
 
 if __name__ == "__main__":

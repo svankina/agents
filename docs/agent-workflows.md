@@ -48,6 +48,32 @@ Inspect conflicts and resolve them explicitly before rerunning the installer.
 OMP configuration, extensions, and `~/.omp/agent/managed-skills` are not managed.
 Pi and Claude skills, prompts, extensions, and commands remain historical
 resources, not install targets; other harness directories are untouched.
+
+The resource lease plugin lives in `omp/plugins/resource-leases`. Install its
+helpers with `omp-install`, then link the package with
+`omp plugin link ~/src/agents/omp/plugins/resource-leases`. Restart OMP to load
+it; do not rebuild or replace OMP core. Disable it with
+`omp plugin disable @svankina/omp-resource-leases`.
+
+The `resources` tool acquires processes or dedicated headless browsers and
+lists/releases session-owned leases. Browser acquisition returns `cdpUrl`;
+attach with Eval `browser.open({app:{cdp_url:cdpUrl}})`. Close managed tab
+handles, then call `resources` cleanup before completion. The plugin guards
+successful quit/yield and the main-session stop hook. Bash receives owner
+environment variables for `agent-gui`; no process-global owner variable is set.
+Raw Bash/Eval subprocesses and browsers opened without broker acquisition are
+not intercepted. Subagent stop hooks are not available; explicit release,
+terminal yield interception, shutdown and owner-process death provide cleanup.
+
+`agent-resource` contains descendants in Linux user-systemd cgroups, with
+eight live leases per owner and 32 per user. A separate watchdog reclaims
+dead owners using PID plus process start time. Failed cleanup retains its
+lease. Browser profile directories are broker-owned and removed after cgroup
+shutdown. User browsers and unrelated processes are not adopted. The watchdog
+is intentional persistent infrastructure; logs and released rows are retained.
+When upgrading broker schema or cleanup logic, stop
+`agent-resource-watchdog.service` before the first new acquisition; acquisition
+starts the updated watchdog. Do not remove its source worktree while it runs.
 Historical design and plan documents remain records of earlier workflows.
 
 ## Privileged commands
