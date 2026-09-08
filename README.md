@@ -92,6 +92,20 @@ retrying or rolling back against a potentially different session. Source
 changes take effect in newly launched OMP processes, not already-loaded
 extension instances; no OMP core files need editing.
 
+## Peer message display
+
+`omp/extensions/peers.ts` renders cross-process communication with a
+sender-to-recipient heading and the full message body. Peer names come from
+discovery. Short instance IDs distinguish sessions with the same name.
+
+Delivery status is separate from the message. A delivery receipt does not mean
+the peer completed its work. Reply timeouts and delivery errors remain visible.
+Expand the entry to inspect full routing addresses and thread IDs.
+Agent-facing protocol instructions and JSON remain unchanged.
+
+The configured extension directory loads this display in new OMP processes.
+Already-running processes retain their loaded extension.
+
 ## Historical Pi source checkouts
 
 - Primary local Pi resource checkout: `~/src/pagent`

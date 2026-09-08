@@ -1,10 +1,11 @@
-import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, MessageRenderer } from "@oh-my-pi/pi-coding-agent";
 import {
 	PeerNetwork,
 	parsePeerId,
 	peerDirectory,
 	qualifyPeer,
 	type PeerDescriptor,
+	type PeerDeliveryReceipt,
 	type PeerMessage,
 } from "../lib/peers-transport";
 
@@ -12,6 +13,19 @@ type WaitResult =
 	| { outcome: "message"; message: PeerMessage }
 	| { outcome: "timeout" }
 	| { outcome: "cancelled"; reason: string };
+
+interface DisplayResult {
+	self?: PeerDescriptor;
+	peers?: PeerDescriptor[];
+	errors?: string[];
+	id?: string;
+	receipt?: PeerDeliveryReceipt;
+	reply?: WaitResult;
+	outcome?: WaitResult["outcome"];
+	message?: PeerMessage;
+	reason?: string;
+	error?: string;
+}
 
 interface PendingWait {
 	from?: string;
@@ -34,6 +48,36 @@ export default function peersExtension(pi: ExtensionAPI) {
 	let unavailable = "Peers have not started";
 	let lifecycle: Promise<void> = Promise.resolve();
 	let generation = 0;
+	const peerNames = new Map<string, string>();
+
+	function peerLabel(id: string | undefined): string {
+		if (!id) return "any peer";
+		if (id === "external:herd") return "Herd";
+		if (current && id === qualifyPeer(current.network.instanceId, "Main")) return "This agent";
+		const peer = parsePeerId(id);
+		if (!peer) return id;
+		return `${peerNames.get(id) || peer.localId} · ${peer.instanceId.slice(0, 8)}`;
+	}
+
+	function messageText(message: PeerMessage, expanded: boolean, theme: Parameters<MessageRenderer>[2]): string {
+		const label = message.wakeRelay ? "Wake relay" : message.expectsReply ? "Reply requested" : "Message";
+		const lines = [
+			theme.fg("accent", theme.bold(`${peerLabel(message.from)} → This agent`)),
+			theme.fg("muted", label),
+			"",
+			message.body,
+		];
+		if (expanded) {
+			lines.push("", theme.fg("dim", `From: ${message.from}\nTo: ${message.to}`));
+			if (message.replyTo) lines.push(theme.fg("dim", `Thread: ${message.replyTo}`));
+		}
+		return lines.join("\n");
+	}
+
+	pi.registerMessageRenderer<PeerMessage>("peer-message", (message, options, theme) => {
+		if (!message.details) return undefined;
+		return new pi.pi.Text(messageText(message.details, options.expanded, theme), 0, 0);
+	});
 
 	function descriptor(connection: Connection): PeerDescriptor {
 		const { network, ctx, sessionId } = connection;
@@ -195,8 +239,58 @@ export default function peersExtension(pi: ExtensionAPI) {
 			from: z.string().optional(),
 			timeoutMs: z.number().int().min(1).max(300_000).optional(),
 		}),
+		renderCall(args, options, theme) {
+			if (args.op === "send") {
+				const lines = [
+					theme.fg("accent", theme.bold(`This agent → ${peerLabel(args.to)}`)),
+					theme.fg("muted", args.await ? "Reply requested" : "Message"),
+					"",
+					args.message ?? "",
+				];
+				if (options.expanded && args.to) lines.push("", theme.fg("dim", `To: ${args.to}`));
+				if (options.expanded && args.replyTo) lines.push(theme.fg("dim", `Thread: ${args.replyTo}`));
+				return new pi.pi.Text(lines.join("\n"), 0, 0);
+			}
+			return new pi.pi.Text(theme.fg("accent", args.op === "wait"
+				? `Wait for ${peerLabel(args.from)}`
+				: `Peers · ${args.scope === "project" ? "this project" : "all projects"}`), 0, 0);
+		},
+		renderResult(result, options, theme) {
+			const data = result.details;
+			if (!data) return new pi.pi.Text(options.isPartial ? "Waiting…" : "No peer result", 0, 0);
+			const lines: string[] = [];
+			if (data.error) lines.push(theme.fg("error", `Peer error: ${data.error}`));
+			if (data.peers) {
+				for (const peer of data.peers) peerNames.set(peer.id, peer.displayName);
+				lines.push(theme.fg("muted", `${data.peers.length} peer${data.peers.length === 1 ? "" : "s"} available`));
+				for (const peer of data.peers) {
+					lines.push(`${theme.bold(peerLabel(peer.id))} · ${peer.status}`, theme.fg("dim", `  ${peer.cwd}`));
+					if (options.expanded) lines.push(theme.fg("dim", `  ${peer.id}`));
+				}
+				for (const error of data.errors ?? []) lines.push(theme.fg("error", error));
+			}
+			if (data.receipt) {
+				const failed = data.receipt.outcome === "failed";
+				const status = failed ? "Delivery failed or unconfirmed"
+					: data.receipt.outcome === "woken" || data.receipt.outcome === "revived"
+						? "Delivered · peer woken" : "Delivered";
+				lines.push(theme.fg(failed ? "error" : "success", status));
+				if (data.receipt.error) lines.push(theme.fg("error", data.receipt.error));
+			}
+			const reply = data.reply ?? data;
+			if (reply.outcome === "message" && reply.message) {
+				if (lines.length) lines.push("");
+				lines.push(messageText(reply.message, options.expanded, theme));
+			} else if (reply.outcome === "timeout") {
+				lines.push(theme.fg("muted", "No reply before timeout · peer work may still be running"));
+			} else if (reply.outcome === "cancelled") {
+				lines.push(theme.fg("muted", `Wait cancelled: ${reply.reason}`));
+			}
+			if (options.expanded && data.id) lines.push(theme.fg("dim", `Thread: ${data.id}`));
+			return new pi.pi.Text(lines.join("\n"), 0, 0);
+		},
 		async execute(_id, params, signal, _onUpdate, ctx) {
-			const result = (data: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(data) }], details: data });
+			const result = (data: DisplayResult) => ({ content: [{ type: "text" as const, text: JSON.stringify(data) }], details: data });
 			try {
 				await lifecycle;
 				if (signal?.aborted) return result({ outcome: "cancelled", reason: "Tool call aborted" });
@@ -207,6 +301,7 @@ export default function peersExtension(pi: ExtensionAPI) {
 				connection.lastActivity = Date.now();
 				if (params.op === "list") {
 					const discovery = await connection.network.discover();
+					for (const peer of discovery.peers) peerNames.set(peer.id, peer.displayName);
 					return result({
 						self: descriptor(connection),
 						peers: params.scope === "project" ? discovery.peers.filter(peer => peer.cwd === ctx.cwd) : discovery.peers,
