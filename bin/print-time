@@ -1,0 +1,222 @@
+#!/usr/bin/env python3
+"""Estimate print duration offline with the existing Ender-3 V3 KE and P1S profiles."""
+
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import zipfile
+
+
+PRINTERS = {
+    "ender3": ("Creality Ender-3 V3 KE", "032-fast-draft", "esun-pla-plus-fast25"),
+    "p1s": ("Bambu Lab P1S", "020-standard", "generic-pla"),
+}
+TIME = re.compile(r"(?:(\d+)d\s*)?(?:(\d+)h\s*)?(?:(\d+)m\s*)?(?:(\d+)s\s*)?")
+TIMINGS = {
+    "total_seconds": re.compile(r"(?:^|;\s*)total estimated time:\s*([^;]+)"),
+    "model_seconds": re.compile(r"^model printing time:\s*([^;]+)"),
+    "normal_seconds": re.compile(r"^estimated printing time \(normal mode\)\s*=\s*(.+)"),
+}
+SETTINGS = ("printer_model", "printer_settings_id", "print_settings_id", "filament_settings_id",
+            "layer_height", "enable_support", "support_type", "sparse_infill_density", "wall_loops")
+
+
+def duration(value):
+    match = TIME.fullmatch(value.strip())
+    if not match or not any(match.groups()):
+        raise ValueError(f"Unrecognized slicer duration: {value!r}")
+    return sum(int(n or 0) * scale for n, scale in zip(match.groups(), (86400, 3600, 60, 1)))
+
+
+def human(seconds):
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return (f"{hours}h " if hours else "") + f"{minutes}m {seconds}s"
+
+
+def parse_gcode(stream, source):
+    plate = {"source": source, "settings": {}}
+    for raw in stream:
+        if not raw.startswith(b";"):
+            continue
+        line = raw.decode("utf-8", errors="replace").lstrip("; ").strip()
+        for key, pattern in TIMINGS.items():
+            match = pattern.search(line)
+            if match:
+                plate[key] = duration(match[1])
+        key, separator, value = line.partition(" = ")
+        if separator and key in SETTINGS:
+            plate["settings"][key] = value.strip('"')
+        if separator and key in ("filament used [mm]", "filament used [g]", "total filament used [g]"):
+            amount = sum(float(n.strip()) for n in value.split(","))
+            plate["filament_mm" if key.endswith("[mm]") else "filament_g"] = amount
+    for key in ("total_seconds", "normal_seconds", "model_seconds"):
+        if key in plate:
+            plate["estimate_seconds"] = plate[key]
+            plate["estimate_basis"] = key.removesuffix("_seconds")
+            plate["estimate"] = human(plate[key])
+            return plate
+    raise ValueError(f"No supported slicer time metadata in {source}; slice the model first")
+
+
+def read_estimates(path):
+    if path.suffix.lower() == ".gcode":
+        with path.open("rb") as stream:
+            return [parse_gcode(stream, str(path))]
+    if path.name.lower().endswith(".gcode.3mf"):
+        with zipfile.ZipFile(path) as archive:
+            names = sorted(name for name in archive.namelist()
+                           if re.fullmatch(r"Metadata/plate_\d+\.gcode", name))
+            if not names:
+                raise ValueError(f"No embedded plate G-code in {path}")
+            plates = []
+            for name in names:
+                with archive.open(name) as stream:
+                    plates.append(parse_gcode(stream, f"{path}:{name}"))
+            return plates
+    raise ValueError(f"Expected .gcode or .gcode.3mf: {path}")
+
+
+def profile(root, printer, kind, selected):
+    if "/" in selected or selected.endswith(".json"):
+        path = Path(selected).expanduser().resolve()
+    else:
+        name = selected if selected.startswith(kind + ".") else f"{kind}.{selected}"
+        path = root / ".skills" / f"slice-for-{printer}" / "profiles" / f"{name}.json"
+    if not path.is_file():
+        raise ValueError(f"Profile not found: {path}")
+    return path
+
+
+def estimate(args):
+    root = Path(os.environ.get("PRINT_TIME_HOME", "~/src/3dp")).expanduser().resolve()
+    skill = root / ".skills" / f"slice-for-{args.printer}"
+    script = skill / f"{args.printer}.sh"
+    if not script.is_file():
+        raise ValueError(f"Slicer helper not found: {script}; set PRINT_TIME_HOME to the 3dp checkout")
+    models = [path.expanduser().resolve() for path in args.models]
+    for path in models:
+        if not path.is_file() or path.suffix.lower() not in (".stl", ".3mf") or path.name.lower().endswith(".gcode.3mf"):
+            raise ValueError(f"Expected an existing STL or unsliced 3MF: {path}; use read for sliced G-code")
+    label, default_process, default_filament = PRINTERS[args.printer]
+    process = profile(root, args.printer, "process", args.process or default_process)
+    filament = profile(root, args.printer, "filament", args.filament or default_filament)
+    fairness = shutil.which("fair-run")
+    if not fairness:
+        raise ValueError("fair-run is required; install the agent helpers with omp-install")
+    cache = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "print-time"
+    cache.mkdir(parents=True, exist_ok=True)
+    out = Path(tempfile.mkdtemp(prefix=f"{args.printer}-", dir=cache))
+    environment = os.environ.copy()
+    extracted = Path.home() / ".local/opt/orcaslicer/squashfs-root"
+    if not environment.get("ORCASLICER") and os.access(extracted / "AppRun", os.X_OK):
+        environment["ORCASLICER"] = str(extracted / "AppRun")
+        environment["APPDIR"] = str(extracted)
+    # The CLI is headless. Do not connect to the user's graphical session.
+    environment.pop("DISPLAY", None)
+    environment.pop("WAYLAND_DISPLAY", None)
+    for name in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+        environment[name] = "6"
+    command = [fairness, "--cpus", "6", "--", "bash", str(script), "slice", "-o", str(out),
+               "-p", str(process), "-f", str(filament)]
+    if args.no_orient:
+        command.append("--no-orient")
+    command.extend(map(str, models))
+    log = out / "driver.log"
+    started = time.monotonic()
+    with log.open("w") as stream:
+        result = subprocess.run(command, env=environment, stdout=stream, stderr=subprocess.STDOUT)
+    if result.returncode:
+        raise ValueError(f"Slicing failed (exit {result.returncode}); see {log}")
+    result_path = out / "result.json"
+    if not result_path.is_file():
+        raise ValueError(f"Slicer produced no result.json; see {log}")
+    status = json.loads(result_path.read_text())
+    if status.get("return_code") != 0:
+        raise ValueError(f"Slicer rejected the plate: {status.get('error_string', status)}; see {log}")
+    # Use loose G-code only; the P1S archive embeds the same plates.
+    files = sorted(out.glob("*.gcode"))
+    if not files:
+        files = sorted(out.glob("*.gcode.3mf"))
+    if not files:
+        raise ValueError(f"Slicer produced no G-code; see {log}")
+    plates = [plate for path in files for plate in read_estimates(path)]
+    warnings = [plate["warning_message"] for plate in status.get("sliced_plates", [])
+                if plate.get("warning_message")]
+    return {"printer": label, "printer_id": args.printer, "models": list(map(str, models)),
+            "process_profile": str(process), "filament_profile": str(filament),
+            "orientation": "preserved" if args.no_orient else "automatic", "output_dir": str(out),
+            "elapsed_seconds": round(time.monotonic() - started, 2), "warnings": warnings, "plates": plates}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+    printers = sub.add_parser("printers", help="List supported printers and available profiles")
+    slicing = sub.add_parser("estimate", help="Slice STL/3MF files offline; multiple models share a plate")
+    slicing.add_argument("models", nargs="+", type=Path)
+    slicing.add_argument("--printer", required=True, choices=PRINTERS)
+    slicing.add_argument("-p", "--process", help="Existing process name or JSON path")
+    slicing.add_argument("-f", "--filament", help="Existing filament name or JSON path")
+    slicing.add_argument("--no-orient", action="store_true", help="Preserve the model's print orientation")
+    reading = sub.add_parser("read", help="Read an existing .gcode or .gcode.3mf without slicing")
+    reading.add_argument("files", nargs="+", type=Path)
+    for command in (printers, slicing, reading):
+        command.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    args = parser.parse_args()
+    try:
+        if args.command == "printers":
+            root = Path(os.environ.get("PRINT_TIME_HOME", "~/src/3dp")).expanduser().resolve()
+            entries = []
+            for printer, (label, process, filament) in PRINTERS.items():
+                folder = root / ".skills" / f"slice-for-{printer}" / "profiles"
+                entries.append({"id": printer, "name": label, "default_process": process,
+                                "default_filament": filament,
+                                "processes": sorted(p.stem.removeprefix("process.") for p in folder.glob("process.*.json")),
+                                "filaments": sorted(p.stem.removeprefix("filament.") for p in folder.glob("filament.*.json"))})
+            if args.json:
+                print(json.dumps(entries, indent=2))
+            else:
+                for entry in entries:
+                    print(f"{entry['id']}: {entry['name']} — {entry['default_process']} / {entry['default_filament']}")
+                    print("  Processes: " + ", ".join(entry["processes"]))
+                    print("  Filaments: " + ", ".join(entry["filaments"]))
+            return 0
+        if args.command == "estimate":
+            report = estimate(args)
+        else:
+            report = {"plates": [plate for path in args.files for plate in read_estimates(path.expanduser().resolve())]}
+        report["estimate_seconds"] = sum(plate["estimate_seconds"] for plate in report["plates"])
+        report["estimate"] = human(report["estimate_seconds"])
+        report["note"] = "Slicer estimate, not a measured completion time. Startup/calibration can differ; no printer contacted."
+        if args.json:
+            print(json.dumps(report, indent=2))
+        else:
+            print(f"{report.get('printer', 'Sliced G-code')}: {report['estimate']} ({len(report['plates'])} plate(s), sequential sum)")
+            for index, plate in enumerate(report["plates"], 1):
+                print(f"  Plate {index}: {plate['estimate']} ({plate['estimate_basis']})")
+                if "model_seconds" in plate:
+                    print(f"    Model only: {human(plate['model_seconds'])}")
+                settings = plate["settings"]
+                print("    " + "; ".join(f"{key}={value}" for key, value in settings.items() if value))
+                print(f"    Source: {plate['source']}")
+            if "orientation" in report:
+                print(f"Orientation: {report['orientation']}; calculation: {report['elapsed_seconds']}s")
+            for warning in report.get("warnings", []):
+                print(f"Warning: {warning}")
+            print(report["note"])
+        return 0
+    except (OSError, ValueError, zipfile.BadZipFile) as error:
+        print(f"print-time: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
