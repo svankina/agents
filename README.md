@@ -92,19 +92,36 @@ retrying or rolling back against a potentially different session. Source
 changes take effect in newly launched OMP processes, not already-loaded
 extension instances; no OMP core files need editing.
 
-## Peer message display
+## Unified hub plugin
 
-`omp/extensions/peers.ts` renders cross-process communication with a
-sender-to-recipient heading and the full message body. Peer names come from
-discovery. Short instance IDs distinguish sessions with the same name.
+`omp/extensions/peers.ts` extends the native `hub` tool through the public
+extension API. It does not modify the OMP executable or require a core fork.
+The plugin preserves the native schema and delegates local agents, jobs,
+inbox operations, and process controls to the native implementation.
 
-Delivery status is separate from the message. A delivery receipt does not mean
-the peer completed its work. Reply timeouts and delivery errors remain visible.
-Expand the entry to inspect full routing addresses and thread IDs.
-Agent-facing protocol instructions and JSON remain unchanged.
+`hub list` also discovers live OMP sessions that have the plugin loaded.
+`scope: "project"` filters remote sessions to the exact working directory.
+Qualified `omp:<instance>/<local-id>` addresses select remote message targets.
+Remote `send` and `wait` use the existing same-user Unix socket transport.
+Remote job cancellation, process control, and parked-session revival are not
+supported. Local ownership stays with native OMP.
 
-The configured extension directory loads this display in new OMP processes.
-Already-running processes retain their loaded extension.
+Message cards show **TO** or **FROM**, the peer name, and the complete body.
+Incoming cards have an accent border. Outgoing cards have a quiet border.
+Unique names need no routing ID; duplicate names retain a short distinguishing
+ID. Expand an entry for addresses and thread IDs. Delivery status is separate:
+accepted delivery does not mean completed work.
+
+`send` with `await: true` registers its reply wait before sending.
+Replies preserve `replyTo` and omit `await`. Unmatched incoming messages are
+delivered once as agent-attributed asides. They are not replayed by later
+`wait` or `inbox` calls. A bare wait can observe native work or a remote message.
+`OMP_PEERS_DIR=off` disables the remote transport without disabling native hub.
+
+The configured extension directory loads the plugin in new OMP processes.
+Already-running processes retain their loaded extension. The plugin uses
+dynamic tool registration and same-name `ctx.invokeTool` delegation, verified
+with stock OMP 18.1.14.
 
 ## Historical Pi source checkouts
 
