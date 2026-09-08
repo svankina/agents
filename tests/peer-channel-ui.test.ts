@@ -56,3 +56,63 @@ test("channel browser reopens when the host only resolves custom UI and shows re
 		await third;
 	} finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+test("channel notifications become quiet only after reading details and survive repeated snapshots", async () => {
+	type Component = { render(width: number): string[]; handleInput(data: string): void };
+	let command!: { handler(args: string, ctx: ExtensionContext): Promise<void> };
+	let browser!: Component;
+	let widget: Pick<Component, "render"> | undefined;
+	const theme = { bold: (text: string) => text, fg: (_color: string, text: string) => text };
+	const ctx = {
+		hasUI: true,
+		ui: {
+			setWidget(_key: string, factory: undefined | ((tui: unknown, theme: unknown) => typeof widget)) {
+				widget = factory?.({}, theme);
+			},
+			custom(factory: (tui: unknown, theme: unknown, keys: unknown, done: () => void) => Component) {
+				return new Promise<void>(resolve => {
+					browser = factory({ requestRender() { browser.render(100); } }, theme, {}, resolve);
+				});
+			},
+		},
+	} as unknown as ExtensionContext;
+	const pi = { registerCommand(_name: string, definition: typeof command) { command = definition; }, on() {} } as unknown as ExtensionAPI;
+	const reporter = createPeerChannelReporter(pi);
+	const row = { id: "alpha", peerName: "Alpha", state: "idle" as const, task: "Review wall", result: "Old answer", queued: 0 };
+	const text = () => widget?.render(100).join("\n") ?? "";
+	reporter.update(ctx, [row]);
+	expect(widget?.render(100)).toHaveLength(1);
+	expect(text()).not.toContain("Old answer");
+	reporter.update(ctx, [{ ...row, state: "running", result: undefined, activity: "Checking wall" }]);
+	expect(text()).toContain("Checking wall");
+	const answer = { ...row, result: "**Use 3 mm.**" };
+	reporter.update(ctx, [answer]);
+	expect(text()).toContain("new reply");
+	expect(text()).toContain("Use 3 mm.");
+	expect(text()).not.toContain("**");
+	reporter.update(ctx, [answer]);
+	expect(text()).toContain("new reply");
+	const opened = command.handler("", ctx);
+	browser.render(100);
+	expect(text()).toContain("new reply");
+	browser.handleInput("\r");
+	expect(browser.render(100).join("\n")).toContain("**Use 3 mm.**");
+	expect(widget?.render(100)).toHaveLength(1);
+	reporter.update(ctx, [answer]);
+	expect(widget?.render(100)).toHaveLength(1);
+	browser.handleInput("\u001b");
+	browser.handleInput("\u001b");
+	await opened;
+	// An identical answer to a subsequent request is still a new completion.
+	reporter.update(ctx, [{ ...answer, state: "running" }]);
+	reporter.update(ctx, [answer]);
+	expect(text()).toContain("new reply");
+	reporter.update(ctx, [{ ...answer, state: "error", result: "Permission denied" }]);
+	expect(text()).toContain("error");
+	expect(text()).toContain("Permission denied");
+	for (const width of [1, 20, 80]) expect(widget?.render(width).every(line => line.length <= width)).toBe(true);
+	reporter.clear(ctx);
+	expect(widget).toBeUndefined();
+	reporter.update(ctx, [answer]);
+	expect(widget?.render(100)).toHaveLength(1);
+});

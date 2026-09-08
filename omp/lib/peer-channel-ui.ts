@@ -14,7 +14,7 @@ export interface PeerChannelRow {
 }
 
 const WIDGET_KEY = "peer-channels";
-const MAX_WIDGET_ROWS = 4;
+const MAX_WIDGET_ROWS = 2;
 const MAX_TEXT = 12_000;
 const MAX_TRANSCRIPT_BYTES = 256 * 1024;
 
@@ -27,6 +27,11 @@ function plain(value: string, limit = MAX_TEXT): string {
 
 function oneLine(value: string, limit = 240): string {
 	return plain(value, limit).replace(/\s+/g, " ");
+}
+
+function preview(value: string): string {
+	return oneLine(plain(value, 480).replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+		.replace(/[*`#>]/g, "")).trim();
 }
 
 function fit(value: string, width: number): string {
@@ -101,6 +106,7 @@ export function createPeerChannelReporter(pi: ExtensionAPI): {
 	let activeUi: ExtensionContext["ui"] | undefined;
 	let refreshBrowser: (() => void) | undefined;
 	let closeBrowser: (() => void) | undefined;
+	const unread = new Set<string>();
 
 	const clear = (ctx: ExtensionContext): void => {
 		closeBrowser?.();
@@ -108,6 +114,7 @@ export function createPeerChannelReporter(pi: ExtensionAPI): {
 		if (ctx.hasUI && ctx.ui !== activeUi) ctx.ui.setWidget(WIDGET_KEY, undefined);
 		activeUi = undefined;
 		rows = [];
+		unread.clear();
 	};
 
 	pi.registerCommand("channels", {
@@ -155,9 +162,10 @@ export function createPeerChannelReporter(pi: ExtensionAPI): {
 						if (view === "list") {
 							const start = Math.floor(selected / pageSize) * pageSize;
 							body = rows.slice(start, start + pageSize).map((item, index) =>
-								`${start + index === selected ? ">" : " "} ${start + index + 1}. ${oneLine(item.peerName)} | ${status(item)} | ${oneLine(item.task)}`);
+								`${start + index === selected ? ">" : " "} ${start + index + 1}. ${unread.has(item.id) ? "[new] " : ""}${oneLine(item.peerName)} | ${status(item)} | ${oneLine(item.task)}`);
 							if (!body.length) body = ["No peer channels yet."];
 						} else {
+							if (row) unread.delete(row.id);
 							const text = view === "transcript" ? transcriptText : row ? details(row) : "Channel no longer available.";
 							const lines = text.split("\n").flatMap((line) => line ? wrapTextWithAnsi(line, Math.max(1, width)) : [""]);
 							totalLines = lines.length;
@@ -203,6 +211,16 @@ export function createPeerChannelReporter(pi: ExtensionAPI): {
 	return {
 		clear,
 		update(ctx, nextRows) {
+			const previous = new Map(rows.map((row) => [row.id, row]));
+			const nextIds = new Set(nextRows.map((row) => row.id));
+			for (const id of unread) if (!nextIds.has(id)) unread.delete(id);
+			for (const row of nextRows) {
+				const old = previous.get(row.id);
+				if (row.state === "running" || row.state === "queued") unread.delete(row.id);
+				else if ((row.state === "error" && (!old || old.state !== "error" || old.result !== row.result))
+					|| (row.state === "idle" && old && (old.state === "running" || old.state === "queued"
+						|| old.result !== row.result) && row.result)) unread.add(row.id);
+			}
 			rows = nextRows.map((row) => ({ ...row }));
 			refreshBrowser?.();
 			if (!ctx.hasUI) return;
@@ -213,16 +231,26 @@ export function createPeerChannelReporter(pi: ExtensionAPI): {
 				invalidate() {},
 				render(width) {
 					const active = rows.filter((row) => row.state === "queued" || row.state === "running");
-					const inactive = rows.filter((row) => row.state !== "queued" && row.state !== "running");
-					const shown = [...active, ...inactive.reverse()].slice(0, MAX_WIDGET_ROWS);
-					const lines = [theme.bold(`Peer channels: ${active.length} active / ${rows.length} total | /channels`)];
+					const replies = rows.filter((row) => unread.has(row.id)).reverse();
+					const attention = [...replies, ...active];
+					const shown = attention.slice(0, MAX_WIDGET_ROWS);
+					const counts = [
+						...(active.length ? [`${active.length} working`] : []),
+						...(replies.length ? [`${replies.length} new`] : []),
+						...(!attention.length ? [`${rows.length} conversation${rows.length === 1 ? "" : "s"}`] : []),
+					];
+					const lines = [theme.fg(attention.length ? "accent" : "muted",
+						`Channels · ${counts.join(" · ")} · /channels`)];
 					for (const row of shown) {
-						lines.push(`${oneLine(row.peerName)} | ${status(row)} | ${oneLine(row.task)}`);
-						const summary = row.state === "error" ? `Error: ${row.result || row.activity || "Worker failed"}`
-							: row.state === "idle" && row.result ? `Result: ${row.result}` : row.activity;
-						if (summary) lines.push(theme.fg(row.state === "error" ? "error" : "muted", `  ${oneLine(summary)}`));
+						const isNew = unread.has(row.id);
+						const color = row.state === "error" ? "error" : isNew ? "success" : "accent";
+						const label = row.state === "error" ? "! error" : isNew ? "● new reply"
+							: row.state === "queued" ? "◌ queued" : "◌ working";
+						const name = fit(oneLine(row.peerName), Math.max(8, Math.min(32, Math.floor(width / 3))));
+						const summary = isNew ? row.result || row.activity || "Worker failed" : row.activity || row.task;
+						lines.push(`${theme.fg(color, `│ ${label}`)} · ${theme.bold(name)}  ${theme.fg("muted", preview(summary))}`);
 					}
-					if (rows.length > shown.length) lines.push(theme.fg("muted", `+${rows.length - shown.length} more in /channels`));
+					if (attention.length > shown.length) lines.push(theme.fg("muted", `  +${attention.length - shown.length} more · /channels`));
 					return lines.map((line) => fit(line, width));
 				},
 			}), { placement: "aboveEditor" });

@@ -120,9 +120,14 @@ remain in the receiver's project guidance. Worker tools are restricted to the
 receiver's active built-in tools; extension/MCP tools, delegation, peer sends,
 and human UI questions are not inherited.
 
-The receiving screen shows sender, task, queue, activity, result, and errors.
-Run `/channels` to inspect every channel. Enter opens details; `t` opens the
-persisted request/answer transcript; Escape returns. Reporting is UI-only.
+The receiving screen shows one muted channel count when all channels are quiet.
+Working channels show the sender and a short activity preview. New replies and
+errors stay highlighted until their details are opened. The widget shows at
+most two previews; the remaining count links to `/channels`.
+Run `/channels` to inspect tasks, queues, full results, and errors. Enter opens
+details and marks that channel as read; `t` opens the persisted request/answer
+transcript; Escape returns. Unread markers last for the current UI session.
+Reporting is UI-only.
 It does not add worker activity to the receiving model's context.
 
 Channel state is stored under `$XDG_STATE_HOME/omp/peer-channels`
