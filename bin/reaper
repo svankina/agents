@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live resource leases, lifecycle events and measured consumption; read-only."""
+"""Reaper: live resource leases, lifecycle events and consumption; read-only."""
 from __future__ import annotations
 
 import argparse
@@ -20,7 +20,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from lib.resource_monitor import Collector
 
-PANE_TAG = "agent-resource-monitor"
+PANE_TAG = "reaper"
+AVATAR = ROOT / "assets" / "reaper.svg"
 
 
 def herd_module(name):
@@ -42,21 +43,21 @@ def open_pane(restart=False):
             if restart:
                 client.kill(row["id"])
             elif not row.get("dead"):
-                print(f"Resource Leases already open in {row['id']}; focus unchanged")
+                print(f"Reaper already open in {row['id']}; focus unchanged")
                 return
         # spawn selects within its target space. Use a new background space,
         # exactly as the shepherd does, without changing the user's selection.
-        space = client.space_new("resources")
+        space = client.space_new("reaper")
         try:
             pane = client.spawn(
                 [str(Path(__file__).resolve()), "--watch"], cwd=str(Path.home()),
-                space=space, name="Resource Leases",
-                meta={PANE_TAG: "watch", "dock": "bots"}, cols=140, rows=46,
+                space=space, name="Reaper",
+                meta={PANE_TAG: "watch", "dock": "bots", "avatar": str(AVATAR)}, cols=140, rows=46,
             )
         except Exception:
             client.kill(space=space)
             raise
-    print(f"Resource Leases watching in {pane}; click its dock row to view")
+    print(f"Reaper watching in {pane}; click his dock row to view")
 
 
 class PeerLabels:
@@ -128,7 +129,7 @@ def render(snapshot, names, width=140, height=46, offset=0, paused=False, owner=
     totals = summarize(leases) if owner else snapshot["totals"]
     host = snapshot["host"]
     sampled = time.strftime("%H:%M:%S", time.localtime(snapshot["sampledAt"]))
-    rows = [(f"RESOURCE LEASES  |  {'PAUSED' if paused else 'LIVE'} {sampled}  |  q quit  p pause  j/k history", "cyan")]
+    rows = [(f"REAPER  |  Resource leases  |  {'PAUSED' if paused else 'LIVE'} {sampled}  |  q quit  p pause  j/k history", "cyan")]
     measured = sum(r.get("memoryBytes") is not None for r in leases)
     failed = sum(r["state"] == "cleanup-failed" for r in leases)
     owners = {r["ownerId"] for r in leases}
@@ -268,5 +269,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except (OSError, RuntimeError) as error:
-        print(f"agent-resource-monitor: {error}", file=sys.stderr)
+        print(f"reaper: {error}", file=sys.stderr)
         raise SystemExit(1)

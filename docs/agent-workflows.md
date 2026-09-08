@@ -75,12 +75,13 @@ When upgrading broker schema or cleanup logic, stop
 `agent-resource-watchdog.service` before the first new acquisition; acquisition
 starts the updated watchdog. Do not remove its source worktree while it runs.
 
-`agent-resource-monitor --pane` opens a background **Resource Leases** dock
+`reaper --pane` opens the background **Reaper** resource-monitor dock
 pane in Herd, like the shepherd. It does not select the pane or create a
 duplicate. Use `--restart` to replace only this pane after a code update.
 Use `--watch` in an ordinary terminal or `--once --json` for a read-only
 snapshot. The pane refreshes every two seconds. `p` pauses the view, `j`/`k`
 scroll recent history, and `q` exits.
+His sci-fi grim reaper avatar is `assets/reaper.svg`.
 
 The monitor shows requests, acquisitions, denials, releases, reclamations,
 and cleanup failures. The broker retains the latest 2,000 timestamped events;
