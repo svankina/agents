@@ -59,6 +59,34 @@ print-time estimate /path/to/base.stl /path/to/mast.stl --printer ender3 --json
   It preserves G-code, the slicer result, and logs for inspection or fast rereads.
   It does not overwrite another job. On failure, read the reported `driver.log`.
 
+## Storage cases on the Ender-3 V3 KE
+
+For ordinary non-load-bearing storage cases, adapter boxes, and organizers in
+PLA+, prefer `fast-032-tweak-lightning` over the standard fast-draft process.
+Select it explicitly when estimating or slicing these parts:
+
+```bash
+print-time estimate /path/to/storage-case.stl --printer ender3 \
+  --no-orient -p fast-032-tweak-lightning --json
+```
+
+This existing profile keeps 0.32 mm layers and 2 walls. It uses 10% lightning
+infill instead of 15% crosshatch, with 3 top and 3 bottom layers instead of 4
+each. Movement speeds are unchanged. Use `--no-orient` only when the exported
+mesh is already in its intended print pose.
+
+The adapter-box workflow used this profile. A same-mesh comparison of
+`stls/chemistry/vacuum-adapter-box-measured-d80c1e4.stl`, with orientation
+preserved and eSUN PLA+ fast25, estimated 4h 1m 13s with standard fast draft
+versus 1h 42m 21s with lightning: 57.6% less time and 53.6% less filament.
+These are slicer estimates, not measured print durations or a universal saving.
+
+Keep explicitly requested strength settings. Do not apply this storage-case
+choice automatically to load-bearing stands, clamps, hinges, or pressure/vacuum
+parts. An adapter storage box is not the adapter itself. The newer flask stand
+uses a separate structural process. This recommendation does not change the
+CLI default, shared profiles, P1S settings, or the print authorization workflow.
+
 ## Answer contract
 
 Lead with approximate duration and printer. State material, layer height,
