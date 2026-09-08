@@ -14,6 +14,11 @@
   permission to make unrelated changes.
 - New features use `agent-worktree new <name>`; work in the returned directory.
   Do not make feature changes in the main checkout.
+- For OMP features, first try a plugin, extension, or skill using existing
+  supported interfaces rather than changing OMP core. Inspect the available
+  hooks and existing examples before choosing an implementation. Change core
+  only when those mechanisms cannot meet the requirements; state the concrete
+  limitation and keep the core change minimal.
 - Use current code, configuration, and focused documentation as evidence.
   Keep project `AGENTS.md` to current operating constraints, at most 150 lines.
   Do not turn it into a changelog or repeat global instructions.
