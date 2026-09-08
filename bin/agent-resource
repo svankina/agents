@@ -56,10 +56,21 @@ def registry(root):
         if "cleanupDir" not in {row[1] for row in db.execute("PRAGMA table_info(leases)")}:
             db.execute("ALTER TABLE leases ADD COLUMN cleanupDir TEXT")
             db.commit()
+        db.execute("CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, action TEXT NOT NULL, leaseId TEXT, ownerId TEXT NOT NULL, ownerPid INTEGER NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL, reason TEXT)")
+        db.commit()
         try:
             yield db
         finally:
             db.close()
+
+
+def event(db, action, row, reason=None):
+    # Only caller-supplied labels and fixed reasons belong in history: subprocess
+    # exceptions can contain command arguments, environment values, or secrets.
+    db.execute("INSERT INTO events (ts, action, leaseId, ownerId, ownerPid, name, kind, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+               (time.time(), action, row["id"], row["ownerId"], row["ownerPid"],
+                row["name"], row["kind"], reason))
+    db.execute("DELETE FROM events WHERE seq <= COALESCE((SELECT seq FROM events ORDER BY seq DESC LIMIT 1 OFFSET 2000), 0)")
 
 
 def run(argv, timeout=25):
@@ -97,18 +108,30 @@ def remove_profile(value):
     shutil.rmtree(path)
 
 
-def release(db, row):
+def release(db, row, reason=None):
+    if reason is None:
+        event(db, "release_requested", row)
+        db.commit()
     if row["state"] == "released":
         return dict(row)
+    stage = "checking resource unit"
     try:
         if not stopped(row["unit"]):
+            stage = "stopping resource unit"
             run(["systemctl", "--user", "stop", row["unit"]])
+        stage = "confirming resource unit stopped"
         if not stopped(row["unit"]):
             raise RuntimeError("unit remains active after stop")
         if row["cleanupDir"]:
+            stage = "removing private profile"
             remove_profile(row["cleanupDir"])
         db.execute("UPDATE leases SET state='released', error=NULL WHERE id=?", (row["id"],))
+        event(db, "reclaimed" if reason else "released", row, reason)
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+        failure = f"{reason or 'explicit release'}: {stage} failed ({type(exc).__name__})"
+        previous = db.execute("SELECT reason FROM events WHERE leaseId=? AND action='failed' ORDER BY seq DESC LIMIT 1", (row["id"],)).fetchone()
+        if row["state"] != "cleanup-failed" or previous is None or previous["reason"] != failure or reason is None:
+            event(db, "failed", row, failure)
         db.execute("UPDATE leases SET state='cleanup-failed', error=? WHERE id=?", (str(exc), row["id"]))
     db.commit()
     return dict(db.execute("SELECT * FROM leases WHERE id=?", (row["id"],)).fetchone())
@@ -117,9 +140,9 @@ def release(db, row):
 def reclaim(db):
     for row in db.execute("SELECT * FROM leases WHERE state != 'released'").fetchall():
         if identity(row["ownerPid"]) != row["ownerStart"]:
-            release(db, row)
+            release(db, row, "owner process exited or identity changed")
         elif row["state"] != "cleanup-failed" and stopped(row["unit"]):
-            release(db, row)
+            release(db, row, "resource unit exited")
 
 
 def ensure_watchdog(root):
@@ -147,35 +170,57 @@ def guarded_exec(root, lease_id, command):
 
 
 def acquire(db, root, args):
+    request = {"id": uuid.uuid4().hex, "ownerId": args.owner, "ownerPid": args.owner_pid,
+               "name": args.name, "kind": args.kind, "reason": "invalid acquisition request"}
+    event(db, "requested", request)
+    db.commit()  # A killed client still leaves its request visible before startup.
+    try:
+        return acquire_requested(db, root, args, request)
+    except BaseException:
+        if db.execute("SELECT 1 FROM leases WHERE id=?", (request["id"],)).fetchone() is None:
+            event(db, "denied", request, request["reason"])
+            db.commit()
+        raise
+
+
+def acquire_requested(db, root, args, request):
     command = args.command
     if command[:1] == ["--"]:
         command = command[1:]
     if not command:
         raise RuntimeError("acquire requires -- COMMAND ARGS")
     executable = shutil.which(command[0])
+    request["reason"] = "executable not found"
     if not executable:
         raise RuntimeError(f"executable not found: {command[0]}")
     owner_pid = args.owner_pid
+    request["reason"] = "owner PID must identify a live same-user process"
     start = identity(owner_pid)
     if start is None:
         raise RuntimeError("owner PID must identify a live same-user process")
+    request["reason"] = "invalid or already registered cleanup directory"
     profile = cleanup_path(root, args.cleanup_dir) if args.cleanup_dir else None
     if profile is not None and (profile.exists() or profile.is_symlink()):
         raise RuntimeError("cleanup directory must not already exist")
     if profile is not None and db.execute("SELECT 1 FROM leases WHERE cleanupDir=?", (str(profile),)).fetchone():
         raise RuntimeError("cleanup directory is already registered")
+    request["reason"] = "resource slice setup failed"
     run(["systemctl", "--user", "set-property", "--runtime", "agent-resources.slice",
          f"CPUQuota={max(1, (os.cpu_count() or 2) // 2) * 100}%",
          "CPUWeight=20", "MemoryHigh=50%", "TasksMax=4096"])
+    request["reason"] = "watchdog startup failed"
     ensure_watchdog(root)
+    request["reason"] = "resource reclamation failed"
     reclaim(db)
     existing = db.execute("SELECT ownerPid, ownerStart FROM leases WHERE ownerId=? AND state != 'released'", (args.owner,)).fetchall()
+    request["reason"] = "owner already bound to another process identity"
     if any(row["ownerPid"] != owner_pid or row["ownerStart"] != start for row in existing):
         raise RuntimeError("owner already bound to another process identity")
     count = db.execute("SELECT count(*) FROM leases WHERE state != 'released'").fetchone()[0]
+    request["reason"] = "resource quota exceeded (8 per owner, 32 total)"
     if len(existing) >= 8 or count >= 32:
         raise RuntimeError("resource quota exceeded (8 per owner, 32 total)")
-    lease_id = uuid.uuid4().hex
+    lease_id = request["id"]
     unit = f"agent-resource-{lease_id}.service"
     log = str(root / f"{lease_id}.log")
     db.execute("INSERT INTO leases (id, ownerId, kind, name, state, unit, pid, ownerPid, ownerStart, log, error, cleanupDir) VALUES (?, ?, ?, ?, 'reserved', ?, NULL, ?, ?, ?, NULL, ?)",
@@ -183,6 +228,7 @@ def acquire(db, root, args):
                 str(profile) if profile is not None else None))
     db.commit()  # watchdog can recover even if this client is killed during launch
     try:
+        stage = "creating private profile"
         if profile is not None:
             try:
                 profile.mkdir(mode=0o700)
@@ -192,9 +238,11 @@ def acquire(db, root, args):
                 db.execute("UPDATE leases SET cleanupDir=NULL WHERE id=?", (lease_id,))
                 db.commit()
                 raise
+        stage = "starting resource unit"
         argv = ["systemd-run", "--user", "--quiet", "--collect", "--expand-environment=no",
                 "--slice=agent-resources.slice", "--property=Nice=10",
                 f"--unit={unit}", "--property=Type=exec", "--property=ExitType=cgroup",
+                "--property=IOAccounting=yes",
                 "--property=KillMode=control-group", "--property=TimeoutStopSec=5s",
                 "--property=SendSIGKILL=yes", "--property=UMask=0077",
                 *([] if args.action == "exec" else [
@@ -215,16 +263,21 @@ def acquire(db, root, args):
                 time.sleep(0.05)
         else:
             run([*argv, "--", *guarded])
+        stage = "reading resource unit identity"
         pid = int(properties(unit).get("MainPID", "0"))
         db.execute("UPDATE leases SET state='active', pid=? WHERE id=?", (pid, lease_id))
+        event(db, "acquired", request)
         db.commit()
         row = db.execute("SELECT * FROM leases WHERE id=?", (lease_id,)).fetchone()
         if identity(owner_pid) != start:
-            release(db, row)
+            stage = "owner died during resource launch"
             raise RuntimeError("owner died during resource launch")
         return (dict(row), proc) if args.action == "exec" else dict(row)
-    except BaseException:
-        release(db, db.execute("SELECT * FROM leases WHERE id=?", (lease_id,)).fetchone())
+    except BaseException as exc:
+        event(db, "failed", request, f"{stage} failed ({type(exc).__name__})")
+        db.commit()
+        release(db, db.execute("SELECT * FROM leases WHERE id=?", (lease_id,)).fetchone(),
+                stage if stage == "owner died during resource launch" else "resource startup failed")
         raise
 
 
@@ -272,6 +325,10 @@ def main(argv=None):
             elif args.action == "release":
                 row = db.execute("SELECT * FROM leases WHERE id=?", (args.id,)).fetchone()
                 if row is None or row["ownerId"] != args.owner:
+                    event(db, "denied", {"id": args.id, "ownerId": args.owner,
+                                         "ownerPid": os.getppid(), "name": "", "kind": ""},
+                          "unknown lease for owner")
+                    db.commit()
                     raise RuntimeError("unknown lease for owner")
                 result = release(db, row)
             else:
@@ -283,7 +340,7 @@ def main(argv=None):
                 return proc.wait()
             finally:
                 with registry(root) as db:
-                    release(db, db.execute("SELECT * FROM leases WHERE id=?", (lease["id"],)).fetchone())
+                    release(db, db.execute("SELECT * FROM leases WHERE id=?", (lease["id"],)).fetchone(), "exec completed")
         print(json.dumps(result))
         rows = result if isinstance(result, list) else [result]
         return 1 if any(row["state"] == "cleanup-failed" for row in rows) else 0

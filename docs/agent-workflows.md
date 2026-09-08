@@ -74,6 +74,29 @@ is intentional persistent infrastructure; logs and released rows are retained.
 When upgrading broker schema or cleanup logic, stop
 `agent-resource-watchdog.service` before the first new acquisition; acquisition
 starts the updated watchdog. Do not remove its source worktree while it runs.
+
+`agent-resource-monitor --pane` opens a background **Resource Leases** dock
+pane in Herd, like the shepherd. It does not select the pane or create a
+duplicate. Use `--restart` to replace only this pane after a code update.
+Use `--watch` in an ordinary terminal or `--once --json` for a read-only
+snapshot. The pane refreshes every two seconds. `p` pauses the view, `j`/`k`
+scroll recent history, and `q` exits.
+
+The monitor shows requests, acquisitions, denials, releases, reclamations,
+and cleanup failures. The broker retains the latest 2,000 timestamped events;
+the pane reads the latest 40. Existing leases do not acquire invented history
+when the events table is first installed. Peer names are optional labels;
+session IDs remain the ownership identity.
+
+Consumption includes per-agent and per-lease CPU, RAM, tasks, and I/O rates
+where the kernel delegates accounting. CPU is 100% per logical core for
+leases and 100% for the whole machine in the host row. Host RAM, swap, load,
+and NVIDIA GPU/VRAM/temperature/power are separate machine-wide readings.
+GPU attribution to individual leases is not available. Missing counters and
+first-sample rates show `--`, not zero. This machine currently delegates CPU,
+memory and PIDs but not I/O to user cgroups, so per-lease I/O is unavailable.
+Processes outside leased cgroups are included only in host totals.
+
 Historical design and plan documents remain records of earlier workflows.
 
 ## Privileged commands
