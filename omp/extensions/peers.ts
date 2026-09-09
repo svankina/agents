@@ -89,7 +89,8 @@ export default function peersExtension(pi: ExtensionAPI) {
 
 	function messageCard(message: PeerMessage, expanded: boolean, theme: Parameters<MessageRenderer>[2], outgoing = false) {
 		const card = new pi.pi.Container();
-		const heading = `${theme.fg("muted", outgoing ? "TO" : "FROM")}  ${theme.bold(peerLabel(outgoing ? message.to : message.from))}`;
+		const color = outgoing ? "success" : "accent";
+		const heading = `${theme.fg(color, outgoing ? "↗ TO" : "↙ FROM")}  ${theme.bold(peerLabel(outgoing ? message.to : message.from))}`;
 		const flags = [
 			...(message.expectsReply ? ["reply requested"] : []),
 			...(message.wakeRelay ? ["wake relay"] : []),
@@ -106,7 +107,7 @@ export default function peersExtension(pi: ExtensionAPI) {
 			render(width: number) {
 				if (width < 5) return card.render(width);
 				const chars = theme.boxRound;
-				const border = (text: string) => theme.fg(outgoing ? "borderMuted" : "borderAccent", text);
+				const border = (text: string) => theme.fg(color, text);
 				const rule = chars.horizontal.repeat(width - 2);
 				return [
 					border(chars.topLeft + rule + chars.topRight),
