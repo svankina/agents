@@ -151,6 +151,43 @@ Reload preserves channel histories and completed results. The plugin uses
 public SDK sessions and same-name `ctx.invokeTool` delegation, verified with
 stock OMP 18.1.14.
 
+## Designer dock
+
+Run `designer-dock` after `omp-install` to open Designer beside the other
+Herd docked agents. It creates a background webview without selecting it.
+Repeated launches reuse the healthy pane. The dashboard observes the existing
+Designer OMP session; it does not create a second agent or restart that session.
+
+The contact list shows recorded conversations, not every online agent.
+It imports incoming requests, outgoing feedback, and available transport
+receipts from Designer's main transcript and persistent peer-channel workers.
+Session identities keep contacts together across transport restarts.
+`recorded` and `injected` do not mean read, approved, or acted on.
+
+Image references are copied into an immutable local archive. Select a contact
+and asset to compare two revisions or open a full image. Capture time is the
+time of archival observation, not the historical message time. Missing or
+overwritten source images cannot reconstruct earlier pixels.
+PNG, JPEG, WebP, GIF, and inactive SVG files are supported, up to 32 MiB each.
+Remote URLs are not fetched. Unsafe paths and unavailable files appear under
+Recording coverage.
+
+`designer-dock --snapshot` imports and prints the current record. To group
+renamed captures under one asset, reuse the same contact ID and asset label:
+
+```sh
+designer-dock --record /path/to/capture.png --contact CONTACT_ID \
+  --asset 'Settings screen' --caption 'Spacing revised after feedback'
+```
+
+Add `--event EVENT_ID` to link the picture to a recorded message.
+State is stored in `$XDG_STATE_HOME/designer-dock`, or
+`~/.local/state/designer-dock`. Agents can read `snapshot.json` there without
+depending on hub delivery. `DESIGNER_STATE_DIR`, `DESIGNER_SESSION_DIR`, and
+`DESIGNER_PROJECT_DIR` override the storage and source locations.
+The HTTP surface is read-only, loopback-only, exact-Host checked, and protected
+by an unguessable URL path. No OMP core or Herd panel changes are required.
+
 ## Historical Pi source checkouts
 
 - Primary local Pi resource checkout: `~/src/pagent`

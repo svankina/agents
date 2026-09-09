@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+"""Designer: a persistent Herd dock for communications, feedback and image revisions."""
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import os
+from pathlib import Path
+import secrets
+import socket
+import sys
+import time
+from urllib.request import urlopen
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from lib.designer_dashboard import Dashboard, Settings, herd_module, serve
+
+TAG = "designer-dock"
+
+
+def open_pane(settings):
+    settings.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    for name in ("index.html", "designer.css", "designer.js", "designer.svg"):
+        if not (ROOT / "assets/designer-ui" / name).is_file():
+            raise RuntimeError(f"Missing dashboard asset: {name}")
+    # Concurrent invocations cannot create duplicate dock panes.
+    with (settings.state_dir / "launch.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        with herd_module("brokerclient").Client() as client:
+            old = [row for row in client.list_panes() if row.get("meta", {}).get(TAG) == str(settings.state_dir.resolve())]
+            live = next((row for row in old if not row.get("dead")), None)
+            if live:
+                with urlopen(live["meta"]["webview"] + "api/snapshot", timeout=5) as response:
+                    data = json.load(response)
+                if not data.get("sampledAt"):
+                    raise RuntimeError("Existing Designer dock has not recorded a snapshot")
+                print(f"Designer already ready in {live['id']}; focus unchanged")
+                return
+            token = secrets.token_urlsafe(24)
+            with socket.socket() as reservation:
+                reservation.bind(("127.0.0.1", 0))
+                port = reservation.getsockname()[1]
+            url = f"http://127.0.0.1:{port}/{token}/"
+            space = client.space_new("designer-dock")
+            try:
+                pane = client.spawn(
+                    [sys.executable, str(Path(__file__).resolve()), "--serve", "--port", str(port)],
+                    cwd=str(settings.project_dir), space=space, name="Designer",
+                    env={**settings.environment(), "DESIGNER_DOCK_TOKEN": token},
+                    meta={TAG: str(settings.state_dir.resolve()), "dock": "bots",
+                          "avatar": str(ROOT / "assets/designer-ui/designer.svg"), "webview": url},
+                    cols=140, rows=46,
+                )
+                deadline = time.monotonic() + 60
+                while True:
+                    try:
+                        with urlopen(url + "api/snapshot", timeout=2) as response:
+                            if json.load(response).get("sampledAt"):
+                                break
+                    except (OSError, ValueError):
+                        pass
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError("Designer dock did not become ready; existing Designer session was not changed")
+                    time.sleep(.2)
+            except Exception:
+                client.kill(space=space)
+                raise
+            # Only remove dead dashboard panes after their replacement is ready.
+            for row in old:
+                client.kill(row["id"])
+            print(f"Designer dock ready in {pane}; click Designer beside the other docked agents. Focus unchanged.")
+            print(f"Durable record: {settings.state_dir / 'snapshot.json'}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--pane", action="store_true", help="open/reuse the background Herd dock (default)")
+    modes.add_argument("--serve", action="store_true", help=argparse.SUPPRESS)
+    modes.add_argument("--snapshot", action="store_true", help="import current history and print the durable snapshot")
+    modes.add_argument("--record", type=Path, metavar="IMAGE", help="archive an image revision under a stable contact and asset")
+    parser.add_argument("--contact", help="contact id from --snapshot; required with --record")
+    parser.add_argument("--asset", help="stable asset label; reuse across renamed image files")
+    parser.add_argument("--caption", default="", help="revision description")
+    parser.add_argument("--event", help="optional recorded message id this revision illustrates")
+    parser.add_argument("--port", type=int, default=0, help=argparse.SUPPRESS)
+    args = parser.parse_args()
+    if args.record and (not args.contact or not args.asset):
+        parser.error("--record requires --contact and --asset")
+    if not args.record and (args.contact or args.asset or args.caption or args.event):
+        parser.error("--contact, --asset, --caption and --event require --record")
+    settings = Settings.defaults()
+    if args.serve:
+        serve(ROOT, settings, args.port)
+    elif args.snapshot or args.record:
+        board = Dashboard(settings)
+        try:
+            snapshot = board.sample()
+            if args.record:
+                with board.locked():
+                    result = board.history.add_revision(args.contact, args.asset, args.record.expanduser(), args.caption, args.event)
+                board.sample()
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+            else:
+                print(json.dumps(snapshot, ensure_ascii=False, indent=2))
+        finally:
+            board.close()
+    else:
+        open_pane(settings)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, RuntimeError, ValueError) as error:
+        sys.exit(f"designer-dock: {error}")

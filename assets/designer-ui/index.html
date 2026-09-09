@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Designer · Conversations and revisions</title>
+<link rel="icon" href="./designer.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./designer.css">
+<script src="./designer.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#contact-detail">Skip to conversation</a>
+<header class="masthead">
+<div class="brand"><img src="./designer.svg" width="46" height="46" alt=""><div><h1>Designer</h1><p>Conversations, feedback, and image history.</p></div></div>
+<div class="connection"><span id="runtime" class="state">Runtime unknown</span><span id="connection" role="status">Connecting…</span><span id="sample-age">Waiting for a snapshot</span></div>
+</header>
+<main>
+<section id="totals" class="totals" aria-label="Recorded history totals"></section>
+<p id="runtime-detail" class="meta"></p>
+<div id="notice" role="status" hidden></div>
+<details id="warnings" hidden><summary>Recording coverage</summary><ul id="warning-list"></ul></details>
+<div class="workspace">
+<aside class="contacts-panel" aria-label="Conversation contacts">
+<div class="toolbar"><label for="search">Find a contact</label><input id="search" type="search" placeholder="Name, full ID, or project…" autocomplete="off"><p id="result-count" class="meta"></p></div>
+<div id="contacts"><p class="empty">Waiting for recorded conversations…</p></div>
+</aside>
+<section id="contact-detail" class="detail-panel" tabindex="-1" aria-labelledby="contact-title">
+<header class="detail-heading"><span class="eyebrow">CONVERSATION HISTORY</span><h2 id="contact-title">Choose a contact</h2><p id="contact-meta" class="meta"></p></header>
+<div id="contact-empty" class="empty">Select a contact to browse attributable feedback and recorded images.</div>
+<div id="contact-content" hidden>
+<section class="section" aria-labelledby="assets-title">
+<h3 id="assets-title">Image revisions</h3><p class="meta">Images are archived when observed. Capture time is separate from the source message time.</p>
+<label class="asset-label" for="asset-select">Asset</label><select id="asset-select"></select>
+<p id="revision-empty" class="empty" hidden>No recorded image revisions for this contact.</p>
+<div id="revision-strip" class="revision-strip" aria-label="Recorded revisions"></div>
+<div id="comparison-controls" class="comparison-controls"><label>Before<select id="before-select"></select></label><label>After<select id="after-select"></select></label></div>
+<div id="comparison" class="comparison" aria-label="Side-by-side revision comparison"></div>
+</section>
+<section class="section" aria-labelledby="messages-title"><h3 id="messages-title">Messages and feedback <span id="message-count" class="meta"></span></h3><p class="meta">Chronological transport records, not read receipts or approval states.</p><div id="messages"></div></section>
+</div>
+</section>
+</div>
+<footer>Read-only · existing Designer session · refreshed every 2 seconds · recorded does not mean read or acted on</footer>
+</main>
+<dialog id="image-preview" aria-labelledby="preview-title"><div class="preview-heading"><h2 id="preview-title">Image preview</h2><button id="preview-close" type="button" autofocus>Close preview</button></div><div id="preview-image"></div><p id="preview-meta" class="meta"></p></dialog>
+</body>
+</html>
