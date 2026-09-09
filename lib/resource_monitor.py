@@ -41,9 +41,12 @@ class Collector:
     identify partial coverage. No broker locks, writes, or process inspection.
     """
 
-    def __init__(self, state_dir=None):
+    def __init__(self, state_dir=None, *, event_limit=40, include_history=False):
         self.state_dir = Path(state_dir) if state_dir is not None else Path(
             os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")) / "agent-resource"
+        self.event_limit = min(2000, max(1, event_limit))
+        self.include_history = include_history
+        self._registry_available = False
         self.proc_root = Path("/proc")
         self.cgroup_root = Path("/sys/fs/cgroup")
         self._base = None
@@ -56,6 +59,7 @@ class Collector:
         self._gpu_error = None
 
     def _snapshot(self, errors):
+        self._registry_available = False
         db = None
         try:
             uri = (self.state_dir / "leases.sqlite3").absolute().as_uri() + "?mode=ro"
@@ -69,15 +73,22 @@ class Collector:
             if len(leases) == 256:
                 errors.append("Lease snapshot capped at 256 rows; totals may be partial")
             exists = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'").fetchone()
+            history = []
             if exists:
-                events = [dict(row) for row in db.execute("SELECT * FROM events ORDER BY seq DESC LIMIT 40")]
+                events = [dict(row) for row in db.execute(
+                    "SELECT * FROM events ORDER BY seq DESC LIMIT ?", (self.event_limit,))]
+                if self.include_history:
+                    history = [dict(row) for row in db.execute(
+                        "SELECT id, ownerId, state FROM leases WHERE id IN "
+                        "(SELECT leaseId FROM events ORDER BY seq DESC LIMIT ?)", (self.event_limit,))]
             else:
                 events = []
                 errors.append("No event history: broker events table is unavailable")
-            return leases, events
+            self._registry_available = True
+            return leases, events, history
         except sqlite3.Error as exc:
             errors.append(f"Lease registry unavailable: {exc}")
-            return [], []
+            return [], [], []
         finally:
             if db is not None:
                 db.close()
@@ -230,7 +241,7 @@ class Collector:
         interval = max(0.0, now - self._last) if self._last is not None else 0.0
         self._last = now
         errors = []
-        leases, events = self._snapshot(errors)
+        leases, events, history = self._snapshot(errors)
         if leases:
             self._discover(now, errors)
         for row in leases:
@@ -246,4 +257,5 @@ class Collector:
         host = self._host(errors)
         host["gpus"] = self._gpu(now, errors)
         return {"sampledAt": time.time(), "interval": interval, "leases": leases,
-                "events": events, "totals": totals, "host": host, "errors": errors}
+                "events": events, "historyLeases": history, "registryAvailable": self._registry_available,
+                "totals": totals, "host": host, "errors": errors}

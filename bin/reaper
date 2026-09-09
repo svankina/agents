@@ -8,17 +8,22 @@ import json
 import os
 from pathlib import Path
 import select
+import secrets
 import shutil
 import signal
+import socket
 import sys
 import termios
 import threading
 import time
 import tty
+from urllib.error import URLError
+from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from lib.resource_monitor import Collector
+from lib.reaper_dashboard import PeerLabels, serve
 
 PANE_TAG = "reaper"
 AVATAR = ROOT / "assets" / "reaper.svg"
@@ -37,62 +42,51 @@ def herd_module(name):
 def open_pane(restart=False):
     client_module = herd_module("brokerclient")
     with client_module.Client() as client:
-        for row in client.list_panes():
-            if row.get("meta", {}).get(PANE_TAG) != "watch":
-                continue
-            if restart:
-                client.kill(row["id"])
-            elif not row.get("dead"):
-                print(f"Reaper already open in {row['id']}; focus unchanged")
-                return
-        # spawn selects within its target space. Use a new background space,
-        # exactly as the shepherd does, without changing the user's selection.
-        space = client.space_new("reaper")
+        old = [row for row in client.list_panes() if row.get("meta", {}).get(PANE_TAG) == "watch"]
+        live = next((row for row in old if not row.get("dead")), None)
+        if live and not restart:
+            print(f"Reaper already open in {live['id']}; focus unchanged")
+            return
+        token = secrets.token_urlsafe(24)
+        # Choose a free loopback port. Child bind and the health check fail closed
+        # if another process wins the bind race after releasing the reservation.
+        with socket.socket() as reservation:
+            reservation.bind(("127.0.0.1", 0))
+            port = reservation.getsockname()[1]
+            url = f"http://127.0.0.1:{port}/{token}/"
+            space = client.space_new("reaper")
+            try:
+                reservation.close()
+                pane = client.spawn(
+                    [str(Path(__file__).resolve()), "--serve", "--port", str(port)],
+                    cwd=str(Path.home()), env={"REAPER_TOKEN": token},
+                    space=space, name="Reaper",
+                    meta={PANE_TAG: "watch", "dock": "bots", "avatar": str(AVATAR), "webview": url},
+                    cols=140, rows=46,
+                )
+            except Exception:
+                client.kill(space=space)
+                raise
         try:
-            pane = client.spawn(
-                [str(Path(__file__).resolve()), "--watch"], cwd=str(Path.home()),
-                space=space, name="Reaper",
-                meta={PANE_TAG: "watch", "dock": "bots", "avatar": str(AVATAR)}, cols=140, rows=46,
-            )
+            deadline = time.monotonic() + 15
+            while True:
+                try:
+                    with urlopen(url + "api/snapshot", timeout=1) as response:
+                        if json.load(response).get("sampledAt"):
+                            break
+                except (OSError, URLError, ValueError):
+                    pass
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("Reaper dashboard did not become ready; previous pane was preserved")
+                time.sleep(0.1)
         except Exception:
             client.kill(space=space)
             raise
-    print(f"Reaper watching in {pane}; click his dock row to view")
+        for row in old:
+            client.kill(row["id"])
+    print(f"Reaper dashboard ready in {pane}; click his dock row to view")
 
 
-class PeerLabels:
-    """Refresh optional session names off the sampling/rendering thread."""
-    def __init__(self):
-        self.names = {}
-        self.error = None
-        self.stop = threading.Event()
-        self.thread = threading.Thread(target=self.run, daemon=True, name="resource-peer-labels")
-        self.thread.start()
-
-    def run(self):
-        try:
-            peers = herd_module("peers")
-        except (ImportError, RuntimeError) as error:
-            self.error = str(error)
-            return
-        while not self.stop.is_set():
-            try:
-                result = peers.discover_peers()
-                names = {}
-                for peer in result["peers"]:
-                    title = peer["displayName"]
-                    if title.lower() == "main":
-                        title = Path(peer["cwd"]).name or title
-                    if peer.get("pane"):
-                        title += f" [{peer['pane']}]"
-                    names[peer["sessionId"]] = title
-                # Preserve names for recently exited agents still in event history.
-                merged = {**self.names, **names}
-                self.names = dict(list(merged.items())[-2000:])
-                self.error = "; ".join(result.get("errors", [])[:1]) or None
-            except Exception as error:
-                self.error = f"Peer labels unavailable: {error}"
-            self.stop.wait(10)
 
 
 def clean(value):
@@ -199,6 +193,8 @@ def main():
     mode.add_argument("--restart", action="store_true", help="replace only this monitor's Herd pane")
     mode.add_argument("--watch", action="store_true", help="continuously monitor in this terminal")
     mode.add_argument("--once", action="store_true", help="print one snapshot (default)")
+    mode.add_argument("--serve", action="store_true", help="serve the local read-only dashboard")
+    parser.add_argument("--port", type=int, default=0, help="dashboard loopback port (default: automatic)")
     parser.add_argument("--json", action="store_true", help="machine-readable snapshot, including all live leases")
     parser.add_argument("--interval", type=float, default=2, help="refresh seconds (minimum 1)")
     parser.add_argument("--owner", help="filter rendered lease/event rows by exact owner id")
@@ -208,6 +204,12 @@ def main():
         return 0
     if args.interval < 1:
         parser.error("--interval must be at least one second")
+    if not 0 <= args.port <= 65535:
+        parser.error("--port must be between 0 and 65535")
+    if args.serve:
+        serve(ROOT, lambda: herd_module("peers"), port=args.port, interval=args.interval,
+              state_dir=os.environ.get("REAPER_STATE_DIR"))
+        return 0
     collector = Collector()
     if not args.watch:
         snapshot = collector.sample()
@@ -217,7 +219,7 @@ def main():
             for text, _ in render(snapshot, {}, *shutil.get_terminal_size((140, 46)), owner=args.owner):
                 print(text)
         return 0
-    labels = PeerLabels()
+    labels = PeerLabels(lambda: herd_module("peers"))
     stopping = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stopping.set())
     terminal = sys.stdin.isatty() and sys.stdout.isatty() and not args.json

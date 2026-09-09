@@ -96,6 +96,7 @@ class CollectorContracts(unittest.TestCase):
     def test_snapshot_is_read_only_and_history_bounded(self):
         before = self.db_path.read_bytes()
         snapshot = self.sample(10)
+        self.assertTrue(snapshot["registryAvailable"])
         self.assertEqual([row["seq"] for row in snapshot["events"]], list(range(50, 10, -1)))
         self.assertEqual(self.db_path.read_bytes(), before)
         with sqlite3.connect(self.db_path) as db:
@@ -108,6 +109,7 @@ class CollectorContracts(unittest.TestCase):
         collector.proc_root = self.proc
         snapshot = collector.sample()
         self.assertFalse(missing.exists())
+        self.assertFalse(snapshot["registryAvailable"])
         self.assertTrue(any("registry unavailable" in error for error in snapshot["errors"]))
 
     def test_host_parsing_excludes_guest_double_counting(self):

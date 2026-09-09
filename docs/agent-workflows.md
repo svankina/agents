@@ -75,26 +75,40 @@ When upgrading broker schema or cleanup logic, stop
 `agent-resource-watchdog.service` before the first new acquisition; acquisition
 starts the updated watchdog. Do not remove its source worktree while it runs.
 
-`reaper --pane` opens the background **Reaper** resource-monitor dock
-pane in Herd, like the shepherd. It does not select the pane or create a
-duplicate. Use `--restart` to replace only this pane after a code update.
-Use `--watch` in an ordinary terminal or `--once --json` for a read-only
-snapshot. The pane refreshes every two seconds. `p` pauses the view, `j`/`k`
-scroll recent history, and `q` exits.
-His sci-fi grim reaper avatar is `assets/reaper.svg`.
+`reaper --pane` opens Reaper's background web dashboard in Herd's dock.
+It does not select the pane or create a duplicate. Use `--restart` after an
+update; the new dashboard must answer before the old pane is removed.
+Agent cards group named requests. Live, Recent and History scopes and search
+filter the list. Select a request for its exact owner and lease IDs, usage,
+observed peaks, charts and lifecycle. On narrow screens, Back to requests
+returns to the selected row. Measurement coverage expands accounting errors.
+Whole-machine readings stay separate from request usage.
 
-The monitor shows requests, acquisitions, denials, releases, reclamations,
-and cleanup failures. The broker retains the latest 2,000 timestamped events;
-the pane reads the latest 40. Existing leases do not acquire invented history
-when the events table is first installed. Peer names are optional labels;
-session IDs remain the ownership identity.
+The dashboard uses a token-gated loopback HTTP server owned by its pane.
+Herd's Terminal output button shows service diagnostics. Herd shortcuts returns
+keyboard focus to Herd; shortcuts do not cross the iframe boundary.
+`--serve` prints a standalone local dashboard URL. `--watch` retains the
+terminal view (`p` pauses, `j`/`k` scroll history, `q` exits).
+`--once --json` prints a read-only collector snapshot.
+The avatar is `assets/reaper.svg`.
+
+Requests name a browser or process; they do not reserve CPU or RAM quantities.
+Raw command arguments are not recorded. The broker retains 2,000 lifecycle
+events; the dashboard reads all of them and the terminal reads 40.
+Registry state takes precedence over incomplete event history. Missing release
+outcomes remain unknown, not live. Exact session IDs remain authoritative.
+Resolved labels and up to 120 observed samples for each of 256 resources are
+cached privately under `${XDG_STATE_HOME:-~/.local/state}/reaper`.
+Peaks are sampled observations, not lifetime maxima. Released requests retain
+last-observed usage, never a claim of current consumption. Observations from
+before Reaper watched a request are unavailable, not reconstructed.
 
 Consumption includes per-agent and per-lease CPU, RAM, tasks, and I/O rates
 where the kernel delegates accounting. CPU is 100% per logical core for
 leases and 100% for the whole machine in the host row. Host RAM, swap, load,
 and NVIDIA GPU/VRAM/temperature/power are separate machine-wide readings.
 GPU attribution to individual leases is not available. Missing counters and
-first-sample rates show `--`, not zero. This machine currently delegates CPU,
+first-sample rates show Unavailable (`--` in the terminal), not zero. This machine currently delegates CPU,
 memory and PIDs but not I/O to user cgroups, so per-lease I/O is unavailable.
 Processes outside leased cgroups are included only in host totals.
 

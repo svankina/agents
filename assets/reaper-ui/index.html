@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Reaper · Agent resources</title>
+<link rel="icon" href="./reaper.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./reaper-dashboard.css">
+<script src="./reaper-dashboard.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#agents">Skip to agent requests</a>
+<header class="masthead">
+<div class="brand"><img src="./reaper.svg" width="46" height="46" alt=""><div><h1>Reaper</h1><p>Agent requests. Actual usage.</p></div></div>
+<div class="connection"><span id="connection" role="status">Connecting…</span><span id="sample-age">Waiting for a snapshot</span></div>
+</header>
+<main>
+<section class="overview" aria-label="Resource overview"><div id="summary" class="summary"></div></section>
+<div id="notice" class="notice" role="status" hidden></div>
+<details id="coverage" class="coverage" hidden><summary>Measurement coverage <span id="coverage-count"></span></summary><pre id="coverage-errors"></pre></details>
+<section class="workspace" aria-label="Agent resource explorer">
+<div class="explorer">
+<div class="toolbar"><div class="filters" role="group" aria-label="Request period"><button type="button" data-scope="live" aria-pressed="true">Live</button><button type="button" data-scope="recent" aria-pressed="false">Recent</button><button type="button" data-scope="history" aria-pressed="false">History</button></div><label class="search"><span class="sr-only">Search agents, projects, names or full IDs</span><input id="search" type="search" placeholder="Search agent, project or request…" autocomplete="off"></label></div>
+<div class="list-caption"><span id="scope-caption">Live requests only</span><span id="result-count"></span></div>
+<div id="agents" tabindex="-1" aria-label="Agents and their named requests"><p class="empty">Loading agent requests…</p></div>
+</div>
+<aside class="inspector" aria-labelledby="detail-title" tabindex="-1"><div class="inspector-heading"><button id="back-to-requests" class="back-requests" type="button">Back to requests</button><span class="eyebrow">REQUEST INSPECTOR</span><h2 id="detail-title">Select a named request</h2></div><div id="detail"><p class="empty">Choose a browser or process under an agent to see its ownership, measured usage and lifecycle.</p></div></aside>
+</section>
+<details class="host"><summary>Whole-machine context <span>Secondary · not agent-attributed</span></summary><div id="host-metrics" class="host-metrics"></div><p>Host CPU: 100% = the whole machine. Request CPU: 100% = one logical core. GPU readings are whole-host only.</p></details>
+<footer>Read-only · broker-managed leases only · refreshed every 2 seconds · observations are sampled, not lifetime totals</footer>
+</main>
+</body>
+</html>
