@@ -143,12 +143,12 @@ def i3_windows(env):
 
 
 def x_windows(env):
-    """No i3 on this display: EWMH client list, else the root's children."""
+    """Include unmanaged popups, which neither i3 nor EWMH lists."""
     ids = re.findall(r"0x[0-9a-f]+",
                      run(["xprop", "-root", "_NET_CLIENT_LIST"], env).stdout)
-    if not ids:
-        ids = re.findall(r"^\s+(0x[0-9a-f]+)",
-                         run(["xwininfo", "-root", "-children"], env).stdout, re.M)
+    ids += re.findall(r"^\s+(0x[0-9a-f]+)",
+                      run(["xwininfo", "-root", "-children"], env).stdout, re.M)
+    ids = list(dict.fromkeys(ids))
     out = []
     for sid in ids:
         w = Win(int(sid, 16))
@@ -212,9 +212,9 @@ def descendants(root_pid):
 
 def enumerate_windows(display):
     env = xenv(display)
-    wins = i3_windows(env)
-    if wins is None:
-        wins = x_windows(env)
+    wins = i3_windows(env) or []
+    known = {w.id for w in wins}
+    wins.extend(w for w in x_windows(env) if w.id not in known)
     wins = [w for w in wins if measure(w, env)]
     return wins
 
