@@ -168,6 +168,19 @@ receipts from Designer's main transcript and persistent peer-channel workers.
 Session identities keep contacts together across transport restarts.
 `recorded` and `injected` do not mean read, approved, or acted on.
 
+Designer's own transcript turns are recorded too, so work survives the peer
+that asked for it. A peer that launches `omp --resume <Designer transcript>
+--print <brief>` leaves a plain user turn; the dock reads that peer's own
+transcript (by its recorded project directory and session id) and attributes
+the turn only when the identical prompt appears there. A user-typed turn in
+which Designer `hub send`s to exactly one peer is recorded under that contact
+as `User → Designer · about <name>`; it never counts as the contact's feedback.
+Other user turns stay unattributed and are not shown. Each recorded turn
+carries the files Designer wrote or edited and the `git commit` commands it
+ran (with the hash when git printed one) as **Changes**, and archives the
+images it read or wrote. Channel-worker replies carry their changes the same
+way. The first start after this change rescans every transcript once.
+
 Image references are copied into an immutable local archive. Select a contact
 and asset to compare two revisions or open a full image. Capture time is the
 time of archival observation, not the historical message time. Missing or

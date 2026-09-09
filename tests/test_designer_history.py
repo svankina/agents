@@ -103,6 +103,99 @@ class HistoryBoundaries(unittest.TestCase):
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]['timestamp'], 1767225600.0)
 
+    def turn(self, prompt, record, reply='Done', calls=(), results=(), exit=True):
+        """A Designer transcript turn: prompt, tool calls with results, final reply, process exit."""
+        rows = [dict(type='message', id=record, timestamp='2026-01-01T00:10:00Z',
+                     message=dict(role='user', content=[dict(type='text', text=prompt)]))]
+        for index, (call, result) in enumerate(zip(calls, results)):
+            rows.append(dict(type='message', id=f'{record}-call{index}', timestamp='2026-01-01T00:11:00Z', message=dict(
+                role='assistant', stopReason='toolUse', content=[dict(type='toolCall', id=f'{record}-c{index}', **call)])))
+            rows.append(dict(type='message', id=f'{record}-result{index}', message=dict(
+                role='toolResult', toolCallId=f'{record}-c{index}', toolName=call['name'], content=[dict(type='text', text=result)])))
+        rows.append(dict(type='message', id=f'{record}-final', timestamp='2026-01-01T00:12:00Z', message=dict(
+            role='assistant', stopReason='stop', content=[dict(type='text', text=reply)])))
+        if exit:
+            rows.append(dict(type='custom', customType='session_exit', id=f'{record}-exit', data=dict(reason='dispose')))
+        return rows
+
+    def contact_transcript(self, cwd, session):
+        directory = self.root / str(cwd).removeprefix(str(Path.home())).replace('/', '-')
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory / f'2026-01-01T00-00-00-000Z_{session}.jsonl'
+
+    def test_one_shot_prompt_is_attributed_only_with_proof_from_the_sender(self):
+        peer_cwd = self.root / 'peer'
+        self.history.sync([dict(id='omp:peer/Main', sessionId='0a0a', displayName='deathnote', cwd=str(peer_cwd), status='idle')])
+        brief = 'Design a stamp.\n\nRead ' + str(self.image('skull.svg'))
+        self.write(self.file, *self.turn(brief, 'peer-turn', reply='Spec written', calls=[
+            dict(name='write', arguments=dict(path=str(peer_cwd / 'DESIGN.md'), i='Writing the spec', content='#')),
+            dict(name='bash', arguments=dict(command='git add DESIGN.md && git commit -qm "Designer spec" && git log --oneline -1', cwd=str(peer_cwd)))],
+            results=['wrote', 'a42280c Designer spec']))
+        self.write(self.file, *self.turn('Tidy the mock for me', 'human-turn', reply='Tidied', calls=[
+            dict(name='edit', arguments=dict(input='[mock.html#AB12]\nPUT 1.=1:\n+x'))], results=['ok']))
+        self.history.sync([])
+        self.assertEqual(self.history.snapshot()['events'], [])
+        self.write(self.contact_transcript(peer_cwd, '0a0a'), dict(type='session', id='0a0a'),
+            dict(type='message', id='launch', timestamp='2026-01-01T00:09:00Z', message=dict(role='assistant', content=[
+                dict(type='toolCall', id='start', name='hub', arguments=dict(op='start', name='designer', application='/opt/bin/omp',
+                     args=['--resume', str(self.file), '--print', 'Design  a stamp.\nRead ' + str(self.image('skull.svg'))]))])))
+        self.history.sync([])
+        self.restart()
+        self.history.sync([])
+        snapshot = self.history.snapshot()
+        self.assertEqual([(e['direction'], e['from'], e['body'][:6]) for e in snapshot['events']],
+                         [('in', 'omp:peer/Main', 'Design'), ('out', 'designer-session', 'Spec w')])
+        self.assertEqual(snapshot['contacts'][0]['lastFeedback'], brief)
+        self.assertEqual([(c['kind'], c['paths'], c['summary'], c['hash']) for c in snapshot['changes']],
+                         [('write', [str(peer_cwd / 'DESIGN.md')], 'Writing the spec', None),
+                          ('commit', [], 'Designer spec', 'a42280c')])
+        self.assertEqual([r['sourcePath'] for r in snapshot['revisions']], [str(self.image('skull.svg'))])
+        self.assertEqual(snapshot['contacts'][0]['changes'], 2)
+
+    def test_user_turn_about_one_peer_is_recorded_as_user_originated(self):
+        self.write(self.file, self.incoming(body='Hello', session='peer-session'))
+        self.write(self.file, *self.turn('Ask the collaborator to widen the header', 'user-turn', reply='Sent', calls=[
+            dict(name='hub', arguments=dict(op='send', to='omp:old/Main', message='Widen the header')),
+            dict(name='write', arguments=dict(path='mock.html', i='Header mock', content='<h1>'))], results=['{}', 'wrote']))
+        self.write(self.file, *self.turn('Tell both of them', 'broadcast', reply='Sent', calls=[
+            dict(name='hub', arguments=dict(op='send', to='omp:old/Main', message='One')),
+            dict(name='hub', arguments=dict(op='send', to='omp:other/Main', message='Two'))], results=['{}', '{}']))
+        self.history.sync([])
+        snapshot = self.history.snapshot()
+        prompts = [e for e in snapshot['events'] if e['id'].startswith('prompt:')]
+        self.assertEqual([(e['from'], e['body']) for e in prompts], [('user', 'Ask the collaborator to widen the header')])
+        self.assertEqual(snapshot['contacts'][0]['lastFeedback'], 'Hello')
+        self.assertEqual([c['paths'] for c in snapshot['changes']], [[str(self.root / 'mock.html')]])
+        self.assertEqual(self.history.db.execute("SELECT COUNT(*) FROM turns WHERE contact=''").fetchone()[0], 1)
+
+    def test_channel_worker_changes_attach_to_its_reply(self):
+        channel = self.channels / hashlib.sha256(b'designer-session').hexdigest() / ('c' * 64)
+        channel.mkdir(parents=True)
+        (channel / 'channel.json').write_text(json.dumps(dict(peerName='Collaborator', state='idle', pending=[])))
+        self.write(channel / 'session.jsonl', dict(type='session', id='worker'),
+            dict(type='custom_message', id='request', customType='peer-channel-request', details=dict(peerMessage=self.incoming()['details'])),
+            dict(type='message', id='work', message=dict(role='assistant', stopReason='toolUse', content=[
+                dict(type='toolCall', id='e1', name='edit', arguments=dict(input='[dist/ui/app.css#1A2B]\nPUT 1.=1:\n+x\n[dist/ui/app.js#3C4D]\nPUT 2.=2:\n+y'))])),
+            dict(type='message', id='final', message=dict(role='assistant', stopReason='stop', content=[dict(type='text', text='Shipped')])))
+        self.history.sync([])
+        snapshot = self.history.snapshot()
+        reply = next(e for e in snapshot['events'] if e['direction'] == 'out')
+        self.assertEqual([(c['eventId'], c['kind'], c['paths']) for c in snapshot['changes']],
+                         [(reply['id'], 'edit', [str(self.root / 'dist/ui/app.css'), str(self.root / 'dist/ui/app.js')])])
+
+    def test_existing_records_are_rescanned_once_without_duplicates(self):
+        self.write(self.file, self.incoming(), *self.turn('Prompt', 'turn', calls=[
+            dict(name='hub', arguments=dict(op='send', to='omp:old/Main', message='Reply'))], results=['{}']))
+        self.history.sync([])
+        before = self.history.snapshot()
+        self.history.db.execute("UPDATE metadata SET value='1' WHERE key='importVersion'")
+        self.history.db.execute('DELETE FROM turns'); self.history.db.commit()
+        self.restart()
+        self.history.sync([])
+        after = self.history.snapshot()
+        self.assertEqual([e['id'] for e in after['events']], [e['id'] for e in before['events']])
+        self.assertEqual(self.history.db.execute('SELECT COUNT(*) FROM turns').fetchone()[0], 1)
+
     def test_observation_not_historical_recovery_and_immutable_bytes(self):
         image = self.root / 'review.svg'
         first = b'<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>'

@@ -84,7 +84,7 @@
     button.setAttribute('aria-pressed', String(selection.contact === contact.id));
     const project = contact.cwd ? contact.cwd.replace(/\/$/, '').split('/').pop() : 'Project unknown';
     button.title = `Peer: ${text(contact.peerId)}\nSession: ${text(contact.sessionId)}\nProject: ${text(contact.cwd)}`;
-    button.append(el('span', text(contact.name), 'contact-name'), stateNode(contact.state), el('span', project, 'meta'), el('span', `${text(contact.messages)} messages · ${date(contact.lastActivity)}`, 'meta'), el('span', contact.lastFeedback || 'No recorded incoming feedback.', 'feedback'));
+    button.append(el('span', text(contact.name), 'contact-name'), stateNode(contact.state), el('span', project, 'meta'), el('span', `${text(contact.messages)} messages · ${text(contact.changes)} changes · ${date(contact.lastActivity)}`, 'meta'), el('span', contact.lastFeedback || 'No recorded incoming feedback.', 'feedback'));
     return button;
   }
   function messageNode(event) {
@@ -92,7 +92,9 @@
     const heading = el('div', null, 'message-heading');
     const contact = snapshot.contacts.find(item => item.id === event.contactId);
     const name = contact?.name || (event.direction === 'in' ? event.from : event.to);
-    heading.append(el('strong', event.direction === 'in' ? `${text(name)} → Designer` : `Designer → ${text(name)}`), el('time', date(event.timestamp), 'meta'), el('span', `Transport: ${text(event.delivery)}`, 'meta'));
+    // A prompt Designer worked on for this contact, but typed by the user: about them, not from them.
+    const heading_text = event.direction === 'out' ? `Designer → ${text(name)}` : event.from === 'user' ? `User → Designer · about ${text(name)}` : `${text(name)} → Designer`;
+    heading.append(el('strong', heading_text), el('time', date(event.timestamp), 'meta'), el('span', `Transport: ${text(event.delivery)}`, 'meta'));
     const body = text(event.body);
     const details = el('details'); details.dataset.event = event.id;
     details.append(el('summary', 'Full message and record details'), el('pre', body));
@@ -100,6 +102,16 @@
     for (const [label, value] of [['From', event.from], ['To', event.to], ['Reply to', event.replyTo], ['Source', event.source], ['Event', event.id]]) metadata.append(el('dt', label), el('dd', text(value)));
     details.append(metadata);
     article.append(heading, el('p', body.length > 280 ? `${body.slice(0, 280)}…` : body, 'message-summary'), details);
+    return article;
+  }
+  function changeNode(change) {
+    const article = keyed(el('article', null, 'change'), change.id);
+    const kind = el('span', text(change.kind), 'change-kind'); kind.dataset.kind = change.kind;
+    const summary = change.kind === 'commit' ? `${change.hash ? `${change.hash} ` : ''}${change.summary || 'commit'}` : change.summary || `${change.kind}`;
+    const paths = change.kind === 'commit' ? (change.cwd ? `in ${change.cwd}` : '') : (change.paths || []).join('\n');
+    article.append(kind, el('span', summary, 'change-summary'));
+    if (paths) article.append(el('span', paths, 'change-paths'));
+    article.append(el('span', `${date(change.timestamp)} · Event: ${text(change.eventId)}`, 'meta'));
     return article;
   }
   function options(select, entries, selected) {
@@ -155,6 +167,9 @@
       const events = snapshot.events.filter(e => e.contactId === contact.id).sort((a, b) => (a.timestamp ?? Infinity) - (b.timestamp ?? Infinity));
       $('message-count').textContent = `(${events.length})`;
       reconcile($('messages'), events.length ? events.map(messageNode) : [el('p', 'No recorded messages for this contact.', 'empty')]);
+      const changes = snapshot.changes.filter(c => c.contactId === contact.id).sort((a, b) => (a.timestamp ?? Infinity) - (b.timestamp ?? Infinity));
+      $('change-count').textContent = `(${changes.length})`;
+      reconcile($('changes'), changes.length ? changes.map(changeNode) : [el('p', 'No recorded file changes for this contact.', 'empty')]);
       drawAssets();
     }
     const runtime = snapshot.runtime || {};
@@ -163,7 +178,7 @@
     $('runtime-detail').textContent = `Session: ${text(runtime.sessionId)} · Peer: ${text(runtime.peerId)}\nProject: ${text(runtime.cwd)}${runtime.error ? `\nRuntime: ${runtime.error}` : ''}`;
     const totals = snapshot.totals || {};
     const bytes = typeof totals.imageBytes === 'number' ? (totals.imageBytes >= 1048576 ? `${(totals.imageBytes / 1048576).toFixed(1)} MiB` : `${(totals.imageBytes / 1024).toFixed(1)} KiB`) : '--';
-    reconcile($('totals'), [['contacts', 'Contacts'], ['messages', 'Messages'], ['revisions', 'Revisions'], ['unrecovered', 'Unrecovered references'], ['imageBytes', 'Archived images']].map(([field, label]) => { const item = keyed(el('div', null, 'total'), field); item.append(el('strong', field === 'imageBytes' ? bytes : text(totals[field])), el('span', label)); return item; }));
+    reconcile($('totals'), [['contacts', 'Contacts'], ['messages', 'Messages'], ['changes', 'Changes'], ['revisions', 'Revisions'], ['unrecovered', 'Unrecovered references'], ['imageBytes', 'Archived images']].map(([field, label]) => { const item = keyed(el('div', null, 'total'), field); item.append(el('strong', field === 'imageBytes' ? bytes : text(totals[field])), el('span', label)); return item; }));
     const warnings = Array.isArray(snapshot.warnings) ? snapshot.warnings : [];
     $('warnings').hidden = !warnings.length;
     reconcile($('warning-list'), warnings.map((warning, index) => keyed(el('li', text(warning)), index)));
@@ -181,7 +196,7 @@
     $('notice').textContent = failure ? `${failure}${snapshot ? ' Showing the last good snapshot.' : ' No snapshot has been loaded.'}${stale ? ' Recorded data is stale (over 30 seconds old or timestamp unavailable).' : ''}` : stale ? 'Recorded data is stale (over 30 seconds old or timestamp unavailable). Runtime status is the last observation, not a live guarantee.' : '';
   }
   window.render = function render(data) {
-    if (!data || !Array.isArray(data.contacts) || !Array.isArray(data.events) || !Array.isArray(data.revisions)) throw new Error('Invalid history snapshot');
+    if (!data || !Array.isArray(data.contacts) || !Array.isArray(data.events) || !Array.isArray(data.revisions) || !Array.isArray(data.changes)) throw new Error('Invalid history snapshot');
     snapshot = data; failure = ''; draw();
   };
   $('search').value = selection.search;

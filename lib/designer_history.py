@@ -2,6 +2,14 @@
 
 All public calls are serialized by the caller. Source cursors and imported rows
 commit together; archives are immutable and may safely outlive a rolled-back row.
+
+Three sources feed one record per contact. Peer transport (peer messages, channel
+workers, `hub send`) carries its sender. Designer's own transcript turns do not:
+a peer that launches `omp --resume <Designer transcript> --print <brief>` leaves a
+plain user turn behind. Those turns are kept aside until proof of their author
+arrives -- the identical prompt in that peer's transcript -- or until the turn's
+own `hub send` names exactly one peer, in which case the prompt is recorded as
+user-originated work about that contact, never as the contact's words.
 """
 from __future__ import annotations
 
@@ -9,6 +17,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shlex
 import re
 import sqlite3
 import stat
@@ -25,8 +34,47 @@ MAX_RECORD_BYTES = 32 * 1024 * 1024
 _PATH_TOKEN = re.compile(r"""(?<![\w/.:~-])(?:[^\s<>"`'(){}\[\],;]+|\{[^{}\n]+\})+""")
 _IMAGE_END = re.compile(r'\.(?:png|jpe?g|webp|gif|svg)$', re.I)
 REFERENCE_VERSION = '2'
+IMPORT_VERSION = '2'
 MAX_REFERENCE_MATCHES = 64
 _HEX = re.compile(r"^[a-f0-9]{64}$")
+_EDIT_SECTION = re.compile(r'^\[(.+?)#[0-9A-Fa-f]{4}\]$', re.M)
+_GIT_COMMIT = re.compile(r'\bgit\b[^\n|;&]*?\bcommit\b')
+_COMMIT_MESSAGE = re.compile(r'''(?:^|\s)-[a-zA-Z]*m(?:\s+|=)(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+))''')
+_COMMIT_HASH = re.compile(r'\b[0-9a-f]{7,40}\b')
+# The user turn a peer leaves in Designer's transcript is the prompt it launched,
+# whitespace aside; the hash of that text is the join key between the two records.
+_SPACE = re.compile(r'\s+')
+
+
+def _prompt_hash(text):
+    return hashlib.sha256(_SPACE.sub(' ', text).strip().encode()).hexdigest()
+
+
+def _oneshot(tokens, session_dir):
+    """The Designer transcript and prompt of an `omp --resume <file> --print <text>` launch, or None."""
+    if not all(isinstance(token, str) for token in tokens):
+        return None
+    resume = None
+    for index, token in enumerate(tokens):
+        value = token[len('--resume='):] if token.startswith('--resume=') else (
+            tokens[index + 1] if token == '--resume' and index + 1 < len(tokens) else None)
+        if value is None:
+            continue
+        if not any(t.rsplit('/', 1)[-1] == 'omp' for t in tokens[:index]):
+            return None
+        path = Path(value).expanduser()
+        if path.parent != session_dir or path.suffix != '.jsonl':
+            return None
+        resume = index + (1 if token == '--resume' else 0)
+        break
+    if resume is None:
+        return None
+    rest = tokens[resume + 1:]
+    for index, token in enumerate(rest):
+        if token in ('--print', '-p') and index + 1 < len(rest) and not rest[index + 1].startswith('-'):
+            return path, rest[index + 1]
+    prompt = next((token for token in rest if not token.startswith('-')), None)
+    return (path, prompt) if prompt else None
 
 
 def _hash(value: str | bytes) -> str:
@@ -95,8 +143,28 @@ class History:
             CREATE TABLE IF NOT EXISTS reference_specs(event TEXT NOT NULL, path TEXT NOT NULL,
                 parents TEXT NOT NULL, PRIMARY KEY(event,path));
             CREATE TABLE IF NOT EXISTS reference_warnings(reference TEXT PRIMARY KEY, message TEXT NOT NULL);
+            -- Designer's own transcript turns; `contact` is '' until an author is proven.
+            CREATE TABLE IF NOT EXISTS turns(id TEXT PRIMARY KEY, contact TEXT NOT NULL, prompt TEXT NOT NULL,
+                data TEXT NOT NULL);
+            -- One-shot prompts a contact's transcript shows it launching against Designer.
+            CREATE TABLE IF NOT EXISTS prompts(hash TEXT PRIMARY KEY, contact TEXT NOT NULL, data TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS changes(id TEXT PRIMARY KEY, contact TEXT NOT NULL, event TEXT NOT NULL,
+                data TEXT NOT NULL);
         ''')
+        # Body-derived specs are rebuilt from event text on a version change; specs
+        # taken from Designer's tool calls have no text to rebuild from and are kept.
+        if 'origin' not in {row['name'] for row in self.db.execute('PRAGMA table_info(reference_specs)')}:
+            self.db.execute("ALTER TABLE reference_specs ADD COLUMN origin TEXT NOT NULL DEFAULT 'body'")
+        # Turns and changes are read from transcript regions older records already
+        # passed. One rescan from the start recovers them; every imported row has a
+        # deterministic id, so the rescan adds and never duplicates.
+        version = self.db.execute('SELECT value FROM metadata WHERE key=?', ('importVersion',)).fetchone()
+        if not version or version[0] != IMPORT_VERSION:
+            self.db.execute('DELETE FROM cursors')
+            self.db.execute('INSERT OR REPLACE INTO metadata VALUES (?,?)', ('importVersion', IMPORT_VERSION))
         self.db.commit()
+        # Contact transcripts live beside Designer's, one directory per project.
+        self.sessions_root = self.session_dir.parent
 
     def _warn(self, message):
         self.db.execute('INSERT OR IGNORE INTO warnings VALUES (?)', (message,))
@@ -134,14 +202,15 @@ class History:
         if prior and not self.db.execute('SELECT 1 FROM contacts WHERE id=?', (new,)).fetchone():
             data = json.loads(prior[0]); data['id'] = new
             self.db.execute('INSERT INTO contacts VALUES (?,?)', (new, json.dumps(data)))
-        for table in ('events', 'revisions'):
+        for table in ('events', 'revisions', 'changes'):
             for row in self.db.execute(f'SELECT * FROM {table} WHERE contact=?', (old,)).fetchall():
                 data = json.loads(row['data']); data['contactId'] = new
                 self.db.execute(f'UPDATE {table} SET contact=?,data=? WHERE id=?', (new, json.dumps(data), row['id']))
         for row in self.db.execute('SELECT * FROM refs WHERE contact=?', (old,)).fetchall():
             self._reference(new, row['path'], row['event'], row['timestamp'])
         self.db.execute('DELETE FROM refs WHERE contact=?', (old,))
-        self.db.execute('UPDATE aliases SET contact=? WHERE contact=?', (new, old))
+        for table in ('aliases', 'turns', 'prompts'):
+            self.db.execute(f'UPDATE {table} SET contact=? WHERE contact=?', (new, old))
         self.db.execute('DELETE FROM contacts WHERE id=?', (old,))
 
     def _peer(self, peer, live=False):
@@ -197,7 +266,7 @@ class History:
                 elif path.is_absolute() and not any(c in item for c in '*?[]{}') and path.is_dir():
                     parents.add(str(path))
         for path in dict.fromkeys(paths):
-            self.db.execute('INSERT OR REPLACE INTO reference_specs VALUES (?,?,?)',
+            self.db.execute('INSERT OR REPLACE INTO reference_specs(event,path,parents) VALUES (?,?,?)',
                             (eid, path, json.dumps(sorted(parents))))
 
     def _resolve_reference(self, ref, event, contact):
@@ -239,7 +308,7 @@ class History:
         version = self.db.execute('SELECT value FROM metadata WHERE key=?', ('referenceVersion',)).fetchone()
         if not version or version[0] != REFERENCE_VERSION:
             # References are derived; never rewrite events, cursors, or archived revisions.
-            self.db.execute('DELETE FROM reference_specs')
+            self.db.execute("DELETE FROM reference_specs WHERE origin='body'")
             self.db.execute('DELETE FROM refs')
             for row in self.db.execute('SELECT id,data FROM events').fetchall():
                 self._extract_references(row['id'], json.loads(row['data'])['body'])
@@ -315,7 +384,8 @@ class History:
         for key in ('peerHub', 'reply', 'details', 'native', 'waited'):
             self._details(value.get(key), timestamp, source, record + ':' + key)
 
-    def _calls(self, block):
+    def _tool_calls(self, block):
+        """(tool name, arguments) for one call block, flattening `parallel`."""
         if not isinstance(block, dict):
             return []
         name = _tool(block.get('name', block.get('recipient_name', '')))
@@ -327,15 +397,66 @@ class History:
                 return []
         if not isinstance(args, dict):
             return []
-        if name == 'hub':
-            return [args]
         if name == 'parallel' and isinstance(args.get('tool_uses'), list):
-            return [a for child in args['tool_uses'] for a in self._calls(child)]
-        return []
+            return [pair for child in args['tool_uses'] for pair in self._tool_calls(child)]
+        return [(name, args)]
+
+    def _calls(self, block):
+        return [args for name, args in self._tool_calls(block) if name == 'hub']
+
+    def _absolute(self, value, cwd=None):
+        path = Path(str(value)).expanduser()
+        return str(path if path.is_absolute() else Path(cwd).expanduser() / path if cwd else self.project_dir / path)
+
+    def _work(self, block, call_id):
+        """The file changes a call block makes and the images it reads or writes.
+
+        Recorded from the call, not its result: a write or edit that the tool refused
+        is still what Designer attempted for that contact, and the transcript says so.
+        """
+        changes, images = [], []
+        for name, args in self._tool_calls(block):
+            cwd = args.get('cwd') if isinstance(args.get('cwd'), str) else None
+            summary = args.get('i') if isinstance(args.get('i'), str) else ''
+            paths = []
+            if name == 'write' and isinstance(args.get('path'), str):
+                paths = [self._absolute(args['path'], cwd)]
+                changes.append(dict(kind='write', paths=paths, summary=summary))
+            elif name == 'edit' and isinstance(args.get('input'), str):
+                paths = [self._absolute(match, cwd) for match in _EDIT_SECTION.findall(args['input'])]
+                if paths:
+                    changes.append(dict(kind='edit', paths=list(dict.fromkeys(paths)), summary=summary))
+            elif name == 'ast_edit' and isinstance(args.get('paths'), list):
+                paths = [self._absolute(item, cwd) for item in args['paths'] if isinstance(item, str)]
+                if paths:
+                    changes.append(dict(kind='edit', paths=paths, summary=summary))
+            elif name == 'bash' and isinstance(args.get('command'), str) and _GIT_COMMIT.search(args['command']):
+                match = _COMMIT_MESSAGE.search(args['command'])
+                changes.append(dict(kind='commit', paths=[], cwd=cwd, call=call_id,
+                    summary=next((group for group in match.groups() if group), '') if match else summary,
+                    command=args['command'][:1000]))
+            elif name == 'read' and isinstance(args.get('path'), str):
+                # A selector rides on the path; the image is what is left before it.
+                candidate = args['path'] if _IMAGE_END.search(args['path']) else re.sub(r':[^/]*$', '', args['path'])
+                if _IMAGE_END.search(candidate):
+                    paths = [self._absolute(candidate, cwd)]
+            images.extend(path for path in paths if _IMAGE_END.search(path))
+        return changes, images
+
+    def _finish_turn(self, context, timestamp=None, reply=None, record=None):
+        turn = context.pop('turn', None)
+        if not turn:
+            return
+        turn.update(reply=reply, replyTimestamp=timestamp, replyRecord=record)
+        self.db.execute('INSERT OR IGNORE INTO turns VALUES (?,?,?,?)',
+                        (turn['id'], '', _prompt_hash(turn['prompt']), json.dumps(turn)))
 
     def _record(self, row, context, source, offset):
         record = source + ':' + str(row.get('id', offset))
         timestamp = _time(row.get('timestamp'))
+        if context.get('contact'):
+            self._record_sender(row, context, source, record, timestamp)
+            return
         if row.get('type') == 'session' and isinstance(row.get('id'), str):
             context['session'] = row['id']
             if not context.get('channel'):
@@ -344,6 +465,8 @@ class History:
         if not isinstance(message, dict):
             return
         timestamp = timestamp or _time(message.get('timestamp'))
+        if message.get('customType') == 'session_exit':
+            self._finish_turn(context, timestamp)
         if message.get('customType') in ('peer-message', 'peer-channel-request'):
             details = message.get('details', {})
             payload = details.get('peerMessage', {}) if message['customType'] == 'peer-channel-request' else details
@@ -351,13 +474,22 @@ class History:
             if eid and context.get('channel'):
                 context['request'] = payload
                 context['requestEvent'] = eid
+                context['work'] = dict(changes=[], images=[])
                 self._contact(payload['from'], payload.get('senderSessionId'), context.get('peerName'), state=context.get('state'))
+        if message.get('role') == 'user' and not message.get('customType') and not context.get('channel'):
+            prompt = _text(message.get('content')).strip()
+            self._finish_turn(context)
+            if prompt:
+                context['turn'] = dict(id=_hash(record), source=source, record=record, prompt=prompt,
+                    timestamp=timestamp, session=context.get('session'), sends=[], changes=[], images=[])
+        work = context.get('turn') or context.get('work')
         if message.get('role') == 'assistant':
             content = message.get('content', [])
             blocks = content if isinstance(content, list) else []
             for block in blocks:
                 if not isinstance(block, dict) or block.get('type') != 'toolCall':
                     continue
+                call_id = source + ':' + str(block.get('id'))
                 ids = []
                 for n, args in enumerate(self._calls(block)):
                     if args.get('op') == 'send' and isinstance(args.get('to'), str) and isinstance(args.get('message'), str):
@@ -366,20 +498,37 @@ class History:
                             args['to'], args.get('replyTo'))
                         if eid:
                             ids.append(eid)
+                            if context.get('turn'):
+                                context['turn']['sends'].append(args['to'])
                 if ids:
-                    self.db.execute('INSERT OR REPLACE INTO calls VALUES (?,?)',
-                        (source + ':' + str(block.get('id')), json.dumps(ids)))
+                    self.db.execute('INSERT OR REPLACE INTO calls VALUES (?,?)', (call_id, json.dumps(ids)))
+                if work is not None:
+                    changes, images = self._work(block, call_id)
+                    for change in changes:
+                        change.update(timestamp=timestamp, record=record)
+                    work['changes'].extend(changes)
+                    work['images'].extend(path for path in images if path not in work['images'])
+            final = message.get('stopReason') not in ('toolUse', 'error', 'aborted') and not any(
+                isinstance(b, dict) and b.get('type') == 'toolCall' for b in blocks)
             request = context.get('request')
-            if context.get('channel') and request and message.get('stopReason') not in ('toolUse','error','aborted') and not any(
-                    isinstance(b, dict) and b.get('type') == 'toolCall' for b in blocks):
+            if final and context.get('channel') and request:
                 body = _text(content).strip()
-                if body:
-                    self._event('reply:' + _hash(record), request['from'], 'out', body, timestamp, source,
-                        request['to'], request['from'], request.get('replyTo'), request.get('senderSessionId'), request.get('senderName'))
+                eid = self._event('reply:' + _hash(record), request['from'], 'out', body, timestamp, source,
+                    request['to'], request['from'], request.get('replyTo'), request.get('senderSessionId'),
+                    request.get('senderName')) if body else None
+                self._emit_work(context.pop('work', None) or dict(changes=[], images=[]),
+                                self._contact(request['from'], request.get('senderSessionId')),
+                                eid or context.get('requestEvent'))
+            elif final and context.get('turn'):
+                self._finish_turn(context, timestamp, _text(content).strip() or None, record)
         if message.get('role') == 'toolResult':
             details = message.get('details', {})
-            call = self.db.execute('SELECT events FROM calls WHERE id=?',
-                                  (source + ':' + str(message.get('toolCallId')),)).fetchone()
+            call_id = source + ':' + str(message.get('toolCallId'))
+            if work is not None:
+                for change in work['changes']:
+                    if change.get('call') == call_id and 'hash' not in change:
+                        change['hash'] = self._commit_hash(_text(message.get('content')), change['summary'])
+            call = self.db.execute('SELECT events FROM calls WHERE id=?', (call_id,)).fetchone()
             if _tool(message.get('toolName', '')) == 'hub' or call:
                 self._details(details, timestamp, source, record)
                 result = details.get('peerHub', details) if isinstance(details, dict) else {}
@@ -392,6 +541,77 @@ class History:
                             if result.get('id') and not data['replyTo']:
                                 data['replyTo'] = result['id']
                             self.db.execute('UPDATE events SET data=? WHERE id=?', (json.dumps(data), eid))
+
+    @staticmethod
+    def _commit_hash(output, summary):
+        """The hash git printed for this commit, when its output shows one beside the message."""
+        for line in output.splitlines():
+            match = _COMMIT_HASH.search(line)
+            if match and (summary and summary in line or line.startswith('[')):
+                return match.group()
+        return None
+
+    def _record_sender(self, row, context, source, record, timestamp):
+        """A contact's transcript: only the one-shot prompts it launched against Designer."""
+        message = row.get('message')
+        if not isinstance(message, dict) or message.get('role') != 'assistant':
+            return
+        timestamp = timestamp or _time(message.get('timestamp'))
+        content = message.get('content', [])
+        for block in content if isinstance(content, list) else []:
+            if not isinstance(block, dict) or block.get('type') != 'toolCall':
+                continue
+            for name, args in self._tool_calls(block):
+                if name == 'hub' and args.get('op') == 'start' and isinstance(args.get('args'), list):
+                    tokens = [args.get('application', '')] + args['args']
+                elif name == 'bash' and isinstance(args.get('command'), str) and '--resume' in args['command']:
+                    try:
+                        tokens = shlex.split(args['command'])
+                    except ValueError:
+                        continue
+                else:
+                    continue
+                launch = _oneshot(tokens, self.session_dir)
+                if launch:
+                    self.db.execute('INSERT OR IGNORE INTO prompts VALUES (?,?,?)', (_prompt_hash(launch[1]),
+                        context['contact'], json.dumps(dict(transcript=str(launch[0]), timestamp=timestamp,
+                                                            source=source, record=record))))
+
+    def _emit_work(self, work, cid, eid):
+        """Attach a turn's changes and images to the contact it belongs to."""
+        if not eid:
+            return
+        for change in work['changes']:
+            change_id = 'change:' + _hash(json.dumps([change['record'], change['kind'], change['paths'], change.get('command', '')]))
+            data = dict(id=change_id, contactId=cid, eventId=eid, timestamp=change['timestamp'], kind=change['kind'],
+                        paths=change['paths'], summary=change['summary'], cwd=change.get('cwd'),
+                        hash=change.get('hash'), source=change['record'].rsplit(':', 1)[0])
+            self.db.execute('INSERT OR IGNORE INTO changes VALUES (?,?,?,?)', (change_id, cid, eid, json.dumps(data)))
+        for path in work['images']:
+            self.db.execute("INSERT OR IGNORE INTO reference_specs(event,path,parents,origin) VALUES (?,?,'[]','tool')",
+                            (eid, path))
+
+    def _attribute_turns(self):
+        """Turn a stored Designer turn into a contact's record once its author is known."""
+        for row in self.db.execute("SELECT id,prompt,data FROM turns WHERE contact=''").fetchall():
+            turn = json.loads(row['data'])
+            prompt = self.db.execute('SELECT contact FROM prompts WHERE hash=?', (row['prompt'],)).fetchone()
+            cid, origin = (prompt['contact'], 'peer') if prompt else (None, 'user')
+            if not cid and len(set(turn['sends'])) == 1:
+                alias = self.db.execute('SELECT contact FROM aliases WHERE peer=?', (turn['sends'][0],)).fetchone()
+                cid = alias['contact'] if alias else None
+            contact = self.db.execute('SELECT data FROM contacts WHERE id=?', (cid,)).fetchone() if cid else None
+            if not contact:
+                continue
+            contact = json.loads(contact['data'])
+            peer, session = contact['peerId'], contact.get('sessionId')
+            designer = turn.get('session') or 'Designer'
+            eid = self._event('prompt:' + turn['id'], peer, 'in', turn['prompt'], turn['timestamp'], turn['source'],
+                              peer if origin == 'peer' else 'user', designer, session=session)
+            reply = self._event('reply:' + turn['id'], peer, 'out', turn['reply'], turn['replyTimestamp'],
+                                turn['source'], designer, peer, session=session) if turn.get('reply') else None
+            self._emit_work(turn, cid, reply or eid)
+            self.db.execute('UPDATE turns SET contact=? WHERE id=?', (cid, row['id']))
 
     def _import(self, path, defaults=None):
         source = str(path)
@@ -439,6 +659,8 @@ class History:
                 self._peer(peer, live=True)
             if not self.session_dir.is_dir():
                 self._warn(f'Designer session directory is unavailable: {self.session_dir}')
+            for cid, path in self._contact_transcripts():
+                self._import(path, {'contact': cid})
             for path in sorted(self.session_dir.glob('*.jsonl')):
                 self._import(path)
             for session in self.db.execute('SELECT id FROM sessions').fetchall():
@@ -468,12 +690,28 @@ class History:
                             self._contact(request['from'], request.get('senderSessionId'), defaults.get('peerName'), state=defaults.get('state'))
             for peer in peers:
                 self._peer(peer, live=True)
+            self._attribute_turns()
             # Wildcards and missing paths are retried; unchanged concrete files are not reread.
             self._sync_references(observations)
             for image in self.db.execute('SELECT id,type FROM images').fetchall():
                 self._ensure_thumbnail(image['id'], image['type'])
             self.db.execute('INSERT OR REPLACE INTO metadata VALUES (?,?)', ('sampledAt', str(time.time())))
         self._observations = observations
+
+    def _contact_transcripts(self):
+        """Each contact's own transcript, found the way OMP files it: by project directory and session id."""
+        home = str(Path.home())
+        for row in self.db.execute('SELECT id,data FROM contacts').fetchall():
+            data = json.loads(row['data'])
+            session, cwd = data.get('sessionId'), data.get('cwd')
+            if not session or not cwd or not re.fullmatch(r'[0-9a-f-]+', session):
+                continue
+            directory = self.sessions_root / str(cwd).removeprefix(home).replace('/', '-')
+            # Designer's own transcripts are already imported as Designer's, under the same cursor.
+            if directory == self.session_dir or directory.is_symlink() or not directory.is_dir():
+                continue
+            for path in sorted(directory.glob(f'*_{session}.jsonl')):
+                yield row['id'], path
 
     def _read_image(self, path):
         path = Path(os.path.abspath(Path(path).expanduser()))
@@ -618,8 +856,16 @@ class History:
         for event in events:
             contact = contacts[event['contactId']]
             contact['messages'] += 1
-            if event['direction'] == 'in':
+            # A user-originated prompt about a contact is not that contact's feedback.
+            if event['direction'] == 'in' and event['from'] != 'user':
                 contact['lastFeedback'] = event['body']
+        # Same-second changes keep transcript order: the sort is stable over rowid.
+        changes = [json.loads(row[0]) for row in self.db.execute('SELECT data FROM changes ORDER BY rowid')]
+        changes.sort(key=lambda change: (change['timestamp'] is not None, change['timestamp'] or 0))
+        for contact in contacts.values():
+            contact['changes'] = 0
+        for change in changes:
+            contacts[change['contactId']]['changes'] += 1
         revisions = [json.loads(row[0]) for row in self.db.execute('SELECT data FROM revisions')]
         revisions.sort(key=lambda revision: (revision['contactId'], revision['asset'], revision['capturedAt'], revision['id']))
         counters = {}
@@ -632,10 +878,10 @@ class History:
         sampled = self.db.execute('SELECT value FROM metadata WHERE key=?', ('sampledAt',)).fetchone()
         return dict(sampledAt=float(sampled[0]) if sampled else None,
                     contacts=sorted(contacts.values(), key=lambda contact: (-(contact['lastActivity'] or 0), contact['id'])),
-                    events=events, revisions=revisions,
+                    events=events, revisions=revisions, changes=changes,
                     warnings=[row[0] for row in self.db.execute('''SELECT message FROM warnings
                         UNION SELECT message FROM reference_warnings ORDER BY message''')] + list(self._thumbnail_errors.values()),
-                    totals=dict(contacts=len(contacts), messages=len(events), revisions=len(revisions),
+                    totals=dict(contacts=len(contacts), messages=len(events), revisions=len(revisions), changes=len(changes),
                                 imageBytes=self.db.execute('SELECT COALESCE(SUM(bytes),0) FROM images').fetchone()[0],
                                 unrecovered=self.db.execute('SELECT COUNT(*) FROM reference_warnings').fetchone()[0]))
 
