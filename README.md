@@ -154,9 +154,13 @@ stock OMP 18.1.14.
 ## Designer dock
 
 Run `designer-dock` after `omp-install` to open Designer beside the other
-Herd docked agents. It creates a background webview without selecting it.
-Repeated launches reuse the healthy pane. The dashboard observes the existing
-Designer OMP session; it does not create a second agent or restart that session.
+Herd docked agents. The dock pane hosts the Designer OMP process itself:
+the web view shows its history, and **Terminal output** is the conversation.
+Designer therefore appears only in the dock, never among the project panes.
+The hosted process resumes the newest Designer transcript that no online
+session is still writing; `--resume SESSION` picks one explicitly. Launching
+never selects the pane. Repeated launches reuse a healthy hosted pane; a pane
+whose process has exited is replaced after its successor is ready.
 
 The contact list shows recorded conversations, not every online agent.
 It imports incoming requests, outgoing feedback, and available transport

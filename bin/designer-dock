@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Designer: a persistent Herd dock for communications, feedback and image revisions."""
+"""Designer: a persistent Herd dock hosting the Designer OMP process, its feedback and image revisions."""
 from __future__ import annotations
 
 import argparse
 import fcntl
 import json
-import os
 from pathlib import Path
 import secrets
+import shutil
 import socket
 import sys
 import time
@@ -20,7 +20,17 @@ from lib.designer_dashboard import Dashboard, Settings, herd_module, serve
 TAG = "designer-dock"
 
 
-def open_pane(settings):
+def transcript(settings, ref, live):
+    """The conversation the hosted process resumes: `ref` when given, else the newest
+    transcript no online session is still writing. None starts a fresh conversation."""
+    if ref:
+        return ref
+    open_ids = {peer["sessionId"] for peer in live}
+    files = sorted(settings.session_dir.glob("*.jsonl"), key=lambda file: file.stat().st_mtime, reverse=True)
+    return next((str(file) for file in files if not any(file.stem.endswith("_" + ident) for ident in open_ids)), None)
+
+
+def open_pane(settings, ref=None):
     settings.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     for name in ("index.html", "designer.css", "designer.js", "designer.svg"):
         if not (ROOT / "assets/designer-ui" / name).is_file():
@@ -36,8 +46,19 @@ def open_pane(settings):
                     data = json.load(response)
                 if not data.get("sampledAt"):
                     raise RuntimeError("Existing Designer dock has not recorded a snapshot")
-                print(f"Designer already ready in {live['id']}; focus unchanged")
-                return
+                # A dock without its own process is only a page; it is replaced, never reused.
+                if data.get("runtime", {}).get("pid"):
+                    print(f"Designer already ready in {live['id']}; focus unchanged")
+                    return
+            omp = shutil.which("omp")
+            if not omp:
+                raise RuntimeError("omp is not installed")
+            peers = herd_module("peers").discover_peers()["peers"]
+            resume = transcript(settings, ref, peers)
+            command = [omp, f"--resume={resume}"] if resume else [omp]
+            # The state directory has one server; a superseded page must release it first.
+            for row in old:
+                client.kill(row["id"])
             token = secrets.token_urlsafe(24)
             with socket.socket() as reservation:
                 reservation.bind(("127.0.0.1", 0))
@@ -46,7 +67,7 @@ def open_pane(settings):
             space = client.space_new("designer-dock")
             try:
                 pane = client.spawn(
-                    [sys.executable, str(Path(__file__).resolve()), "--serve", "--port", str(port)],
+                    [sys.executable, str(Path(__file__).resolve()), "--attach", "--port", str(port), "--", *command],
                     cwd=str(settings.project_dir), space=space, name="Designer",
                     env={**settings.environment(), "DESIGNER_DOCK_TOKEN": token},
                     meta={TAG: str(settings.state_dir.resolve()), "dock": "bots",
@@ -62,38 +83,42 @@ def open_pane(settings):
                     except (OSError, ValueError):
                         pass
                     if time.monotonic() >= deadline:
-                        raise RuntimeError("Designer dock did not become ready; existing Designer session was not changed")
+                        raise RuntimeError("Designer dock did not become ready; run it again")
                     time.sleep(.2)
             except Exception:
                 client.kill(space=space)
                 raise
-            # Only remove dead dashboard panes after their replacement is ready.
-            for row in old:
-                client.kill(row["id"])
-            print(f"Designer dock ready in {pane}; click Designer beside the other docked agents. Focus unchanged.")
+            print(f"Designer dock ready in {pane}, {'resuming ' + resume if resume else 'fresh conversation'}; "
+                  "click Designer beside the other docked agents. Focus unchanged.")
             print(f"Durable record: {settings.state_dir / 'snapshot.json'}")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_mutually_exclusive_group()
-    modes.add_argument("--pane", action="store_true", help="open/reuse the background Herd dock (default)")
-    modes.add_argument("--serve", action="store_true", help=argparse.SUPPRESS)
+    modes.add_argument("--pane", action="store_true", help="open/reuse the background Herd dock hosting Designer (default)")
+    modes.add_argument("--attach", action="store_true", help=argparse.SUPPRESS)
     modes.add_argument("--snapshot", action="store_true", help="import current history and print the durable snapshot")
     modes.add_argument("--record", type=Path, metavar="IMAGE", help="archive an image revision under a stable contact and asset")
     parser.add_argument("--contact", help="contact id from --snapshot; required with --record")
     parser.add_argument("--asset", help="stable asset label; reuse across renamed image files")
     parser.add_argument("--caption", default="", help="revision description")
     parser.add_argument("--event", help="optional recorded message id this revision illustrates")
+    parser.add_argument("--resume", metavar="SESSION", help="with --pane: transcript path or id prefix to resume instead of the newest")
     parser.add_argument("--port", type=int, default=0, help=argparse.SUPPRESS)
+    parser.add_argument("command", nargs="*", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.command and not args.attach:
+        parser.error("unexpected arguments")
+    if args.resume and (args.attach or args.snapshot or args.record):
+        parser.error("--resume requires --pane")
     if args.record and (not args.contact or not args.asset):
         parser.error("--record requires --contact and --asset")
     if not args.record and (args.contact or args.asset or args.caption or args.event):
         parser.error("--contact, --asset, --caption and --event require --record")
     settings = Settings.defaults()
-    if args.serve:
-        serve(ROOT, settings, args.port)
+    if args.attach:
+        sys.exit(serve(ROOT, settings, args.command, args.port))
     elif args.snapshot or args.record:
         board = Dashboard(settings)
         try:
@@ -108,7 +133,7 @@ def main():
         finally:
             board.close()
     else:
-        open_pane(settings)
+        open_pane(settings, args.resume)
 
 
 if __name__ == "__main__":

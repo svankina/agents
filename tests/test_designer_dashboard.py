@@ -90,6 +90,15 @@ class DesignerDashboardBoundary(unittest.TestCase):
         peers[1]["cwd"] = str(self.root / "other")
         self.assertEqual(runtime_state(peers, self.settings.project_dir)["peerId"], "one")
 
+    def test_hosted_process_is_the_identity_regardless_of_project_siblings(self):
+        peer = {"kind": "main", "cwd": str(self.settings.project_dir), "status": "idle", "displayName": "Designer"}
+        peers = [dict(peer, id="one", sessionId="first", pid=41), dict(peer, id="two", sessionId="second", pid=42)]
+        state = runtime_state(peers, self.settings.project_dir, pid=42)
+        self.assertEqual((state["status"], state["peerId"], state["pid"]), ("idle", "two", 42))
+        # The hosted process not yet registered is offline, not a sibling borrowed by project.
+        state = runtime_state(peers[:1], self.settings.project_dir, pid=42)
+        self.assertEqual((state["status"], state["peerId"]), ("offline", None))
+
 
 if __name__ == "__main__":
     unittest.main()

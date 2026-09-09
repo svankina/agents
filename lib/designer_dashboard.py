@@ -1,4 +1,4 @@
-"""Designer webview: existing OMP session, durable history, no second agent identity."""
+"""Designer webview: hosts the Designer OMP process, keeps durable history, no second identity."""
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -14,6 +14,7 @@ import re
 import secrets
 import shutil
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -57,10 +58,15 @@ def herd_module(name):
     return importlib.import_module(f"herd.{name}")
 
 
-def runtime_state(peers, project_dir, errors=()):
-    matches = [peer for peer in peers if peer.get("kind") == "main"
-               and Path(peer.get("cwd", "")).resolve() == project_dir.resolve()]
-    base = {"name": "Designer", "cwd": str(project_dir), "peerId": None, "sessionId": None, "error": None}
+def runtime_state(peers, project_dir, errors=(), pid=None):
+    if pid is None:
+        matches = [peer for peer in peers if peer.get("kind") == "main"
+                   and Path(peer.get("cwd", "")).resolve() == project_dir.resolve()]
+    else:
+        # The hosted process is the identity; a sibling session in the same project is not.
+        matches = [peer for peer in peers if peer.get("pid") == pid]
+    base = {"name": "Designer", "cwd": str(project_dir), "peerId": None, "sessionId": None,
+            "pid": pid, "error": None}
     if len(matches) > 1:
         return dict(base, status="ambiguous", error="Multiple Designer sessions are online; no session was selected.")
     if not matches:
@@ -78,13 +84,15 @@ def _encode_snapshot(snapshot):
 
 
 class Dashboard:
-    def __init__(self, settings, discover=None):
+    def __init__(self, settings, discover=None, pid=None):
         self.settings = settings
         settings.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.lock = threading.RLock()
         self.discover = discover or herd_module("peers").discover_peers
         self.stopping = threading.Event()
         self.history = History(settings.state_dir, settings.session_dir, settings.channels_dir, settings.project_dir)
+        # The OMP process this dashboard hosts; None for CLI imports, which observe the project.
+        self.pid = pid
         self.snapshot = None
         self.payload = b"{}"
         self.etag = None
@@ -105,7 +113,7 @@ class Dashboard:
         with self.locked():
             self.history.sync(discovery["peers"])
             snapshot = self.history.snapshot()
-            snapshot["runtime"] = runtime_state(discovery["peers"], self.settings.project_dir, discovery.get("errors", []))
+            snapshot["runtime"] = runtime_state(discovery["peers"], self.settings.project_dir, discovery.get("errors", []), self.pid)
             snapshot["warnings"] = list(dict.fromkeys(snapshot.get("warnings", []) + discovery.get("errors", [])))
             payload, etag = _encode_snapshot(snapshot)
             # This is a readable durable handoff for agents even when peer delivery is uncertain.
@@ -116,14 +124,11 @@ class Dashboard:
             self.snapshot, self.payload, self.etag = snapshot, payload, etag
         return snapshot
 
-    def run(self):
+    def run(self, log=sys.stderr):
+        # The terminal belongs to the hosted OMP process: nothing is written to it here.
         while not self.stopping.wait(2):
             try:
-                snapshot = self.sample()
-                runtime = snapshot["runtime"]["status"]
-                totals = snapshot["totals"]
-                title = f"Designer · {runtime} · {totals['contacts']} contacts / {totals['revisions']} revisions"
-                print(f"\033]0;{title}\007", end="", flush=True)
+                self.sample()
             except Exception as error:
                 # Preserve the last measured timestamp: the client then marks it stale.
                 with self.lock:
@@ -131,7 +136,7 @@ class Dashboard:
                     snapshot["warnings"] = [f"History refresh failed: {error}"]
                     self.snapshot = snapshot
                     self.payload, self.etag = _encode_snapshot(snapshot)
-                print(f"Designer history refresh failed: {error}", file=sys.stderr, flush=True)
+                print(f"Designer history refresh failed: {error}", file=log, flush=True)
 
     def close(self):
         self.history.close()
@@ -212,31 +217,48 @@ def make_server(root, board, port, token):
     return server
 
 
-def serve(root, settings, port=0):
+def serve(root, settings, command, port=0):
+    """Run the dashboard around `command`, the Designer OMP process, until it exits."""
     settings.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (settings.state_dir / "server.lock").open("a") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise RuntimeError("Designer dashboard is already running for this state directory") from None
-        board = Dashboard(settings)
+        # A superseded dock is still winding down when its replacement starts.
+        deadline = time.monotonic() + 15
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("Designer dashboard is already running for this state directory") from None
+                time.sleep(.2)
         token = os.environ.get("DESIGNER_DOCK_TOKEN") or secrets.token_urlsafe(24)
-        server = make_server(root, board, port, token)
-        server.timeout = 0.5
-        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-            signal.signal(sig, lambda *_: board.stopping.set())
-        worker = None
-        try:
-            board.sample()
-            worker = threading.Thread(target=board.run, daemon=True, name="designer-history")
+        environment = {key: value for key, value in os.environ.items() if key != "DESIGNER_DOCK_TOKEN"}
+        # OMP owns the terminal from here; the dashboard's own diagnostics go beside its state.
+        with (settings.state_dir / "dashboard.log").open("a") as log:
+            agent = subprocess.Popen(command, cwd=settings.project_dir, env=environment)
+            # Terminal keystrokes reach the agent, not this host; the pane closing does.
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
+            for sig in (signal.SIGTERM, signal.SIGHUP):
+                signal.signal(sig, lambda number, _: agent.send_signal(number))
+            try:
+                board = Dashboard(settings, pid=agent.pid)
+                server = make_server(root, board, port, token)
+                board.sample()
+            except BaseException:
+                agent.terminate()
+                agent.wait()
+                raise
+            print(f"Designer dashboard ready: http://127.0.0.1:{server.server_port}/{token}/", file=log, flush=True)
+            worker = threading.Thread(target=board.run, args=(log,), daemon=True, name="designer-history")
+            listener = threading.Thread(target=server.serve_forever, daemon=True, name="designer-http")
             worker.start()
-            print("\033]0;Designer · ready · communication and revision history\007", end="", flush=True)
-            print(f"Designer dashboard ready: http://127.0.0.1:{server.server_port}/{token}/", flush=True)
-            while not board.stopping.is_set():
-                server.handle_request()
-        finally:
-            board.stopping.set()
-            if worker is not None:
+            listener.start()
+            try:
+                return agent.wait()
+            finally:
+                board.stopping.set()
+                server.shutdown()
                 worker.join()
-            server.server_close()
-            board.close()
+                listener.join()
+                server.server_close()
+                board.close()
