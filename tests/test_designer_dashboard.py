@@ -30,10 +30,13 @@ class DesignerDashboardBoundary(unittest.TestCase):
         self.worker.join()
         self.server.server_close()
 
-    def get(self, path, host=None):
+    def get(self, path, host=None, etag=None):
         connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=3)
         self.addCleanup(connection.close)
-        connection.request("GET", path, headers={"Host": host} if host else {})
+        headers = {"Host": host} if host else {}
+        if etag:
+            headers["If-None-Match"] = etag
+        connection.request("GET", path, headers=headers)
         response = connection.getresponse()
         return response.status, response.getheaders(), response.read()
 
@@ -51,6 +54,25 @@ class DesignerDashboardBoundary(unittest.TestCase):
         for suffix in ("../snapshot.json", "images/../../snapshot.json", "images/%2e%2e%2fsnapshot.json", "snapshot.json"):
             with self.subTest(suffix=suffix):
                 self.assertEqual(self.get(f"/{self.token}/{suffix}")[0], 404)
+
+    def test_conditional_snapshot_refreshes_age_without_resending_history(self):
+        path = f"/{self.token}/api/snapshot"
+        _, headers, body = self.get(path)
+        etag = dict(headers)["ETag"]
+        self.board.sample()
+        status, headers, body = self.get(path, etag=etag)
+        self.assertEqual((status, body), (304, b""))
+        self.assertGreater(float(dict(headers)["X-Sampled-At"]), 0)
+        incoming = {"type": "custom_message", "customType": "peer-message", "id": "new-message",
+                    "timestamp": "2026-01-01T00:00:00Z",
+                    "details": {"from": "omp:reviewer/Main", "to": "omp:designer/Main",
+                                "body": "Increase the contrast.", "replyTo": "request"}}
+        (self.settings.session_dir / "new.jsonl").write_text(json.dumps(incoming) + "\n")
+        self.board.sample()
+        status, headers, body = self.get(path, etag=etag)
+        self.assertEqual(status, 200)
+        self.assertNotEqual(dict(headers)["ETag"], etag)
+        self.assertEqual(json.loads(body)["events"][0]["body"], "Increase the contrast.")
 
     def test_manual_view_keeps_security_boundary(self):
         status, headers, body = self.get(f"/{self.token}/?manual=1")

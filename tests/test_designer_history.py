@@ -152,6 +152,102 @@ class HistoryBoundaries(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.history.add_revision(cid, 'logo', Path('/etc/passwd'))
 
+    def image(self, relative, width=10):
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f'<svg xmlns="http://www.w3.org/2000/svg"><rect width="{width}"/></svg>')
+        return path
+
+    def test_relative_sender_cwd_and_explicit_siblings(self):
+        first = self.image('manager/shots/dock-rows.svg')
+        second = self.image('manager/shots/dock-detail.svg')
+        self.write(self.file, self.incoming(
+            f'~170 KiB of previews: `{first}` and `dock-detail.svg` and `shots/dock-rows.svg`'))
+        peers = [dict(id='omp:old/Main', cwd=str(self.root / 'manager'))]
+        self.history.sync(peers)
+        snapshot = self.history.snapshot()
+        self.assertEqual({r['sourcePath'] for r in snapshot['revisions']}, {str(first), str(second)})
+        self.assertEqual(snapshot['totals']['unrecovered'], 0)
+
+    def test_outgoing_relative_path_uses_designer_not_contact_cwd(self):
+        own = self.image('shots/dock.svg')
+        self.image('manager/shots/dock.svg', 20)
+        cid = self.history._contact('manager', cwd=str(self.root / 'manager'))
+        self.history._event('out', cid, 'out', 'shots/dock.svg', 1, 'test', 'Designer', cid)
+        self.history.sync([])
+        self.assertEqual([r['sourcePath'] for r in self.history.snapshot()['revisions']], [str(own)])
+
+    def test_braces_specific_glob_remote_and_generic_patterns(self):
+        paths = [self.image(f'shepherd-density-{name}.svg', index + 1)
+                 for index, name in enumerate(('before', 'after', 'later'))]
+        self.image('omp-sshots-other-agent.svg')
+        self.write(self.file, self.incoming(
+            f'{self.root}/shepherd-density-{{before,after}}.svg '
+            f'{self.root}/shepherd-density-*.svg '
+            f'https://example.com{paths[0]} '
+            f'{self.root}/omp-sshots-*.svg'))
+        self.history.sync([])
+        snapshot = self.history.snapshot()
+        self.assertEqual({r['sourcePath'] for r in snapshot['revisions']}, set(map(str, paths)))
+        self.assertEqual(snapshot['totals']['unrecovered'], 1)
+        self.assertTrue(any('generic or unbounded' in warning for warning in snapshot['warnings']))
+        self.assertTrue(all(r['capturedAt'] > r['sourceTimestamp'] for r in snapshot['revisions']))
+
+    def test_ambiguous_sibling_is_warning_and_missing_reference_retries(self):
+        left = self.image('left/anchor.svg')
+        right = self.image('right/anchor.svg')
+        self.image('left/detail.svg')
+        self.image('right/detail.svg', 20)
+        self.write(self.file, self.incoming(f'{left} {right} detail.svg missing.svg'))
+        self.history.sync([])
+        snapshot = self.history.snapshot()
+        self.assertEqual(snapshot['totals']['unrecovered'], 2)
+        self.assertTrue(any('ambiguous image reference' in warning for warning in snapshot['warnings']))
+        self.assertEqual({r['sourcePath'] for r in snapshot['revisions']}, {str(left), str(right)})
+        (self.root / 'right/detail.svg').unlink()
+        missing = self.image('missing.svg')
+        self.history.sync([])
+        snapshot = self.history.snapshot()
+        self.assertEqual(snapshot['totals']['unrecovered'], 0)
+        self.assertIn(str(missing), {r['sourcePath'] for r in snapshot['revisions']})
+
+    def test_reference_migration_preserves_grouped_captures_and_cursors(self):
+        first = self.image('shepherd-density-before.svg')
+        second = self.image('shepherd-density-after.svg', 20)
+        self.write(self.file, self.incoming(f'{self.root}/shepherd-density-{{before,after}}.svg'))
+        # Seed a deployed event and explicit series without running derived observation.
+        self.history._import(self.file)
+        event = self.history.snapshot()['events'][0]
+        for image in (first, second):
+            self.history.add_revision(event['contactId'], 'density-review', image, event_id=event['id'])
+        before = self.history.snapshot()
+        cursors = list(map(tuple, self.history.db.execute('SELECT * FROM cursors')))
+        self.history._warn('Image unavailable at observation; historical bytes not recovered: /bogus.svg')
+        self.history._warn('Invalid history record: retained diagnostic')
+        self.history.db.commit()
+        self.restart()
+        self.history.sync([])
+        self.assertEqual(self.history.snapshot()['revisions'], before['revisions'])
+        self.assertEqual(self.history.snapshot()['events'], before['events'])
+        self.assertEqual(list(map(tuple, self.history.db.execute('SELECT * FROM cursors'))), cursors)
+        self.assertEqual(self.history.snapshot()['warnings'], ['Invalid history record: retained diagnostic'])
+        self.restart()
+        self.history.sync([])
+        self.assertEqual(self.history.snapshot()['revisions'], before['revisions'])
+
+    def test_unchanged_images_are_not_reread(self):
+        image = self.image('stable.svg')
+        self.write(self.file, self.incoming(str(image)))
+        self.history.sync([])
+        original = self.history._read_image
+        def refuse_read(path):
+            raise AssertionError('unchanged image reread')
+        self.history._read_image = refuse_read
+        try:
+            self.history.sync([])
+        finally:
+            self.history._read_image = original
+
 
 if __name__ == '__main__':
     unittest.main()

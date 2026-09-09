@@ -169,8 +169,18 @@ and asset to compare two revisions or open a full image. Capture time is the
 time of archival observation, not the historical message time. Missing or
 overwritten source images cannot reconstruct earlier pixels.
 PNG, JPEG, WebP, GIF, and inactive SVG files are supported, up to 32 MiB each.
-Remote URLs are not fetched. Unsafe paths and unavailable files appear under
-Recording coverage.
+Relative references use the sender's recorded project directory. Explicit
+same-message directories, brace alternatives, and bounded artifact-specific
+globs are supported. Ambiguous paths and generic screenshot globs are not
+guessed. The header counts unrecovered references; Recording coverage lists
+the reasons. Remote URLs are not fetched.
+
+Lists and comparisons use cached previews no larger than 320 pixels.
+Opening an image loads its archived original. Preview generation needs
+Python Pillow; SVG previews also use ImageMagick `convert`, `fair-run`,
+`prlimit`, and `timeout`. Preview failures preserve access to the original.
+The browser checks every 15 seconds. Unchanged snapshots return HTTP 304
+without retransmitting conversation history.
 
 `designer-dock --snapshot` imports and prints the current record. To group
 renamed captures under one asset, reuse the same contact ID and asset label:

@@ -7,6 +7,7 @@
   const selection = { contact: typeof saved?.contact === 'string' ? saved.contact : '', search: typeof saved?.search === 'string' ? saved.search : '', assets: saved?.assets && typeof saved.assets === 'object' ? saved.assets : {}, pairs: saved?.pairs && typeof saved.pairs === 'object' ? saved.pairs : {} };
   let snapshot = null;
   let failure = '';
+  let validator = null;
   const text = value => value == null ? '--' : String(value);
   const date = value => typeof value === 'number' && Number.isFinite(value) ? new Date(value * 1000).toLocaleString() : '--';
   const save = () => { try { sessionStorage.setItem(storageKey, JSON.stringify(selection)); } catch { /* History remains usable when browser storage is disabled. */ } };
@@ -47,18 +48,20 @@
   }
   const states = new Set(['running', 'queued', 'idle', 'error', 'unknown', 'offline', 'ambiguous']);
   function stateNode(value) { const state = states.has(value) ? value : 'unknown'; const node = el('span', state, 'state'); node.dataset.state = state; return node; }
-  function validImage(url) { return typeof url === 'string' && /^images\/[a-f0-9]+$/i.test(url); }
+  function validImage(url) { return typeof url === 'string' && /^(images|thumbnails)\/[a-f0-9]{64}$/i.test(url); }
   function image(revision, full = false) {
     const wrap = el(full ? 'div' : 'button', null, full ? 'full-image' : 'image-button');
     if (!full) { wrap.type = 'button'; wrap.dataset.preview = revision.id; wrap.setAttribute('aria-label', `Open ${text(revision.asset)} revision ${text(revision.number)} full image`); }
-    wrap.dataset.static = key(revision.id, revision.imageUrl, full);
-    if (!validImage(revision.imageUrl)) {
-      const blocked = el('div', 'Image unavailable: blocked or invalid archive URL.', 'image-failure');
+    const source = full ? revision.imageUrl : revision.thumbnailUrl;
+    wrap.dataset.static = key(revision.id, source, full);
+    if (!validImage(source)) {
+      const blocked = el('div', full ? 'Image unavailable: blocked or invalid archive URL.' : 'Thumbnail unavailable; open the archived original.', 'image-failure');
       blocked.dataset.static = wrap.dataset.static;
+      if (!full && validImage(revision.imageUrl)) { wrap.append(blocked); return wrap; }
       return blocked;
     }
     const img = el('img');
-    img.src = revision.imageUrl;
+    img.src = source;
     img.alt = `${text(revision.asset)} · revision ${text(revision.number)}`;
     if (!full) img.loading = 'lazy';
     const error = el('span', 'Image unavailable: the archived image could not be loaded.', 'image-failure');
@@ -160,7 +163,7 @@
     $('runtime-detail').textContent = `Session: ${text(runtime.sessionId)} · Peer: ${text(runtime.peerId)}\nProject: ${text(runtime.cwd)}${runtime.error ? `\nRuntime: ${runtime.error}` : ''}`;
     const totals = snapshot.totals || {};
     const bytes = typeof totals.imageBytes === 'number' ? (totals.imageBytes >= 1048576 ? `${(totals.imageBytes / 1048576).toFixed(1)} MiB` : `${(totals.imageBytes / 1024).toFixed(1)} KiB`) : '--';
-    reconcile($('totals'), [['contacts', 'Contacts'], ['messages', 'Messages'], ['revisions', 'Revisions'], ['imageBytes', 'Archived images']].map(([field, label]) => { const item = keyed(el('div', null, 'total'), field); item.append(el('strong', field === 'imageBytes' ? bytes : text(totals[field])), el('span', label)); return item; }));
+    reconcile($('totals'), [['contacts', 'Contacts'], ['messages', 'Messages'], ['revisions', 'Revisions'], ['unrecovered', 'Unrecovered references'], ['imageBytes', 'Archived images']].map(([field, label]) => { const item = keyed(el('div', null, 'total'), field); item.append(el('strong', field === 'imageBytes' ? bytes : text(totals[field])), el('span', label)); return item; }));
     const warnings = Array.isArray(snapshot.warnings) ? snapshot.warnings : [];
     $('warnings').hidden = !warnings.length;
     reconcile($('warning-list'), warnings.map((warning, index) => keyed(el('li', text(warning)), index)));
@@ -169,13 +172,13 @@
   function health() {
     const sample = snapshot?.sampledAt;
     const age = typeof sample === 'number' && Number.isFinite(sample) ? Math.max(0, Date.now() / 1000 - sample) : null;
-    const stale = snapshot && (age == null || age > 15);
+    const stale = snapshot && (age == null || age > 30);
     $('sample-age').textContent = age == null ? 'Sample time: --' : `Sampled ${Math.floor(age)}s ago · ${date(sample)}`;
     $('connection').textContent = failure ? 'Snapshot error' : stale ? 'Snapshot stale' : snapshot ? 'Snapshot current' : 'Connecting…';
     $('connection').className = 'state'; $('connection').dataset.state = failure ? 'error' : stale ? 'stale' : 'idle';
     $('notice').hidden = !failure && !stale;
     $('notice').dataset.error = String(Boolean(failure));
-    $('notice').textContent = failure ? `${failure}${snapshot ? ' Showing the last good snapshot.' : ' No snapshot has been loaded.'}${stale ? ' Recorded data is stale (over 15 seconds old or timestamp unavailable).' : ''}` : stale ? 'Recorded data is stale (over 15 seconds old or timestamp unavailable). Runtime status is the last observation, not a live guarantee.' : '';
+    $('notice').textContent = failure ? `${failure}${snapshot ? ' Showing the last good snapshot.' : ' No snapshot has been loaded.'}${stale ? ' Recorded data is stale (over 30 seconds old or timestamp unavailable).' : ''}` : stale ? 'Recorded data is stale (over 30 seconds old or timestamp unavailable). Runtime status is the last observation, not a live guarantee.' : '';
   }
   window.render = function render(data) {
     if (!data || !Array.isArray(data.contacts) || !Array.isArray(data.events) || !Array.isArray(data.revisions)) throw new Error('Invalid history snapshot');
@@ -199,11 +202,19 @@
   $('preview-close').addEventListener('click', () => $('image-preview').close());
   async function poll() {
     try {
-      const response = await fetch('api/snapshot', { cache: 'no-store', signal: AbortSignal.timeout(10000) });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      window.render(await response.json());
+      const response = await fetch('api/snapshot', { cache: 'no-store', headers: validator ? {'If-None-Match': validator} : {}, signal: AbortSignal.timeout(10000) });
+      if (response.status === 304 && snapshot) {
+        const sampled = Number(response.headers.get('X-Sampled-At'));
+        if (Number.isFinite(sampled) && sampled > 0) snapshot.sampledAt = sampled;
+        failure = ''; health();
+      } else {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        window.render(data);
+        validator = response.headers.get('ETag');
+      }
     } catch (error) { failure = `Unable to refresh history: ${error.message || 'request failed'}.`; health(); }
-    finally { setTimeout(poll, 2000); }
+    finally { setTimeout(poll, 15000); }
   }
   setInterval(health, 1000);
   if (new URLSearchParams(location.search).get('manual') !== '1') poll();

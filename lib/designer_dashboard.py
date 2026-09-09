@@ -4,6 +4,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 import fcntl
+import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib
 import json
@@ -69,6 +70,13 @@ def runtime_state(peers, project_dir, errors=()):
                 name=peer.get("displayName") or "Designer", error="; ".join(errors) or None)
 
 
+def _encode_snapshot(snapshot):
+    # Observation time is freshness metadata, not a change to the recorded history.
+    content = {key: value for key, value in snapshot.items() if key != "sampledAt"}
+    validator = hashlib.sha256(json.dumps(content, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    return json.dumps(snapshot, ensure_ascii=False).encode(), f'W/"{validator}"'
+
+
 class Dashboard:
     def __init__(self, settings, discover=None):
         self.settings = settings
@@ -79,6 +87,7 @@ class Dashboard:
         self.history = History(settings.state_dir, settings.session_dir, settings.channels_dir, settings.project_dir)
         self.snapshot = None
         self.payload = b"{}"
+        self.etag = None
 
     @contextmanager
     def locked(self):
@@ -98,13 +107,13 @@ class Dashboard:
             snapshot = self.history.snapshot()
             snapshot["runtime"] = runtime_state(discovery["peers"], self.settings.project_dir, discovery.get("errors", []))
             snapshot["warnings"] = list(dict.fromkeys(snapshot.get("warnings", []) + discovery.get("errors", [])))
-            payload = json.dumps(snapshot, ensure_ascii=False).encode()
+            payload, etag = _encode_snapshot(snapshot)
             # This is a readable durable handoff for agents even when peer delivery is uncertain.
             temporary = self.settings.state_dir / "snapshot.json.tmp"
             temporary.write_bytes(payload)
             temporary.chmod(0o600)
             temporary.replace(self.settings.state_dir / "snapshot.json")
-            self.snapshot, self.payload = snapshot, payload
+            self.snapshot, self.payload, self.etag = snapshot, payload, etag
         return snapshot
 
     def run(self):
@@ -120,7 +129,8 @@ class Dashboard:
                 with self.lock:
                     snapshot = dict(self.snapshot or {})
                     snapshot["warnings"] = [f"History refresh failed: {error}"]
-                    self.payload = json.dumps(snapshot).encode()
+                    self.snapshot = snapshot
+                    self.payload, self.etag = _encode_snapshot(snapshot)
                 print(f"Designer history refresh failed: {error}", file=sys.stderr, flush=True)
 
     def close(self):
@@ -143,15 +153,22 @@ def make_server(root, board, port, token):
                 self.send_error(404)
                 return
             endpoint = path[len(prefix):]
+            status, etag, sampled = 200, None, None
             if endpoint == "api/snapshot":
                 with board.lock:
                     body, content_type = board.payload, "application/json"
+                    etag = board.etag
+                    sampled = (board.snapshot or {}).get("sampledAt")
+                    if etag and self.headers.get("If-None-Match") == etag:
+                        status, body = 304, b""
             elif endpoint in assets:
                 name, content_type = assets[endpoint]
                 body = (root / "assets/designer-ui" / name).read_bytes()
-            elif endpoint.startswith("images/"):
+            elif endpoint.startswith(("images/", "thumbnails/")):
                 with board.locked():
-                    image = board.history.image_path(endpoint.removeprefix("images/"))
+                    image = (board.history.thumbnail_path(endpoint.removeprefix("thumbnails/"))
+                             if endpoint.startswith("thumbnails/") else
+                             board.history.image_path(endpoint.removeprefix("images/")))
                     if image is None:
                         self.send_error(404)
                         return
@@ -164,10 +181,16 @@ def make_server(root, board, port, token):
             else:
                 self.send_error(404)
                 return
-            self.send_response(200)
+            self.send_response(status)
             self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
+            if status != 304:
+                self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "private, max-age=31536000, immutable"
+                             if endpoint.startswith(("images/", "thumbnails/")) else "no-store")
+            if etag:
+                self.send_header("ETag", etag)
+            if sampled is not None:
+                self.send_header("X-Sampled-At", str(sampled))
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors file: http://127.0.0.1:* http://localhost:*")
