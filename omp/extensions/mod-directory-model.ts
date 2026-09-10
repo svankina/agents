@@ -128,6 +128,9 @@ async function applyDirectoryModel(api: ExtensionAPI, ctx: ExtensionContext): Pr
 	if (model) await api.setModel(model);
 }
 
+export const description =
+	"`/mod` pins a default model for this directory, stored in `.omp/directory-model.json`.";
+
 export default function modDirectoryModel(api: ExtensionAPI): void {
 	api.on("session_start", async (_event, ctx) => {
 		try {

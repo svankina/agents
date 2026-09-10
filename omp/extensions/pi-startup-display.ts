@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
@@ -7,17 +8,33 @@ import {
 	wrapTextWithAnsi,
 } from "@oh-my-pi/pi-tui";
 
+export const description =
+	"This startup panel: context files, extensions and skills with one-line summaries.";
+
 const WIDGET_KEY = "pi-startup-display";
 const CTRL_O = "\x0f";
+/** Widest name column before names start being clipped. */
+const NAME_COLUMN_MAX = 26;
+/** Below this the detail column is dropped instead of being shredded. */
+const DETAIL_MIN_WIDTH = 12;
+/** Extension sources are small; refuse to slurp anything unexpected. */
+const MAX_SOURCE_BYTES = 512 * 1024;
 
 interface ThemeLike {
 	bold(text: string): string;
 	fg(color: "customMessageLabel" | "muted", text: string): string;
 }
 
+interface ResourceEntry {
+	readonly name: string;
+	readonly description: string;
+	readonly path: string;
+}
+
 interface StartupResources {
 	contextFiles: readonly string[];
-	extensions: readonly { readonly name: string; readonly path: string }[];
+	extensions: readonly ResourceEntry[];
+	skills: readonly ResourceEntry[];
 }
 
 function abbreviateHome(value: string): string {
@@ -34,7 +51,7 @@ function fit(line: string, width: number): string {
 }
 
 function wrapEntries(entries: readonly string[], width: number): string[] {
-	if (entries.length === 0) return [fit("  None", width)];
+	if (entries.length === 0) return [fit("  none", width)];
 	const available = Math.max(1, width - 2);
 	const lines: string[] = [];
 	let current = "";
@@ -49,6 +66,14 @@ function wrapEntries(entries: readonly string[], width: number): string[] {
 	}
 	if (current) lines.push(fit(`  ${current}`, width));
 	return lines;
+}
+
+/** Collapse a multi-sentence blurb to its first sentence, on one line. */
+function firstSentence(text: string): string {
+	const flat = text.replace(/\s+/g, " ").trim();
+	const end = flat.search(/[.!?](?:\s|$)/);
+	if (end < 0) return flat;
+	return flat.slice(0, end);
 }
 
 class StartupDisplayWidget {
@@ -95,13 +120,54 @@ class StartupDisplayWidget {
 		return wrapTextWithAnsi(line, width).map((part) => fit(part, width));
 	}
 
-	#section(name: string, entries: readonly string[], width: number): string[] {
+	#header(name: string, count: number, width: number): string {
+		const label = count > 0 ? `[${name} ${count}]` : `[${name}]`;
+		return fit(this.theme.fg("customMessageLabel", label), width);
+	}
+
+	/**
+	 * One entry per line: `name` in the foreground, one-liner (or path, when
+	 * expanded) dimmed in an aligned second column.
+	 */
+	#entryLines(
+		entries: readonly ResourceEntry[],
+		width: number,
+		detail: "description" | "path",
+	): string[] {
+		if (entries.length === 0)
+			return [this.theme.fg("muted", fit("  none", width))];
+		const nameWidth = Math.min(
+			NAME_COLUMN_MAX,
+			Math.max(...entries.map((entry) => visibleWidth(entry.name))),
+		);
+		const detailWidth = width - nameWidth - 4;
+		return entries.map((entry) => {
+			const name =
+				visibleWidth(entry.name) > nameWidth
+					? truncateToWidth(entry.name, nameWidth)
+					: entry.name.padEnd(nameWidth);
+			const text = entry[detail];
+			if (!text || detailWidth < DETAIL_MIN_WIDTH)
+				return fit(`  ${name.trimEnd()}`, width);
+			return fit(
+				`  ${name}  ${this.theme.fg("muted", fit(text, detailWidth))}`,
+				width,
+			);
+		});
+	}
+
+	#sections(width: number, detail: "description" | "path"): string[] {
 		return [
-			fit(this.theme.fg("customMessageLabel", `[${name}]`), width),
-			"",
-			...wrapEntries(entries, width).map((line) =>
+			this.#header("Context", 0, width),
+			...wrapEntries(this.resources.contextFiles, width).map((line) =>
 				this.theme.fg("muted", line),
 			),
+			"",
+			this.#header("Extensions", this.resources.extensions.length, width),
+			...this.#entryLines(this.resources.extensions, width, detail),
+			"",
+			this.#header("Skills", this.resources.skills.length, width),
+			...this.#entryLines(this.resources.skills, width, detail),
 		];
 	}
 
@@ -113,26 +179,12 @@ class StartupDisplayWidget {
 			...this.#wrap(
 				this.theme.fg(
 					"muted",
-					"escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more",
+					"escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o paths",
 				),
 				width,
 			),
 			"",
-			...this.#wrap(
-				this.theme.fg(
-					"muted",
-					"Press ctrl+o to show full startup help and discovered resource paths.",
-				),
-				width,
-			),
-			"",
-			...this.#section("Context", this.resources.contextFiles, width),
-			"",
-			...this.#section(
-				"Extensions",
-				this.resources.extensions.map((extension) => extension.name),
-				width,
-			),
+			...this.#sections(width, "description"),
 		].map((line) => fit(line, width));
 	}
 
@@ -142,47 +194,96 @@ class StartupDisplayWidget {
 			"escape interrupts the current response",
 			"ctrl+c clears input; ctrl+d exits when input is empty",
 			"/ opens commands; ! runs shell commands",
-			"ctrl+o toggles startup help and expandable transcript details",
+			"ctrl+o toggles resource paths and expandable transcript details",
 		];
 		return [
 			fit(this.theme.bold(`omp v${this.version}`), width),
-			"",
-			fit(this.theme.bold("Startup help"), width),
 			"",
 			...help.flatMap((line) =>
 				this.#wrap(this.theme.fg("muted", `  ${line}`), width),
 			),
 			"",
-			...this.#section("Context", this.resources.contextFiles, width),
-			"",
-			...this.#section(
-				"Extensions",
-				this.resources.extensions.map(
-					(extension) => `${extension.name} — ${extension.path}`,
-				),
-				width,
-			),
+			...this.#sections(width, "path"),
 		].map((line) => fit(line, width));
 	}
 }
 
 function extensionDisplayName(extensionPath: string): string {
 	const parsed = path.parse(extensionPath);
-	if (parsed.name !== "index" && parsed.name !== "extension")
-		return parsed.base;
+	if (parsed.name !== "index" && parsed.name !== "extension") return parsed.name;
 	let packageDir = parsed.dir;
 	if (path.basename(packageDir) === "src")
 		packageDir = path.dirname(packageDir);
-	return path.basename(packageDir) || parsed.base;
+	return path.basename(packageDir) || parsed.name;
+}
+
+/**
+ * One-liner for an extension, in order of authority:
+ *   1. `export const description = "…"` — the convention these extensions use;
+ *   2. `description` in the owning package.json (installed plugins);
+ *   3. the first paragraph of the file's leading doc comment.
+ * Read from source rather than the module: the module is already loaded and
+ * re-importing it for a banner is not worth the side-effect risk.
+ */
+async function extensionDescription(extensionPath: string): Promise<string> {
+	let source: string;
+	try {
+		source = await readFile(extensionPath, "utf8");
+	} catch {
+		return "";
+	}
+	if (source.length > MAX_SOURCE_BYTES)
+		source = source.slice(0, MAX_SOURCE_BYTES);
+	const declared = source.match(
+		/export\s+const\s+description(?:\s*:\s*string)?\s*=\s*(["'`])((?:\\.|(?!\1)[^\\])*)\1/,
+	);
+	if (declared?.[2]) return firstSentence(declared[2].replace(/\\(.)/g, "$1"));
+	const packaged = await packageDescription(path.dirname(extensionPath));
+	if (packaged) return firstSentence(packaged);
+	const block = source.match(/^\s*\/\*\*?([\s\S]*?)\*\//);
+	if (!block?.[1]) return "";
+	// First written line only: hand-wrapped doc comments continue into detail
+	// that is rationale, not a summary, and a banner has room for neither.
+	for (const line of block[1].split("\n")) {
+		const text = line.replace(/^\s*\*\s?/, "").trim();
+		if (text) return firstSentence(text);
+	}
+	return "";
+}
+
+/** `description` from the nearest package.json above an entry file. */
+async function packageDescription(startDir: string): Promise<string> {
+	let dir = startDir;
+	for (let depth = 0; depth < 3; depth++) {
+		try {
+			const raw = await readFile(path.join(dir, "package.json"), "utf8");
+			const parsed: unknown = JSON.parse(raw);
+			const value =
+				parsed && typeof parsed === "object" && "description" in parsed
+					? parsed.description
+					: undefined;
+			return typeof value === "string" ? value : "";
+		} catch {
+			const parent = path.dirname(dir);
+			if (parent === dir) return "";
+			dir = parent;
+		}
+	}
+	return "";
 }
 
 async function discoverStartupResources(
 	api: ExtensionAPI,
 	ctx: ExtensionContext,
 ): Promise<StartupResources> {
-	const [contextResult, extensionResult] = await Promise.allSettled([
+	const skillSettings = {
+		...api.pi.settings.getGroup("skills"),
+		disabledExtensions: api.pi.settings.get("disabledExtensions") ?? [],
+	};
+	const [contextResult, extensionResult, skillResult] = await Promise.allSettled([
 		api.pi.discoverContextFiles(ctx.cwd),
 		api.pi.discoverSessionExtensionPaths({}, ctx.cwd, api.pi.settings),
+		api.pi.discoverSkills(ctx.cwd, undefined, skillSettings),
 	]);
 	const contextFiles =
 		contextResult.status === "fulfilled"
@@ -204,13 +305,30 @@ async function discoverStartupResources(
 					),
 				]
 			: [];
+	const extensions = await Promise.all(
+		extensionPaths.map(async (extensionPath) => ({
+			name: extensionDisplayName(extensionPath),
+			description: await extensionDescription(extensionPath),
+			path: abbreviateHome(extensionPath),
+		})),
+	);
+	const skills =
+		skillResult.status === "fulfilled"
+			? skillResult.value.skills
+					.filter((skill) => !skill.hide)
+					.map((skill) => ({
+						name: skill.name,
+						description: firstSentence(skill.description ?? ""),
+						path: abbreviateHome(skill.filePath),
+					}))
+			: [];
+	const byName = (a: ResourceEntry, b: ResourceEntry) =>
+		a.name.localeCompare(b.name);
 
 	return {
 		contextFiles,
-		extensions: extensionPaths.map((extensionPath) => ({
-			name: extensionDisplayName(extensionPath),
-			path: abbreviateHome(extensionPath),
-		})),
+		extensions: extensions.sort(byName),
+		skills: skills.sort(byName),
 	};
 }
 
@@ -238,7 +356,7 @@ export default function piStartupDisplay(api: ExtensionAPI): void {
 		if (lines.length > 0) activeUi.notify(lines.join("\n"), "info");
 	};
 
-	const install = async (ctx: ExtensionContext): Promise<void> => {
+	const mount = async (ctx: ExtensionContext): Promise<void> => {
 		clear();
 		if (!ctx.hasUI) return;
 		const resources = await discoverStartupResources(api, ctx);
@@ -262,8 +380,8 @@ export default function piStartupDisplay(api: ExtensionAPI): void {
 		});
 	};
 
-	api.on("session_start", async (_event, ctx) => install(ctx));
-	api.on("session_switch", async (_event, ctx) => install(ctx));
+	api.on("session_start", async (_event, ctx) => mount(ctx));
+	api.on("session_switch", async (_event, ctx) => mount(ctx));
 	// First submission of any kind: flush the widget into the transcript before
 	// the user message is echoed, so it reads in chronological order above it.
 	api.on("input", () => {

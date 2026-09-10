@@ -14,6 +14,9 @@ import {
 	type Questions,
 } from "../lib/herd-questions";
 
+export const description =
+	"Routes `ask` questions and model control to the Herd UI, falling back to the terminal.";
+
 /** Standalone public-extension override; the installed OMP binary stays unchanged. */
 export default function herdQuestionsExtension(pi: ExtensionAPI) {
 	pi.setLabel("Herd Questions");

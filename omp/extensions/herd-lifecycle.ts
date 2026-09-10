@@ -6,6 +6,9 @@ import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
  * Full snapshots make broker reconnects independent of missed transitions.
  * No terminal parsing, new core hooks, or running broker are required.
  */
+export const description =
+	"Publishes full session lifecycle snapshots to the Herd broker socket for this pane.";
+
 export default function herdLifecycle(pi: ExtensionAPI): void {
 	const pane = process.env.HERD_PANE;
 	if (!pane) return;

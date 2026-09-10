@@ -60,6 +60,9 @@ interface Connection {
 	channelBusy: boolean;
 }
 
+export const description =
+	"Cross-process peers: extends `hub` with omp-to-omp routing, a peer directory and channel workers.";
+
 /** Public-extension adapter; the transport deliberately lives outside the auto-loaded directory. */
 export default function peersExtension(pi: ExtensionAPI) {
 	pi.setLabel("Cross-process Peers");

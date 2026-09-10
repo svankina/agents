@@ -94,6 +94,9 @@ interface HistoryTurn {
 	text: string;
 }
 
+export const description =
+	"Predicts your next message and shows it as ghost text; Tab accepts it into the editor.";
+
 export default function (pi: ExtensionAPI): void {
 	let enabled = process.env.OMP_PREDICT_INPUT !== "0";
 	let prediction: string | null = null;

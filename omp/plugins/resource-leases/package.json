@@ -1,6 +1,7 @@
 {
 	"name": "@svankina/omp-resource-leases",
 	"version": "1.0.0",
+	"description": "Leases owned processes and headless browsers, and forces cleanup before the session ends.",
 	"private": true,
 	"type": "module",
 	"omp": {

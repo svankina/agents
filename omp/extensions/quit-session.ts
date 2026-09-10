@@ -60,6 +60,9 @@ if same_process(parent_pid, parent_start, executable):
         pass
 `;
 
+export const description =
+	"Gives the agent a `quit_session` tool so it can end the session itself (`/wrapup`, `/wq`).";
+
 export default function quitSession(pi: ExtensionAPI) {
 	pi.setLabel("Quit Session");
 	let terminalWatcherScheduled = false;

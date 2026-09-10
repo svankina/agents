@@ -1,6 +1,7 @@
 {
   "name": "@svankina/omp-herdmon-dispatch",
   "version": "1.0.0",
+  "description": "Coordinator-only durable dispatch: scoped SDK workers in feature worktrees, reviewed before merge.",
   "private": true,
   "type": "module",
   "omp": { "extensions": ["./index.ts"] }

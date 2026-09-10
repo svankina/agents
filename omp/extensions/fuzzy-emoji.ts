@@ -8,6 +8,9 @@ import { type AutocompleteProvider, fuzzyFilter } from "@oh-my-pi/pi-tui";
 const entries = Object.values(buckets).flat() as [string, string][];
 const MAX_SUGGESTIONS = 12;
 
+export const description =
+	"Fuzzy `:shortcode:` emoji completion in the composer, layered over the host provider.";
+
 export default function fuzzyEmoji(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {
 		if (!ctx.hasUI) return;
