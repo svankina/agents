@@ -42,6 +42,7 @@ export class ConversationRouter {
   #routes = new Set<Promise<unknown>>();
   #waiters = new Map<string, (reason: "reply" | "timeout" | "aborted" | "closed") => void>();
   #closing = false;
+  #lastActivity = 0;
 
   constructor(options: RouterOptions = {}) {
     this.#options = options;
@@ -93,7 +94,7 @@ export class ConversationRouter {
       const network = new PeerNetwork({ directory, peers: instanceId => [{
         id: qualifyPeer(instanceId, "Main"), localId: "Main", instanceId,
         sessionId: this.sessionId, displayName: "Conversation", kind: "main", status: "idle",
-        cwd: this.stateDir, pid: process.pid, lastActivity: Date.now(), activity: "Lightweight request router",
+        cwd: this.stateDir, pid: process.pid, lastActivity: this.#lastActivity, activity: "Lightweight request router",
       }], receive: message => this.#receive(message) });
       this.#network = network;
       await network.start();
@@ -130,6 +131,7 @@ export class ConversationRouter {
     try { await file.writeFile(JSON.stringify(this.#requireStore())); await file.sync(); }
     finally { await file.close(); }
     await fs.rename(temporary, join(this.stateDir, "requests.json"));
+    this.#lastActivity = Date.now();
   }
   #eligible(peer: PeerDescriptor): boolean {
     const subpath = relative(this.projectRoot, peer.cwd);

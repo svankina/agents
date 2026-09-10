@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test, expect, setSystemTime } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,6 +31,44 @@ async function sandbox() {
     await rm(root, { recursive: true, force: true });
   } };
 }
+
+test("discovery preserves idle age while handoffs and new replies advance activity", async () => {
+  const box = await sandbox();
+  const now = Date.now();
+  setSystemTime(now);
+  try {
+    const target = await box.peer("target");
+    const router = box.router();
+    await router.start();
+    const activity = async () => {
+      const found = await target.network.discover();
+      return found.peers.find(peer => peer.id === router.id)!.lastActivity;
+    };
+    const started = await activity();
+    setSystemTime(now + 1000);
+    expect(await activity()).toBe(started);
+
+    const sent = await router.routeRequest({ targetId: target.id, request: "Check the requested change" });
+    const handedOff = await activity();
+    expect(handedOff).toBeGreaterThan(started);
+    setSystemTime(now + 2000);
+    router.requestStatus(sent.id);
+    await router.listAgents();
+    expect(await activity()).toBe(handedOff);
+
+    const reply = { from: target.id, to: router.id, body: "Verified", replyTo: sent.id, senderSessionId: "target", kind: "reply" as const };
+    expect((await target.network.send(reply)).outcome).toBe("injected");
+    const replied = await activity();
+    expect(replied).toBeGreaterThan(handedOff);
+    setSystemTime(now + 3000);
+    expect((await target.network.send(reply)).outcome).toBe("injected");
+    expect((await target.network.send({ ...reply, senderSessionId: "wrong-session" })).outcome).toBe("failed");
+    expect(await activity()).toBe(replied);
+  } finally {
+    setSystemTime();
+    await box.close();
+  }
+});
 
 test("exact handoff identity rejects wrong-session replies and conflicting duplicates", async () => {
   const box = await sandbox();

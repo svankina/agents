@@ -31,6 +31,8 @@ command; it is not the routing roster.
 Tool cards show agent names, projects, request text, and readable replies instead
 of JSON. The live indicator distinguishes accepted/awaiting reply, reply received,
 and uncertain delivery. “Reply received” does not verify the agent's claims.
+The dock's idle age measures time since the router started or last saved a
+handoff or reply. Reading status does not reset that age.
 Follow up by agent or topic; Conversation resolves the internal request ID from
 history and asks which topic when ambiguous. Ask for the rest of a long reply
 or older handoffs to page through retained history.
