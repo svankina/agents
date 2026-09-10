@@ -11,6 +11,10 @@ the matching skills, not here.
 it; it never kills other panes. `conversation --print 'MESSAGE'` performs a
 noninteractive exchange (piped stdin also works). Use `--model MODEL` to override
 the default `@smol` role. Only one process may write the conversation at a time.
+Its dock pane carries a display identity: the row reads **Conversation** with
+the role `Agent routing` and the `assets/conversation.svg` portrait, and the
+expanded pane shows that portrait, live state, model and role above the
+terminal. The row's token count covers the private session root.
 
 The router lists existing named agents, chooses by their project/role, and asks
 the user when ownership is ambiguous. It has only `list_agents`, `route_request`,
@@ -62,6 +66,11 @@ it. The agent uses `openai-codex/gpt-6-astra` with high thinking. Prewalk is
 disabled so editing does not automatically switch to a smaller model.
 Use `cad-agent --terminal` to run it in the current terminal instead.
 Only one process can write its conversation.
+Its dock pane carries a display identity: the row reads **CAD** with the role
+`Mechanical CAD` and the `assets/cad.svg` portrait, and the expanded pane shows
+that portrait, live state, model and role above the terminal. A restarted dock
+is what applies changed identity metadata; a live pane keeps the metadata it
+was spawned with.
 
 The agent stays available after each request. Its private coordination workspace
 and saved conversations live under `~/.local/state/cad-agent`; override that root

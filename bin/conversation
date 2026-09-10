@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import importlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -12,6 +13,12 @@ import sys
 
 ROOT = Path(__file__).resolve().parent.parent
 TAG = "conversation-router"
+# Herd's dock reads these: a stable name and role instead of the OMP window
+# title, the portrait for the row icon and the expanded pane's profile header,
+# and the private session root that owns this router's recorded token usage.
+AVATAR = ROOT / "assets/conversation.svg"
+DOCK_NAME = "Conversation"
+DOCK_ROLE = "Agent routing"
 # Overlay only: retain the user's existing authentication and model-role settings.
 CONFIG = """advisor:
   enabled: false
@@ -85,7 +92,10 @@ def open_pane(state: Path, cwd: Path, model: str):
                 cwd=str(cwd), space=space, name="Conversation",
                 env={"CONVERSATION_STATE_DIR": str(state),
                      "CONVERSATION_PROJECT_ROOT": os.environ["CONVERSATION_PROJECT_ROOT"]},
-                meta={TAG: str(state), "dock": "bots"}, cols=120, rows=36,
+                meta={TAG: str(state), "dock": "bots", "dock-name": DOCK_NAME,
+                      "dock-role": DOCK_ROLE, "avatar": str(AVATAR),
+                      "usage-dirs": json.dumps([str(state / "sessions")])},
+                cols=120, rows=36,
             )
             print(f"Conversation launched in {pane}; focus unchanged")
 
@@ -113,6 +123,9 @@ def main():
     plugin = ROOT / "omp/plugins/conversation-router/index.ts"
     if not plugin.is_file():
         raise RuntimeError(f"Missing Conversation extension: {plugin}")
+    # A missing portrait would silently downgrade the dock row to a glyph.
+    if args.pane and not AVATAR.is_file():
+        raise RuntimeError(f"Missing Conversation portrait: {AVATAR}")
     state = Path(os.environ.get("CONVERSATION_STATE_DIR", Path.home() / ".local/state/conversation")).expanduser().resolve()
     project = Path(os.environ.get("CONVERSATION_PROJECT_ROOT", Path.home())).expanduser().resolve()
     os.umask(0o077)

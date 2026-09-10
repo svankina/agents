@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import importlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -13,6 +14,12 @@ import time
 
 ROOT = Path(__file__).resolve().parent.parent
 TAG = "cad-agent"
+# Herd's dock reads these: a stable name and role instead of the OMP window
+# title, the portrait for the row icon and the expanded pane's profile header,
+# and the private session root that owns this agent's recorded token usage.
+AVATAR = ROOT / "assets/cad.svg"
+DOCK_NAME = "CAD"
+DOCK_ROLE = "Mechanical CAD"
 MODEL = "openai-codex/gpt-6-astra"
 PROMPT = """You are CAD, the user's persistent mechanical CAD agent. Own CAD modelling,
 assemblies, fit checks, geometry verification and fabrication preparation. Read
@@ -63,7 +70,10 @@ def open_pane(state, cwd):
                     ["exec", sys.executable, str(Path(__file__).resolve()), "--terminal"],
                     cwd=str(cwd), space=space, name="CAD",
                     env={"CAD_AGENT_STATE_DIR": str(state)},
-                    meta={TAG: str(state), "dock": "bots"}, cols=120, rows=40,
+                    meta={TAG: str(state), "dock": "bots", "dock-name": DOCK_NAME,
+                          "dock-role": DOCK_ROLE, "avatar": str(AVATAR),
+                          "usage-dirs": json.dumps([str(state / "sessions")])},
+                    cols=120, rows=40,
                 )
             else:
                 pane_id = pane["id"]
@@ -95,6 +105,9 @@ def main():
     plugin = ROOT / "omp/plugins/cad-agent/index.ts"
     if not plugin.is_file():
         raise RuntimeError(f"Missing CAD extension: {plugin}")
+    # A missing portrait would silently downgrade the dock row to a glyph.
+    if not args.terminal and not AVATAR.is_file():
+        raise RuntimeError(f"Missing CAD portrait: {AVATAR}")
     state = Path(os.environ.get("CAD_AGENT_STATE_DIR", Path.home() / ".local/state/cad-agent")).expanduser().resolve()
     cwd, sessions = state / "workspace", state / "sessions"
     os.umask(0o077)

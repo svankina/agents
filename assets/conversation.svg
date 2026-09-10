@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="t">
+<title id="t">Conversation: a speech bubble routing one request to named agents</title>
+<!-- Portrait and mark in one file: at 18px the mint bubble with its tail
+     survives; at 96px+ the rings, the glow and the three routed nodes read.
+     Mint on deep teal: a router, not a status colour. -->
+<defs>
+ <radialGradient id="bg" cx="50%" cy="40%" r="70%"><stop stop-color="#123a33"/><stop offset=".6" stop-color="#0b211f"/><stop offset="1" stop-color="#050f0e"/></radialGradient>
+ <linearGradient id="skin" x1="0" y1="0" x2=".3" y2="1"><stop stop-color="#dcfced"/><stop offset=".45" stop-color="#7ce6b6"/><stop offset="1" stop-color="#2f9d7a"/></linearGradient>
+ <filter id="glow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="16"/></filter>
+ <clipPath id="disc"><circle cx="256" cy="256" r="248"/></clipPath>
+</defs>
+<g clip-path="url(#disc)">
+ <rect width="512" height="512" fill="url(#bg)"/>
+ <circle cx="256" cy="256" r="224" fill="none" stroke="#1f4a43" stroke-width="2"/>
+ <circle cx="256" cy="256" r="212" fill="none" stroke="#7ce6b6" stroke-width="3" stroke-dasharray="2 23" opacity=".32"/>
+ <path d="M64 325A207 207 0 0 1 100 117" fill="none" stroke="#7d6cf0" stroke-width="5" opacity=".45"/>
+ <path d="M120 116h272a44 44 0 0 1 44 44v168a44 44 0 0 1-44 44H236l-92 84 22-84h-46a44 44 0 0 1-44-44V160a44 44 0 0 1 44-44Z" fill="#7ce6b6" opacity=".3" filter="url(#glow)"/>
+ <path d="M120 116h272a44 44 0 0 1 44 44v168a44 44 0 0 1-44 44H236l-92 84 22-84h-46a44 44 0 0 1-44-44V160a44 44 0 0 1 44-44Z" fill="url(#skin)"/>
+ <path d="M150 150h180" fill="none" stroke="#f2fff8" stroke-width="8" stroke-linecap="round" opacity=".7"/>
+ <path d="M186 244h74l52-64M260 244h52M260 244l52 64" fill="none" stroke="#0c2a25" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+ <circle cx="182" cy="244" r="30" fill="#0c2a25"/>
+ <circle cx="182" cy="244" r="13" fill="#dcfced"/>
+ <circle cx="330" cy="180" r="22" fill="#0c2a25"/>
+ <circle cx="330" cy="244" r="22" fill="#0c2a25"/>
+ <circle cx="330" cy="308" r="22" fill="#0c2a25"/>
+ <circle cx="112" cy="465" r="5" fill="#7ce6b6"/>
+ <circle cx="398" cy="465" r="5" fill="#7d6cf0"/>
+</g>
+<circle cx="256" cy="256" r="245" fill="none" stroke="#2b6156" stroke-width="3"/>
+</svg>
