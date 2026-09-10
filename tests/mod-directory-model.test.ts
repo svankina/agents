@@ -48,7 +48,7 @@ test("/mod persists an extension-owned directory model and clears it", async () 
 	}
 });
 
-test("startup applies a saved directory model only when --directory-model is enabled", async () => {
+test("startup applies a saved directory model unless its CLI or environment opt-out is enabled", async () => {
 	const root = mkdtempSync(path.join(tmpdir(), "mod-directory-model-"));
 	const model = { provider: "google-antigravity", id: "gemini-live", name: "Gemini Live" };
 	mkdirSync(path.join(root, ".omp"));
@@ -56,6 +56,7 @@ test("startup applies a saved directory model only when --directory-model is ena
 	let startup: ((event: unknown, ctx: unknown) => Promise<void>) | undefined;
 	let enabled = true;
 	let setModelCalls = 0;
+	const previousEnvironment = process.env.OMP_DIRECTORY_MODEL;
 	const extension = {
 		registerFlag: (_name: string, options: { default?: boolean }) => {
 			enabled = options.default ?? false;
@@ -81,7 +82,14 @@ test("startup applies a saved directory model only when --directory-model is ena
 		enabled = false;
 		await startup!({}, context);
 		expect(setModelCalls).toBe(1);
+
+		enabled = true;
+		process.env.OMP_DIRECTORY_MODEL = "0";
+		await startup!({}, context);
+		expect(setModelCalls).toBe(1);
 	} finally {
+		if (previousEnvironment === undefined) delete process.env.OMP_DIRECTORY_MODEL;
+		else process.env.OMP_DIRECTORY_MODEL = previousEnvironment;
 		rmSync(root, { recursive: true, force: true });
 	}
 });
