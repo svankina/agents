@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import tokenRate, { TokenRateBuckets } from "../extensions/token-rate";
+import tokenRate, { createCalibrationLookup, TokenRateBuckets } from "../extensions/token-rate";
 
 describe("TokenRateBuckets", () => {
 	test("aggregates streamed bytes into 100 ms buckets", () => {
@@ -53,6 +53,53 @@ describe("TokenRateBuckets", () => {
 
 		expect(rate.ingest("5678", 1_100).model).toBe("qwen3.6-27b-uncensored");
 		expect(rate.snapshot(1_200).provider).toBe("local-llama");
+	});
+});
+
+describe("createCalibrationLookup", () => {
+	const state = (models: unknown): (() => string) => () => JSON.stringify({ version: 1, models });
+
+	test("converts with the median ratio omp-tokrate learned for that model", () => {
+		const lookup = createCalibrationLookup(state({
+			"anthropic/claude-opus-5": { ratios: [2, 2.4, 3], samples: 3 },
+		}));
+		const rate = new TokenRateBuckets(42, lookup);
+
+		// 12 bytes at the learned 2.4 bytes/token, not the seed 4.
+		expect(rate.ingest("aaaaaaaaaaaa", 1_000, { model: "claude-opus-5", provider: "anthropic" })
+			.buckets).toEqual([[1_000, 5]]);
+	});
+
+	test("falls back to a bare model id when the stream named no provider", () => {
+		const lookup = createCalibrationLookup(state({ "claude-opus-5": { ratios: [2], samples: 1 } }));
+		expect(new TokenRateBuckets(42, lookup).ingest("aaaa", 1_000, { model: "claude-opus-5" })
+			.buckets).toEqual([[1_000, 2]]);
+	});
+
+	test("keeps the seed ratio for an unknown model", () => {
+		const lookup = createCalibrationLookup(state({ "anthropic/other": { ratios: [2], samples: 1 } }));
+		expect(new TokenRateBuckets(42, lookup).ingest("aaaa", 1_000, { model: "claude-opus-5" })
+			.buckets).toEqual([[1_000, 1]]);
+	});
+
+	test("ignores implausible ratios rather than reporting an absurd rate", () => {
+		const lookup = createCalibrationLookup(state({
+			"anthropic/claude-opus-5": { ratios: [0, 0.001, 400], samples: 3 },
+		}));
+		expect(new TokenRateBuckets(42, lookup).ingest("aaaa", 1_000, { model: "claude-opus-5", provider: "anthropic" })
+			.buckets).toEqual([[1_000, 1]]);
+	});
+
+	test("keeps the seed ratio when the plugin is absent or mid-write", () => {
+		for (const read of [
+			() => { throw Object.assign(new Error("ENOENT"), { code: "ENOENT" }); },
+			() => "{\"version\":1,\"models\":{\"anthropic/claude-opus-5\":{\"rat",
+			() => JSON.stringify({ version: 1, models: [] }),
+		]) {
+			const rate = new TokenRateBuckets(42, createCalibrationLookup(read));
+			expect(rate.ingest("aaaa", 1_000, { model: "claude-opus-5", provider: "anthropic" })
+				.buckets).toEqual([[1_000, 1]]);
+		}
 	});
 });
 
