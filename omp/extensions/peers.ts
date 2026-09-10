@@ -20,7 +20,7 @@ type NativeResult = AgentToolResult<unknown>;
 type HubParams = Record<string, unknown> & {
 	op: string; scope?: "all" | "project"; to?: string; from?: string; name?: string;
 	message?: string; replyTo?: string; await?: boolean; timeoutMs?: number;
-	ids?: string[]; status?: string; limit?: number;
+	ids?: string[]; status?: string; limit?: number; follow?: boolean;
 };
 
 type WaitResult =
@@ -320,18 +320,60 @@ export default function peersExtension(pi: ExtensionAPI) {
 	let registered = false;
 	function registerHub() {
 		if (registered) return;
-		const native = pi.getAllTools().find(tool => tool.name === "hub" && tool.sourceInfo.source === "builtin");
-		if (!native) throw new Error("Unified hub requires the native hub tool");
-		const parameters = pi.arktype(native.parameters).and({ "scope?": "'all' | 'project'" });
-		const definition: ToolDefinition<typeof native.parameters> & { interruptible(params: Partial<HubParams>): boolean } = {
+		if (!pi.getAllTools().includes("hub")) throw new Error("Unified hub requires OMP's hub tool");
+		// getAllTools() is the public extension API and returns names, not ToolInfo
+		// definitions. Keep this schema in step with OMP's hub contract while
+		// forwarding unrecognised future fields to the native implementation.
+		const parameters = pi.zod.object({
+			op: pi.zod.enum(["send", "wait", "inbox", "list", "jobs", "cancel", "start", "ps", "logs", "stop", "restart", "describe"]),
+			scope: pi.zod.enum(["all", "project"]).optional().describe("Peer discovery scope"),
+			to: pi.zod.string().optional().describe("Local or qualified peer recipient"),
+			from: pi.zod.string().optional().describe("Local or qualified peer sender to wait for"),
+			name: pi.zod.string().optional().describe("Managed process name"),
+			message: pi.zod.string().optional(),
+			replyTo: pi.zod.string().optional(),
+			await: pi.zod.boolean().optional(),
+			timeoutMs: pi.zod.number().int().min(0).optional(),
+			ids: pi.zod.array(pi.zod.string()).optional(),
+			status: pi.zod.string().optional(),
+			limit: pi.zod.number().int().min(1).optional(),
+			application: pi.zod.string().optional(),
+			args: pi.zod.array(pi.zod.string()).optional(),
+			env: pi.zod.record(pi.zod.string(), pi.zod.string()).optional(),
+			cwd: pi.zod.string().optional(),
+			pty: pi.zod.boolean().optional(),
+			ready: pi.zod.object({
+				log: pi.zod.string().optional(),
+				port: pi.zod.number().int().positive().optional(),
+				host: pi.zod.string().optional(),
+				timeout: pi.zod.number().positive().optional(),
+			}).optional(),
+			restart: pi.zod.enum(["no", "on-failure", "always"]).optional(),
+			persist: pi.zod.boolean().optional(),
+			detached: pi.zod.boolean().optional(),
+			lines: pi.zod.number().int().positive().max(1000).optional(),
+			head: pi.zod.boolean().optional(),
+			grep: pi.zod.string().optional(),
+			follow: pi.zod.boolean().optional(),
+			cursor: pi.zod.number().int().min(0).optional(),
+			for: pi.zod.enum(["ready", "exit"]).optional(),
+			pattern: pi.zod.string().optional(),
+			text: pi.zod.string().optional(),
+			enter: pi.zod.boolean().optional(),
+			keys: pi.zod.array(pi.zod.string()).optional(),
+			signal: pi.zod.enum(["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT", "SIGKILL"]).optional(),
+			timeout: pi.zod.number().positive().optional(),
+			peek: pi.zod.boolean().optional(),
+		}).passthrough();
+		const definition: ToolDefinition<typeof parameters> & { interruptible(params: Partial<HubParams>): boolean } = {
 		name: "hub",
 		label: "Hub",
 		loadMode: "essential",
 		interruptible: args => args.op === "wait" || (args.op === "logs" && args.follow === true),
-		parameters: parameters as typeof native.parameters,
-		description: native.description + "\nCross-session routing: list also shows live OMP sessions; scope all (default) or project (exact cwd) filters discovery. Qualified omp:<instance>/<local-id> addresses route across processes; local IDs/jobs/process operations remain native. Each incoming peer request is handled by an isolated persistent worker for that sender, with the receiver's role and relevant context, not in the receiver's main conversation. Workers run FIFO per channel, at most four machine-wide; /channels shows progress/results/transcripts without adding them to main model context. Session identities retain channel history across transport restarts. A send receipt means durable queue acceptance, not finished work. Remote send await:true waits for a correlated reply (default 60 seconds); timeout does not cancel work. Preserve replyTo on replies and omit await. Replies go to the matching wait, or once as an aside in the requesting main session; requests never satisfy a main-session wait. Do not reply automatically to replies. external:herd and wake relays retain direct aside delivery. Remote lifecycle control is unsupported; closed sessions cannot be launched by messaging. Never retry unknown delivery automatically.",
-		// ToolInfo does not expose the native approval callback. Mirror known read operations;
-		// process stdin and unknown/future operations conservatively require exec approval.
+		parameters,
+		description: "Coordinate local OMP work and cross-process peers. Cross-session routing: list also shows live OMP sessions; scope all (default) or project (exact cwd) filters discovery. Qualified omp:<instance>/<local-id> addresses route across processes; local IDs/jobs/process operations remain native. Each incoming peer request is handled by an isolated persistent worker for that sender, with the receiver's role and relevant context, not in the receiver's main conversation. Workers run FIFO per channel, at most four machine-wide; /channels shows progress/results/transcripts without adding them to main model context. Session identities retain channel history across transport restarts. A send receipt means durable queue acceptance, not finished work. Remote send await:true waits for a reply.",
+		// The public API does not expose native approval callbacks. Mirror known
+		// read operations; process stdin and unknown/future operations require exec.
 		approval(params) {
 			const args = params as HubParams;
 			if (args.op === "send") return args.name ? "exec" : "read";

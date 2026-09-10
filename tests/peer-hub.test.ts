@@ -148,11 +148,7 @@ function session(name: string, cwd: string): Session {
 		getActiveTools: () => [],
 		getThinkingLevel: () => "low",
 		registerCommand() {},
-		getAllTools: () => [{
-			name: "hub", description: "Native host coordination",
-			parameters: { op: "string" },
-			sourceInfo: { source: "builtin" },
-		}],
+		getAllTools: () => ["hub"],
 		registerTool: (definition: Definition) => { tools.set(definition.name, definition); },
 		registerMessageRenderer() {},
 		on(event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) {
