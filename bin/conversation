@@ -123,6 +123,12 @@ def main():
     plugin = ROOT / "omp/plugins/conversation-router/index.ts"
     if not plugin.is_file():
         raise RuntimeError(f"Missing Conversation extension: {plugin}")
+    # `--no-extensions` also drops the herd bridge, and without it the dock row
+    # has no model to show: this session reports no badge OMP's status line
+    # would carry and keeps its transcripts outside the usual session root.
+    bridge = ROOT / "omp/extensions/herd-questions.ts"
+    if not bridge.is_file():
+        raise RuntimeError(f"Missing Herd bridge extension: {bridge}")
     # A missing portrait would silently downgrade the dock row to a glyph.
     if args.pane and not AVATAR.is_file():
         raise RuntimeError(f"Missing Conversation portrait: {AVATAR}")
@@ -148,7 +154,8 @@ def main():
     config.write_text(CONFIG)
     command = [omp, "--no-extensions", "--no-tools", "--no-skills", "--no-rules",
                "--no-lsp", "--no-title", "--thinking=minimal", f"--model={args.model}",
-               "--config", str(config), "-e", str(plugin), "--session-dir", str(sessions), "--continue"]
+               "--config", str(config), "-e", str(plugin), "-e", str(bridge),
+               "--session-dir", str(sessions), "--continue"]
     if args.print_mode:
         command.append("--print")
     if args.message is not None:
