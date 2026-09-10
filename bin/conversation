@@ -91,10 +91,15 @@ def open_pane(state: Path, cwd: Path, model: str):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog="In the terminal: /routes shows responsibilities; /handoffs shows handoffs; "
+               "/conversation explains routing. Follow up by agent or topic, not request IDs. "
+               "Accepted means queued, not completed work.",
+    )
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--pane", action="store_true", help="create/reuse a background Herd dock; leave focus unchanged")
-    modes.add_argument("--print", action="store_true", dest="print_mode", help="print a reply noninteractively, then exit")
+    modes.add_argument("--print", action="store_true", dest="print_mode", help="print a response, then exit; pending work is not cancelled and late replies require an open terminal")
     parser.add_argument("--model", default="@smol", help="OMP model or configured role (default: @smol)")
     parser.add_argument("message", nargs="?", help="message; --print also accepts piped stdin")
     args = parser.parse_args()

@@ -24,6 +24,7 @@ export interface RouterOptions {
   projectRoot?: string;
   peerDir?: string;
   onReply?: (request: ConversationRequest) => void;
+  onHandoff?: (request: ConversationRequest) => void;
 }
 const LIMIT = 256;
 const WINDOW = 8000;
@@ -205,6 +206,7 @@ export class ConversationRouter {
         await this.#save();
       }
     });
+    try { this.#options.onHandoff?.({ ...row }); } catch { /* Durable state remains available through request_status. */ }
     return reply ? await reply : this.requestStatus(row.id);
   }
 

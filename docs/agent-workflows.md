@@ -18,6 +18,19 @@ and `request_status`, not shell, filesystem, delegation, or coding tools.
 Follow-ups retain the original session identity; unrelated requests select a
 freshly discovered target. It does not invent replacements for offline agents.
 
+The terminal shows Conversation's purpose and command hints above the editor.
+Use `/routes [topic]` for live responsibilities, `/handoffs` for recent requests,
+and `/conversation` for help. These commands do not call a model or send work.
+Unknown responsibilities are explicit. `/agents` remains OMP's agent settings
+command; it is not the routing roster.
+
+Tool cards show agent names, projects, request text, and readable replies instead
+of JSON. The live indicator distinguishes accepted/awaiting reply, reply received,
+and uncertain delivery. “Reply received” does not verify the agent's claims.
+Follow up by agent or topic; Conversation resolves the internal request ID from
+history and asks which topic when ambiguous. Ask for the rest of a long reply
+or older handoffs to page through retained history.
+
 When a coordinator's responsibilities are not clear from its name/project,
 record them in optional `$CONVERSATION_STATE_DIR/agents.json` (default
 `~/.local/state/conversation/agents.json`). Its format is a JSON array of

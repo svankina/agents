@@ -115,3 +115,25 @@ test("responsibilities refresh from config and never transfer to a same-named se
     expect((await router.listAgents("Herd implementation")).agents.map(agent => agent.sessionId)).toEqual(["new-session"]);
   } finally { await box.close(); }
 });
+
+test("handoff progress reports accepted before a later response and cannot break delivery", async () => {
+  const box = await sandbox();
+  let progress: string | undefined;
+  const router = new ConversationRouter({
+    stateDir: join(box.root, "progress-state"), projectRoot: box.root, peerDir: join(box.root, "peers"),
+    onHandoff: row => {
+      progress = row.state;
+      throw new Error("UI unavailable");
+    },
+  });
+  try {
+    const target = await box.peer("progress");
+    await router.start();
+    const sent = await router.routeRequest({ targetId: target.id, request: "Progress smoke" });
+    expect(progress).toBe("pending");
+    expect(sent).toMatchObject({ state: "pending" });
+    await target.network.send({ from: target.id, to: router.id, body: "Response arrived", replyTo: sent.id, senderSessionId: "progress", kind: "reply" });
+    expect(router.requestStatus(sent.id)).toMatchObject({ state: "completed", reply: "Response arrived" });
+    expect(target.received.map(message => message.body)).toEqual(["Progress smoke"]);
+  } finally { await router.close(); await box.close(); }
+});
