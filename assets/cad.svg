@@ -2,10 +2,11 @@
 <title id="t">CAD: a machined hex boss over its dimension line</title>
 <!-- Portrait and mark in one file: at 18px the bright hexagon reads against the
      graphite disc; at 96px+ the rings, the chamfer highlight, the bore and the
-     dimension line read. Steel on graphite, never the Herd cyan rail. -->
+     dimension line read. The top face is held well above the side faces so the
+     disc does not read as dead grey beside the coloured avatars. -->
 <defs>
  <radialGradient id="bg" cx="50%" cy="40%" r="70%"><stop stop-color="#22303f"/><stop offset=".6" stop-color="#141c26"/><stop offset="1" stop-color="#090d13"/></radialGradient>
- <linearGradient id="steel" x1="0" y1="0" x2=".35" y2="1"><stop stop-color="#ffffff"/><stop offset=".42" stop-color="#c3d6e4"/><stop offset="1" stop-color="#5c748a"/></linearGradient>
+ <linearGradient id="steel" x1="0" y1="0" x2=".35" y2="1"><stop stop-color="#ffffff"/><stop offset=".42" stop-color="#cbdeec"/><stop offset="1" stop-color="#44596d"/></linearGradient>
  <filter id="glow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="16"/></filter>
  <clipPath id="disc"><circle cx="256" cy="256" r="248"/></clipPath>
 </defs>
@@ -14,9 +15,9 @@
  <circle cx="256" cy="256" r="224" fill="none" stroke="#2c3d4f" stroke-width="2"/>
  <circle cx="256" cy="256" r="212" fill="none" stroke="#9fe8ff" stroke-width="3" stroke-dasharray="2 23" opacity=".3"/>
  <path d="M448 325A207 207 0 0 0 412 117" fill="none" stroke="#9fe8ff" stroke-width="5" opacity=".4"/>
- <path d="M256 100 377 170v140l-121 70-121-70V170Z" fill="#cfe6f5" opacity=".3" filter="url(#glow)"/>
+ <path d="M256 100 377 170v140l-121 70-121-70V170Z" fill="#cfe6f5" opacity=".38" filter="url(#glow)"/>
  <path d="M256 100 377 170v140l-121 70-121-70V170Z" fill="url(#steel)"/>
- <path d="M256 100 377 170l-121 70-121-70Z" fill="#ffffff" opacity=".24"/>
+ <path d="M256 100 377 170l-121 70-121-70Z" fill="#ffffff" opacity=".46"/>
  <path d="M146 176 256 113l110 63" fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round" opacity=".8"/>
  <circle cx="256" cy="240" r="46" fill="#0f1620"/>
  <circle cx="256" cy="240" r="46" fill="none" stroke="#6d8599" stroke-width="5"/>

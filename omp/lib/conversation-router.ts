@@ -244,6 +244,18 @@ export class ConversationRouter {
     return { ...metadata, requestPreview: request.slice(0, 1000), reply: reply?.slice(offset, offset + WINDOW), replyLength: reply?.length ?? 0, nextOffset: reply && offset + WINDOW < reply.length ? offset + WINDOW : null, limitation: CHANNEL_NOTE };
   }
 
+  /** Outstanding handoffs, in one pass over retained state. The widget asks on
+      every handoff and every reply, so it must not page the whole history. */
+  outstanding() {
+    let pending = 0;
+    let unknown = 0;
+    for (const row of this.#requireStore().requests) {
+      if (row.state === "pending") pending += 1;
+      else if (row.state === "unknown") unknown += 1;
+    }
+    return { pending, unknown };
+  }
+
   async #receive(message: PeerMessage) {
     return this.#mutate(async () => {
       const reject = (error: string) => ({ to: message.to, outcome: "failed" as const, error });

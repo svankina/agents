@@ -11,8 +11,11 @@ Accepted = queued in the agent’s side channel. Reply received = response arriv
 type Roster = Awaited<ReturnType<ConversationRouter["listAgents"]>>;
 type Status = ReturnType<ConversationRouter["requestStatus"]>;
 
+const STATES: Record<string, string> = { completed: "Reply received", pending: "Awaiting reply", unknown: "Delivery uncertain", failed: "Failed" };
+const WIDGET_ROWS = 3;
+
 function requestText(row: { targetName: string; project: string; state: string; requestPreview?: string; request?: string; note?: string; reply?: string; nextOffset?: number | null }) {
-  const state = row.state === "completed" ? "Reply received" : row.state === "pending" ? "Awaiting reply" : row.state === "unknown" ? "Delivery uncertain — do not resend" : "Failed";
+  const state = row.state === "unknown" ? "Delivery uncertain — do not resend" : STATES[row.state] ?? "Failed";
   return `${state} · ${row.targetName}
 ${row.project}
 Request: ${row.requestPreview ?? row.request ?? ""}${row.note ? `
@@ -42,20 +45,19 @@ export default function conversation(pi: ExtensionAPI) {
   const text = (value: string) => new pi.pi.Text(value, 0, 0);
   const show = (content: string) => pi.sendMessage({ customType: "conversation-reply", display: true, content }, { triggerTurn: false });
   const refreshStatus = () => {
-    const rows = [];
-    for (let offset = 0; ; offset += 32) {
-      const page = runtime.requestStatus(undefined, offset);
-      if ("requests" in page) rows.push(...page.requests);
-      if (page.nextOffset === null) break;
-    }
-    const pending = rows.filter(row => row.state === "pending").length;
-    const unknown = rows.filter(row => row.state === "unknown").length;
-    ui?.setStatus("conversation", `Conversation · ${pending} awaiting reply${unknown ? ` · ${unknown} uncertain` : ""}`);
-    const latest = rows[0];
+    const { pending, unknown } = runtime.outstanding();
+    // Herd's rule: a count of nothing is not a status. Idle says it plainly.
+    const outstanding = [pending && `${pending} awaiting reply`, unknown && `${unknown} uncertain`].filter(Boolean);
+    ui?.setStatus("conversation", `Conversation \u00b7 ${outstanding.join(" \u00b7 ") || "idle"}`);
+    const page = runtime.requestStatus();
+    const latest = "requests" in page ? page.requests.slice(0, WIDGET_ROWS) : [];
+    // One state column, padded to the widest state shown: routing is a queue,
+    // and the eye should scan state, then agent, then what was asked.
+    const column = Math.max(0, ...latest.map(row => (STATES[row.state] ?? "Failed").length));
     ui?.setWidget("conversation", [
       "Conversation · your front door to existing agents",
       "/routes — responsibilities   /handoffs — handoffs   /conversation — help",
-      ...(latest ? [`${latest.state === "completed" ? "Reply received" : latest.state === "pending" ? "Accepted — awaiting reply" : "Delivery uncertain"} · ${latest.targetName} · ${latest.requestPreview.replace(/\s+/g, " ").slice(0, 100)}`] : []),
+      ...latest.map(row => `${(STATES[row.state] ?? "Failed").padEnd(column)}  ${row.targetName} · ${row.requestPreview.replace(/\s+/g, " ").slice(0, 88)}`),
     ]);
   };
   const runtime = new ConversationRouter({
