@@ -51,7 +51,7 @@ test("quit evidence waits for idle and excludes continuations, new sessions and 
 		// A continuation can start before its previous end hook is delivered.
 		await emit("agent_start");
 		expect(latest().intent).toBe(acceptedIntent);
-		await emit("agent_end", { willContinue: false });
+		await emit("agent_end", { willContinue: undefined });
 		expect(latest().phase).toBe("pending");
 		idle = true; pending = true;
 		const queued = Promise.withResolvers<void>();
@@ -83,10 +83,12 @@ test("quit evidence waits for idle and excludes continuations, new sessions and 
 		expect(latest().session).toBe(id);
 		callId = "quit-2";
 		await emit("tool_result", { toolName: "quit_session", isError: false });
-		await emit("agent_end", { willContinue: false,
+		await emit("agent_end");
+		expect(latest().phase).not.toBe("settled");
+		await emit("agent_end", { willContinue: undefined,
 			messages: [{ role: "toolResult", toolCallId: "quit-1" }] });
 		expect(latest().phase).not.toBe("settled");
-		await emit("agent_end", { willContinue: false });
+		await emit("agent_end", { willContinue: undefined });
 		await emit("session_shutdown");
 		expect(latest().phase).toBe("cleanup");
 		for (let i = 1; i < observations.length; i++) expect(observations[i].seq).toBeGreaterThan(observations[i - 1].seq);

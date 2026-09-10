@@ -96,7 +96,9 @@ export default function herdLifecycle(pi: ExtensionAPI): void {
 		if (!intent || !event.messages.some(message =>
 			message.role === "toolResult" && message.toolCallId === quitCall)) return;
 		context = ctx;
-		final = "willContinue" in event && event.willContinue === false;
+		// Current core includes this property with undefined on terminal ends;
+		// older core omits it entirely and cannot establish terminal evidence.
+		final = "willContinue" in event && event.willContinue !== true;
 		// The notification is fire-and-forget; the agent may still be inside
 		// prompt() here. The heartbeat rechecks actual idle/queue state later.
 		return publish();
