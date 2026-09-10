@@ -151,6 +151,44 @@ Reload preserves channel histories and completed results. The plugin uses
 public SDK sessions and same-name `ctx.invokeTool` delegation, verified with
 stock OMP 18.1.14.
 
+## Conversation router
+
+Run `conversation` after `omp-install` to talk to existing named agents through
+one lightweight OMP terminal. Use `conversation --pane` for a background Herd
+dock: repeated launches reuse its live pane without changing focus or touching
+other panes. `conversation --print 'Which agents are available?'` runs one
+noninteractive exchange; `--model MODEL` overrides the default configured
+`@smol` role.
+
+Conversation exposes only `list_agents`, `route_request`, and `request_status`.
+It routes by the live named-agent roster and asks when the target is ambiguous;
+it does not create replacement specialists or expose coding tools. New requests
+discover current targets; follow-ups stay bound to the original session.
+Delivery uses the existing receiver-side persistent peer channel, with that
+agent's role and context—not a user turn in its main terminal. Queue acceptance
+is not completion, and a timeout does not cancel remote work or justify a retry.
+
+For responsibilities not apparent from names and project paths, an optional
+`agents.json` in the Conversation state directory holds an array of
+`{"sessionId": "EXACT_SESSION_ID", "description": "Known responsibilities"}`.
+Each roster refresh reads it and matches descriptions to exact live session
+identities. Update entries when an agent starts a new session; descriptions
+never authorize substitution by a similarly named agent. This is a small
+explicit registry, not periodic model-based capability discovery.
+
+The conversation resumes its private transcript under
+`~/.local/state/conversation/sessions`; its working directory is the adjacent
+`workspace`. `CONVERSATION_STATE_DIR` overrides this root and
+`CONVERSATION_PROJECT_ROOT` overrides the roster's default home-directory root.
+Home-wide discovery includes long-running bots under `~/.local/state` as well
+as project agents under `~/src`; set the override to narrow discovery.
+Authentication and configured model roles remain shared with normal OMP.
+A session lock prevents competing writers. The launcher loads its extension
+explicitly and disables automatic extension discovery, built-in tools, skills,
+rules, LSP, title generation, and unrelated autonomous features. Do not globally
+link the router plugin. Keep the terminal running for late replies; a print-mode
+exit with pending work is not evidence that the request failed or completed.
+
 ## Designer dock
 
 Run `designer-dock` after `omp-install` to open Designer beside the other
