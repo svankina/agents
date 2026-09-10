@@ -2,11 +2,11 @@
  * quit-session — lets the agent end the omp session itself, vim-:wq style.
  *
  * Registers a `quit_session` tool whose execute() calls ctx.shutdown().
- * In interactive mode that only sets `shutdownRequested`; the main loop
- * performs the actual teardown at the next idle boundary — after the current
- * turn's final reply has been delivered (see extension-ui-controller.ts,
- * "Defer the actual teardown to the main loop"). So calling it mid-turn is
- * exactly right: reply streams first, then the session exits like /quit.
+ * In interactive mode this requests teardown at the next drained idle
+ * boundary. The runtime's event subscription covers user, initial-prompt,
+ * and background/peer turns; it waits for final output and scheduled
+ * continuations before exiting. Calling it mid-turn is exactly right:
+ * reply streams first, then the session exits like /quit.
  * Used by the /wrapup and /wq commands: call quit_session, then reply.
  * /wq additionally passes kill_terminal: true, which spawns a detached
  * watcher that waits for this omp process to exit and then SIGHUPs its parent
