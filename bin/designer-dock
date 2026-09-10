@@ -32,7 +32,7 @@ def transcript(settings, ref, live):
 
 def open_pane(settings, ref=None):
     settings.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    for name in ("index.html", "designer.css", "designer.js", "designer.svg"):
+    for name in ("index.html", "designer.css", "designer.js", "designer.svg", "reviews.html", "reviews.css", "reviews.js"):
         if not (ROOT / "assets/designer-ui" / name).is_file():
             raise RuntimeError(f"Missing dashboard asset: {name}")
     # Concurrent invocations cannot create duplicate dock panes.
@@ -71,7 +71,8 @@ def open_pane(settings, ref=None):
                     cwd=str(settings.project_dir), space=space, name="Designer",
                     env={**settings.environment(), "DESIGNER_DOCK_TOKEN": token},
                     meta={TAG: str(settings.state_dir.resolve()), "dock": "bots",
-                          "avatar": str(ROOT / "assets/designer-ui/designer.svg"), "webview": url},
+                          "avatar": str(ROOT / "assets/designer-ui/designer.svg"), "webview": url,
+                          "reviews": url + "reviews"},
                     cols=140, rows=46,
                 )
                 deadline = time.monotonic() + 60

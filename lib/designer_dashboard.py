@@ -149,7 +149,11 @@ def make_server(root, board, port, token):
     assets = {"": ("index.html", "text/html; charset=utf-8"),
               "designer.css": ("designer.css", "text/css; charset=utf-8"),
               "designer.js": ("designer.js", "text/javascript; charset=utf-8"),
-              "designer.svg": ("designer.svg", "image/svg+xml")}
+              "designer.svg": ("designer.svg", "image/svg+xml"),
+              "reviews": ("reviews.html", "text/html; charset=utf-8"),
+              "reviews.html": ("reviews.html", "text/html; charset=utf-8"),
+              "reviews.css": ("reviews.css", "text/css; charset=utf-8"),
+              "reviews.js": ("reviews.js", "text/javascript; charset=utf-8")}
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):

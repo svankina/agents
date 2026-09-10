@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Designer · Visual History & Reviews</title>
+<link rel="icon" href="./designer.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./reviews.css">
+<script src="./reviews.js" defer></script>
+</head>
+<body>
+<div class="reviews-layout">
+  <!-- Left Rail: Projects -->
+  <aside class="projects-rail" aria-label="Projects with design reviews">
+    <div class="rail-head">
+      <h2>Projects</h2>
+      <span id="project-count" class="meta"></span>
+    </div>
+    <div class="rail-filter">
+      <input id="project-search" type="search" placeholder="Filter projects…" autocomplete="off">
+    </div>
+    <div id="project-list" class="rail-list" role="listbox" aria-label="Review projects">
+      <p class="empty">Loading projects…</p>
+    </div>
+  </aside>
+
+  <!-- Main Review Canvas -->
+  <main class="review-main" id="review-main">
+    <!-- Top Filmstrip -->
+    <header class="filmstrip-bar" aria-label="Revision filmstrip">
+      <div class="filmstrip-info">
+        <h3 id="current-asset">Select a project</h3>
+        <span id="current-meta" class="meta mono"></span>
+      </div>
+      <div id="filmstrip" class="filmstrip-scroll" role="region" aria-label="Chronological revisions">
+        <p class="empty-inline">No revisions recorded for this project.</p>
+      </div>
+    </header>
+
+    <!-- Stage Toolbar -->
+    <div class="stage-toolbar">
+      <div class="compare-modes" role="toolbar" aria-label="Comparison modes">
+        <span id="mode-single" class="mode-btn active">Single</span>
+        <button id="mode-side" type="button" class="mode-btn" title="Shortcut: 1" disabled>1 Side-by-side</button>
+        <button id="mode-swipe" type="button" class="mode-btn" title="Shortcut: 2" disabled>2 Swipe</button>
+        <button id="mode-diff" type="button" class="mode-btn" title="Shortcut: 3" disabled>3 Difference</button>
+      </div>
+      <div class="stage-tools">
+        <span class="keys-hint mono">[ / ] step revs</span>
+        <button id="toggle-zoom" type="button" class="tool-btn mono" title="Toggle 2× zoom">2×</button>
+        <button id="toggle-greyscale" type="button" class="tool-btn" title="Toggle greyscale render">Greyscale</button>
+      </div>
+    </div>
+
+    <!-- Viewport Stage -->
+    <div class="stage-container" id="stage-container">
+      <div id="stage-viewport" class="stage-viewport">
+        <div id="stage-empty" class="stage-empty-state">
+          <p>Choose a project on the left, then select revisions in the filmstrip above.</p>
+          <p class="sub">Click a thumbnail to view. Shift+Click a second thumbnail for A/B compare.</p>
+        </div>
+        <div id="stage-content" class="stage-content" hidden>
+          <!-- Side-by-side container -->
+          <div id="compare-side" class="side-container">
+            <figure class="compare-pane" id="pane-before" hidden>
+              <figcaption id="label-before" class="mono"></figcaption>
+              <div class="image-wrapper" id="wrap-before"></div>
+            </figure>
+            <figure class="compare-pane" id="pane-after">
+              <figcaption id="label-after" class="mono"></figcaption>
+              <div class="image-wrapper" id="wrap-after"></div>
+            </figure>
+          </div>
+          <!-- Swipe overlay container -->
+          <div id="compare-swipe" class="swipe-container" hidden>
+            <div class="swipe-layer before" id="swipe-layer-before"></div>
+            <div class="swipe-layer after" id="swipe-layer-after"></div>
+            <input type="range" min="0" max="100" value="50" id="swipe-slider" class="swipe-slider" aria-label="Swipe comparison position">
+            <div class="swipe-handle" id="swipe-handle"></div>
+          </div>
+          <!-- Difference mode container -->
+          <div id="compare-diff" class="diff-container" hidden>
+            <div class="diff-layer base" id="diff-base"></div>
+            <div class="diff-layer blend" id="diff-blend"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Verdict Strip -->
+    <footer class="verdict-strip" id="verdict-strip">
+      <span id="verdict-chip" class="verdict-chip pending">Pending</span>
+      <span id="verdict-text" class="verdict-text">Select revisions to view design verdict and rationale.</span>
+      <span id="verdict-links" class="verdict-links mono"></span>
+    </footer>
+  </main>
+</div>
+
+<!-- Full Image Preview Modal -->
+<dialog id="image-modal" aria-labelledby="modal-title">
+  <div class="modal-head">
+    <h2 id="modal-title">Original Image</h2>
+    <button id="modal-close" type="button" autofocus>Close</button>
+  </div>
+  <div id="modal-body" class="modal-body"></div>
+</dialog>
+</body>
+</html>

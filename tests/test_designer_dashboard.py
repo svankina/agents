@@ -49,6 +49,11 @@ class DesignerDashboardBoundary(unittest.TestCase):
         self.assertEqual(self.get("/api/snapshot")[0], 404)
         self.assertEqual(self.get("/wrong-capability/api/snapshot")[0], 404)
         self.assertNotIn("Access-Control-Allow-Origin", dict(headers))
+    def test_reviews_endpoint_serves_reviews_html(self):
+        status, headers, body = self.get(f"/{self.token}/reviews")
+        self.assertEqual(status, 200)
+        self.assertIn(b"Visual History & Reviews", body)
+
 
     def test_traversal_does_not_expose_private_state(self):
         for suffix in ("../snapshot.json", "images/../../snapshot.json", "images/%2e%2e%2fsnapshot.json", "snapshot.json"):
