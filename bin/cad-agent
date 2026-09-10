@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+"""Open or resume the persistent Astra CAD agent in Herd's background dock."""
+from __future__ import annotations
+
+import argparse
+import fcntl
+import importlib
+import os
+from pathlib import Path
+import shutil
+import sys
+import time
+
+ROOT = Path(__file__).resolve().parent.parent
+TAG = "cad-agent"
+MODEL = "openai-codex/gpt-6-astra"
+PROMPT = """You are CAD, the user's persistent mechanical CAD agent. Own CAD modelling,
+assemblies, fit checks, geometry verification and fabrication preparation. Read
+skill://modelling-cad before CAD work and use the shared procedure, not a separate
+set of CAD rules. Use skill://serving-cad-files for interactive model delivery.
+Your private working directory is a coordination workspace, not a model project.
+Use the user's specified project; existing CAD projects and the shared engine are
+under ~/src/cad. Create a feature worktree before new project changes. Do not edit
+another agent's mutable workbench or project. Retain editable source, dimensions,
+measured requirements and verification evidence with the relevant project so work
+can continue after compaction or restart. Handle direct requests and peer handoffs.
+Remain available between requests; do not invent tasks or poll an LLM while idle.
+Preparing a model does not authorize starting a printer or other machine.
+"""
+
+
+def herd_module(name):
+    executable = shutil.which("herd")
+    if not executable:
+        raise RuntimeError("herd is not installed; use --terminal instead")
+    sys.path.insert(0, str(Path(executable).resolve().parent.parent))
+    return importlib.import_module(f"herd.{name}")
+
+
+def session_lock(state):
+    lock = (state / "session.lock").open("a")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock.close()
+        raise RuntimeError("CAD is already running; use its existing terminal or cad-agent") from None
+    return lock
+
+
+def open_pane(state, cwd):
+    with (state / "pane.lock").open("a") as launch_lock:
+        fcntl.flock(launch_lock, fcntl.LOCK_EX)
+        with herd_module("brokerclient").Client() as client:
+            pane = next((row for row in client.list_panes()
+                         if row.get("meta", {}).get(TAG) == str(state) and not row.get("dead")), None)
+            if pane is None:
+                # A direct terminal must not compete for this transcript.
+                with session_lock(state):
+                    pass
+                space = client.space_new("cad-agent")
+                pane_id = client.spawn(
+                    # Herd otherwise retains a live shell after OMP exits.
+                    ["exec", sys.executable, str(Path(__file__).resolve()), "--terminal"],
+                    cwd=str(cwd), space=space, name="CAD",
+                    env={"CAD_AGENT_STATE_DIR": str(state)},
+                    meta={TAG: str(state), "dock": "bots"}, cols=120, rows=40,
+                )
+            else:
+                pane_id = pane["id"]
+            # Process creation is not readiness: wait for the named OMP peer.
+            peers = herd_module("peers")
+            deadline = time.monotonic() + 45
+            while time.monotonic() < deadline:
+                live = next((peer for peer in peers.discover_peers()["peers"]
+                             if peer.get("cwd") == str(cwd) and peer.get("displayName") == "CAD"), None)
+                if live:
+                    print(f"CAD agent ready in {pane_id}: {MODEL} (high thinking); focus unchanged")
+                    print(f"Session: {live['sessionId']}; history: {state / 'sessions'}")
+                    return
+                if not any(row["id"] == pane_id and not row.get("dead") for row in client.list_panes()):
+                    raise RuntimeError(f"CAD exited during startup; inspect Herd pane {pane_id}")
+                time.sleep(.2)
+            raise RuntimeError(f"CAD has not registered after 45 seconds; inspect Herd pane {pane_id}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, epilog="Click CAD in Herd, or ask Conversation to contact CAD. Re-running reuses the live dock; after exit it resumes the private saved conversation.")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--pane", action="store_true", help="open/reuse the background Herd dock (default)")
+    modes.add_argument("--terminal", action="store_true", help="run in this terminal instead of Herd")
+    args = parser.parse_args()
+    omp = shutil.which("omp")
+    if not omp:
+        raise RuntimeError("omp is not installed")
+    plugin = ROOT / "omp/plugins/cad-agent/index.ts"
+    if not plugin.is_file():
+        raise RuntimeError(f"Missing CAD extension: {plugin}")
+    state = Path(os.environ.get("CAD_AGENT_STATE_DIR", Path.home() / ".local/state/cad-agent")).expanduser().resolve()
+    cwd, sessions = state / "workspace", state / "sessions"
+    os.umask(0o077)
+    for directory in (state, cwd, sessions):
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if not args.terminal:
+        open_pane(state, cwd)
+        return
+    # Inherit the lock across exec; only one process may write this session.
+    lock = session_lock(state)
+    os.set_inheritable(lock.fileno(), True)
+    command = [omp, f"--model={MODEL}", "--thinking=high", "--no-title", "--no-prewalk",
+               "-e", str(plugin), "--append-system-prompt", PROMPT,
+               "--session-dir", str(sessions)]
+    # Resolve within this private history, never OMP's global recent session.
+    resume = max(sessions.glob("*.jsonl"), key=lambda path: path.stat().st_mtime_ns, default=None)
+    if resume:
+        command.extend(["--resume", str(resume)])
+    os.chdir(cwd)
+    os.execvpe(omp, command, os.environ)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, RuntimeError, ValueError) as error:
+        sys.exit(f"cad-agent: {error}")
