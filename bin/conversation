@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""Talk to existing named agents through one lightweight, persistent OMP conversation."""
+from __future__ import annotations
+
+import argparse
+import fcntl
+import importlib
+import os
+from pathlib import Path
+import shutil
+import sys
+
+ROOT = Path(__file__).resolve().parent.parent
+TAG = "conversation-router"
+# Overlay only: retain the user's existing authentication and model-role settings.
+CONFIG = """advisor:
+  enabled: false
+prewalk:
+  enabled: false
+startup:
+  checkUpdate: false
+marketplace:
+  autoUpdate: off
+recap:
+  enabled: false
+magicKeywords:
+  enabled: false
+model:
+  loopGuard:
+    enabled: false
+  toolCallLoopGuard:
+    enabled: false
+features:
+  unexpectedStopDetection: none
+memory:
+  backend: off
+memories:
+  enabled: false
+autolearn:
+  enabled: false
+contextPromotion:
+  enabled: false
+branchSummary:
+  enabled: false
+ttsr:
+  enabled: false
+goal:
+  enabled: false
+plan:
+  enabled: false
+git:
+  enabled: false
+dev:
+  autoqa: false
+"""
+
+
+def herd_client():
+    executable = shutil.which("herd")
+    if not executable:
+        raise RuntimeError("herd is not installed; omit --pane to use this terminal")
+    sys.path.insert(0, str(Path(executable).resolve().parent.parent))
+    return importlib.import_module("herd.brokerclient").Client()
+
+
+def open_pane(state: Path, cwd: Path, model: str):
+    # Serialize list-and-spawn, without selecting or removing any existing pane.
+    with (state / "pane.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        with herd_client() as client:
+            live = next((pane for pane in client.list_panes()
+                         if pane.get("meta", {}).get(TAG) == str(state) and not pane.get("dead")), None)
+            if live:
+                print(f"Conversation already in {live['id']}; focus unchanged")
+                return
+            # A direct terminal owns the same conversation; never start a competing writer.
+            with (state / "session.lock").open("a") as session_lock:
+                try:
+                    fcntl.flock(session_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    raise RuntimeError("Conversation is already running in another terminal") from None
+            space = client.space_new("conversation")
+            pane = client.spawn(
+                [sys.executable, str(Path(__file__).resolve()), "--model", model],
+                cwd=str(cwd), space=space, name="Conversation",
+                env={"CONVERSATION_STATE_DIR": str(state),
+                     "CONVERSATION_PROJECT_ROOT": os.environ["CONVERSATION_PROJECT_ROOT"]},
+                meta={TAG: str(state), "dock": "bots"}, cols=120, rows=36,
+            )
+            print(f"Conversation launched in {pane}; focus unchanged")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog="In the terminal: /routes shows responsibilities; /handoffs shows handoffs; "
+               "/conversation explains routing. Follow up by agent or topic, not request IDs. "
+               "Accepted means queued, not completed work.",
+    )
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--pane", action="store_true", help="create/reuse a background Herd dock; leave focus unchanged")
+    modes.add_argument("--print", action="store_true", dest="print_mode", help="print a response, then exit; pending work is not cancelled and late replies require an open terminal")
+    parser.add_argument("--model", default="@smol", help="OMP model or configured role (default: @smol)")
+    parser.add_argument("message", nargs="?", help="message; --print also accepts piped stdin")
+    args = parser.parse_args()
+    if args.pane and args.message is not None:
+        parser.error("--pane does not accept a message; open Conversation to send it")
+    if not args.model.strip():
+        parser.error("--model must not be empty")
+    omp = shutil.which("omp")
+    if not omp:
+        raise RuntimeError("omp is not installed")
+    plugin = ROOT / "omp/plugins/conversation-router/index.ts"
+    if not plugin.is_file():
+        raise RuntimeError(f"Missing Conversation extension: {plugin}")
+    state = Path(os.environ.get("CONVERSATION_STATE_DIR", Path.home() / ".local/state/conversation")).expanduser().resolve()
+    project = Path(os.environ.get("CONVERSATION_PROJECT_ROOT", Path.home())).expanduser().resolve()
+    os.umask(0o077)
+    cwd, sessions = state / "workspace", state / "sessions"
+    for directory in (state, cwd, sessions):
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.environ["CONVERSATION_STATE_DIR"] = str(state)
+    os.environ["CONVERSATION_PROJECT_ROOT"] = str(project)
+    if args.pane:
+        open_pane(state, cwd, args.model)
+        return
+    # Keep the lock across exec. A second launch cannot overwrite a live session/draft.
+    lock = (state / "session.lock").open("a")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        raise RuntimeError("Conversation is already running; use its existing terminal or --pane") from None
+    os.set_inheritable(lock.fileno(), True)
+    config = state / "router-config.yml"
+    config.write_text(CONFIG)
+    command = [omp, "--no-extensions", "--no-tools", "--no-skills", "--no-rules",
+               "--no-lsp", "--no-title", "--thinking=minimal", f"--model={args.model}",
+               "--config", str(config), "-e", str(plugin), "--session-dir", str(sessions), "--continue"]
+    if args.print_mode:
+        command.append("--print")
+    if args.message is not None:
+        # Neither @file nor flag-shaped messages may escape into CLI processing.
+        command.extend(["--", args.message])
+    os.chdir(cwd)
+    os.execvpe(omp, command, os.environ)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, RuntimeError, ValueError) as error:
+        sys.exit(f"conversation: {error}")
