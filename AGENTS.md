@@ -39,6 +39,10 @@ is managed, and no `CLAUDE.md` alias is installed.
   without partial changes; `check` reports drift without mutating.
 - `.env`, `agent.json`, `*.disabled`, and `*.bak` are ignored. Do not add the
   ignored `pi/skills/browser-harness/` external symlink mirror.
+- Every extension declares a one-line summary: `export const description` in
+  `omp/extensions/*.ts`, or `description` in a plugin package.json. The OMP
+  startup panel lists it next to the name, falling back to the first line of
+  the file's leading doc comment.
 
 ### Decisions
 
