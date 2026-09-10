@@ -1,6 +1,8 @@
 """Observable attribution and observation-history boundaries for Reaper."""
+import http.client
 from pathlib import Path
 import tempfile
+import threading
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -89,6 +91,54 @@ class DashboardContracts(unittest.TestCase):
         self.assertEqual(recovered["observedPeak"]["memoryBytes"], 1048576)
         self.assertEqual(recovered["lastObservedAt"], 10)
 
+
+    def test_client_disconnect_during_headers_does_not_stop_server(self):
+        token = "test-capability"
+        server = dashboard.make_server(Path(__file__).resolve().parents[1], self.view, token=token)
+        self.addCleanup(server.server_close)
+
+        class DisconnectingWriter:
+            def write(self, _):
+                raise BrokenPipeError()
+
+        handler = object.__new__(server.RequestHandlerClass)
+        handler.server = server
+        handler.headers = {"Host": f"127.0.0.1:{server.server_port}"}
+        handler.path = f"/{token}/api/snapshot"
+        handler.request_version = "HTTP/1.1"
+        handler.command = "GET"
+        handler.requestline = "GET / HTTP/1.1"
+        handler.wfile = DisconnectingWriter()
+        handler.do_GET()
+
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        self.addCleanup(lambda: (server.shutdown(), worker.join()))
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=3)
+        self.addCleanup(connection.close)
+        connection.request("GET", f"/{token}/api/snapshot")
+        response = connection.getresponse()
+        self.assertEqual((response.status, response.read()), (200, b"{}"))
+
+    def test_unexpected_response_write_error_remains_observable(self):
+        token = "test-capability"
+        server = dashboard.make_server(Path(__file__).resolve().parents[1], self.view, token=token)
+        self.addCleanup(server.server_close)
+
+        class FailingWriter:
+            def write(self, _):
+                raise OSError("write failed")
+
+        handler = object.__new__(server.RequestHandlerClass)
+        handler.server = server
+        handler.headers = {"Host": f"127.0.0.1:{server.server_port}"}
+        handler.path = f"/{token}/api/snapshot"
+        handler.request_version = "HTTP/1.1"
+        handler.command = "GET"
+        handler.requestline = "GET / HTTP/1.1"
+        handler.wfile = FailingWriter()
+        with self.assertRaisesRegex(OSError, "write failed"):
+            handler.do_GET()
 
 if __name__ == "__main__":
     unittest.main()

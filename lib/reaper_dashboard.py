@@ -211,9 +211,8 @@ class Dashboard:
                 print(f"Reaper sampling failed: {error}", flush=True)
 
 
-def serve(root, loader, *, port=0, interval=2, state_dir=None):
-    dashboard = Dashboard(loader, state_dir=state_dir)
-    token = os.environ.get("REAPER_TOKEN") or secrets.token_urlsafe(24)
+def make_server(root, dashboard, *, port=0, token):
+    """Build the capability-scoped dashboard server."""
     prefix = f"/{token}/"
     assets = {
         "": ("reaper-ui/index.html", "text/html; charset=utf-8"),
@@ -244,14 +243,25 @@ def serve(root, loader, *, port=0, interval=2, state_dir=None):
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors file: http://127.0.0.1:* http://localhost:*")
-            self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                # A peer can close after a valid request and before buffered headers flush.
+                pass
 
         def log_message(self, *_):
             pass
 
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     server.daemon_threads = True
+    return server
+
+
+def serve(root, loader, *, port=0, interval=2, state_dir=None):
+    dashboard = Dashboard(loader, state_dir=state_dir)
+    token = os.environ.get("REAPER_TOKEN") or secrets.token_urlsafe(24)
+    server = make_server(root, dashboard, port=port, token=token)
     server.timeout = 0.5
     signal.signal(signal.SIGTERM, lambda *_: dashboard.stopping.set())
     signal.signal(signal.SIGINT, lambda *_: dashboard.stopping.set())
@@ -261,7 +271,7 @@ def serve(root, loader, *, port=0, interval=2, state_dir=None):
     worker.start()
     if os.isatty(1):
         print("\033]2;Reaper\007", end="", flush=True)
-    print(f"Reaper dashboard ready: http://127.0.0.1:{server.server_port}{prefix}", flush=True)
+    print(f"Reaper dashboard ready: http://127.0.0.1:{server.server_port}/{token}/", flush=True)
     try:
         while not dashboard.stopping.is_set():
             server.handle_request()
