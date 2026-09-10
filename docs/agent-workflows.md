@@ -58,8 +58,18 @@ Create `~/.local/state/herd-manager/dispatch-config.json` with the exact
 `HERDMON_STATE_DIR` selects an isolated state directory for verification.
 Only that session can execute `herdmon_dispatch`. Worker SDK sessions disable
 extension discovery and have distinct identities, session files and worktrees.
-Activate through supported `/reload` only when the coordinator is idle and its
-editor is empty; never restart a live coordinator or discard its draft.
+Newly linked extension factories load at OMP startup. `/reload-plugins` refreshes
+plugin caches and commands, but does not load new extension tools; `ctx.reload()`
+reloads the transcript, not extension code. Do not mistake “Plugins reloaded”
+for successful activation. Verify `herdmon_dispatch` is callable and the
+snapshot exists in the exact configured coordinator session.
+
+If activation requires replacing an existing coordinator process, arrange an
+explicitly authorized idle handoff: confirm no active jobs or queued work,
+capture its exact session ID and session file, and preserve any editor draft.
+After the old process exits, resume that same file in the same pane with
+`omp --cwd ORIGINAL_CWD --resume EXACT_SESSION_FILE`. Do not start a duplicate,
+restart the shared broker, use ambiguous `--continue`, or discard a draft.
 
 The coordinator scopes each request with `op: "scope"` and `requests` containing
 `id`, `request`, `acceptance`, absolute `repo`, `targetBranch`, and optional
@@ -88,11 +98,11 @@ inspect any partial branch manually and use a new explicitly scoped ID.
 Shutdown records active work as interrupted before attempting to drain workers;
 OMP can bound the shutdown hook time. Process death also marks interrupted work
 blocked on next activation. A process-identity lease rejects duplicate owners.
-Supported reload retains the process runtime instead of duplicating workers.
+Session-only reload retains an already-loaded runtime without duplicating workers.
 Worker handoffs enqueue a supported coordinator message and wake a turn, without
 writing terminal input or touching the editor. Messages say ready for review,
 not merged; failures include blockers. A durable pending-delivery bit survives
-interruption, and reload binds delivery to the current extension API. Heartbeats
+interruption; recreating the extension binding uses the current API. Heartbeats
 do not send messages. A crash after enqueue but before recording delivery can
 repeat an informational notification; it cannot duplicate a worker launch.
 
