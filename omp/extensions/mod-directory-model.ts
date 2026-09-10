@@ -19,9 +19,13 @@ import path from "node:path";
 import type { Model } from "@oh-my-pi/pi-ai/types";
 import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 
-/** OAuth/subscription providers worth offering in the picker. */
+/**
+ * Provider identities are stable. Their models are supplied by ModelRegistry,
+ * which refreshes subscription-backed catalogs from authenticated accounts.
+ */
 const SUBSCRIPTION_PROVIDERS: Record<string, true> = {
 	anthropic: true,
+	"google-antigravity": true,
 	"openai-codex": true,
 };
 
@@ -132,6 +136,7 @@ export default function modDirectoryModel(api: ExtensionAPI): void {
 					if (spec) ctx.ui.notify(`/mod: no model matches "${spec}"`, "error");
 					return;
 				}
+
 
 				const selector = `${model.provider}/${model.id}`;
 				persistRole(file, selector);
