@@ -11,9 +11,16 @@ export default function herdLifecycle(pi: ExtensionAPI): void {
 	if (!pane) return;
 	let start: string;
 	try {
-		start = readFileSync(`/proc/${process.pid}/stat`, "utf8").split(")").at(-1)!.trim().split(/\s+/)[19];
-	} catch { return; }
-	const socketPath = process.env.HERD_BROKER_SOCK ||
+		start = readFileSync(`/proc/${process.pid}/stat`, "utf8")
+			.split(")")
+			.at(-1)!
+			.trim()
+			.split(/\s+/)[19];
+	} catch {
+		return;
+	}
+	const socketPath =
+		process.env.HERD_BROKER_SOCK ||
 		`${process.env.XDG_RUNTIME_DIR || `/tmp/herd-${process.getuid!()}`}/herd/broker.sock`;
 	let context: ExtensionContext | undefined;
 	let session = "";
@@ -29,13 +36,35 @@ export default function herdLifecycle(pi: ExtensionAPI): void {
 		const ctx = context;
 		if (!ctx || !session) return Promise.resolve();
 		const busy = !ctx.isIdle() || ctx.hasPendingMessages();
-		const phase = !intent ? (busy ? "active" : "idle") : cleanup ? "cleanup" :
-			busy ? "pending" : final ? "settled" : "closing";
-		const payload = JSON.stringify({ op: "lifecycle", id: pane, pid: process.pid,
-			start, session, seq: ++seq, intent, phase, work }) + "\n";
+		const phase = !intent
+			? busy
+				? "active"
+				: "idle"
+			: cleanup
+				? "cleanup"
+				: busy
+					? "pending"
+					: final
+						? "settled"
+						: "closing";
+		const payload =
+			JSON.stringify({
+				op: "lifecycle",
+				id: pane,
+				pid: process.pid,
+				start,
+				session,
+				seq: ++seq,
+				intent,
+				phase,
+				work,
+			}) + "\n";
 		const { promise, resolve } = Promise.withResolvers<void>();
 		const socket = createConnection(socketPath);
-		const finish = () => { socket.destroy(); resolve(); };
+		const finish = () => {
+			socket.destroy();
+			resolve();
+		};
 		socket.setTimeout(250, finish);
 		socket.once("error", finish);
 		socket.once("end", finish);
@@ -54,7 +83,9 @@ export default function herdLifecycle(pi: ExtensionAPI): void {
 			cleanup = false;
 		}
 		if (!timer) {
-			timer = setInterval(() => { void publish(); }, 500);
+			timer = setInterval(() => {
+				void publish();
+			}, 500);
 			timer.unref();
 		}
 		return publish();
@@ -79,11 +110,19 @@ export default function herdLifecycle(pi: ExtensionAPI): void {
 	});
 	pi.on("tool_result", (event, ctx) => {
 		const details = event.details;
-		const mounted = details && typeof details === "object" && "xdev" in details ? details.xdev : undefined;
-		const quit = event.toolName === "quit_session" || (
-			event.toolName === "write" && mounted && typeof mounted === "object" &&
-			"tool" in mounted && mounted.tool === "quit_session" &&
-			"mode" in mounted && mounted.mode === "execute");
+		const mounted =
+			details && typeof details === "object" && "xdev" in details
+				? details.xdev
+				: undefined;
+		const quit =
+			event.toolName === "quit_session" ||
+			(event.toolName === "write" &&
+				mounted &&
+				typeof mounted === "object" &&
+				"tool" in mounted &&
+				mounted.tool === "quit_session" &&
+				"mode" in mounted &&
+				mounted.mode === "execute");
 		if (!quit || event.isError) return;
 		context = ctx;
 		intent = Date.now() / 1000;
@@ -93,8 +132,14 @@ export default function herdLifecycle(pi: ExtensionAPI): void {
 	});
 	pi.on("agent_end", (event, ctx) => {
 		// An old fire-and-forget end notification must not settle a newer quit.
-		if (!intent || !event.messages.some(message =>
-			message.role === "toolResult" && message.toolCallId === quitCall)) return;
+		if (
+			!intent ||
+			!event.messages.some(
+				(message) =>
+					message.role === "toolResult" && message.toolCallId === quitCall,
+			)
+		)
+			return;
 		context = ctx;
 		// Current core includes this property with undefined on terminal ends;
 		// older core omits it entirely and cannot establish terminal evidence.

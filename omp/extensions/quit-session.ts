@@ -20,7 +20,18 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 
-const SHELLS: Record<string, true> = { sh: true, bash: true, dash: true, zsh: true, fish: true, ksh: true, mksh: true, csh: true, tcsh: true, nu: true };
+const SHELLS: Record<string, true> = {
+	sh: true,
+	bash: true,
+	dash: true,
+	zsh: true,
+	fish: true,
+	ksh: true,
+	mksh: true,
+	csh: true,
+	tcsh: true,
+	nu: true,
+};
 // pidfds refer to the original processes even after PID reuse. Python's stdlib
 // exposes these Linux syscalls; unavailable support fails closed before "ready".
 const TERMINAL_WATCHER = `
@@ -66,12 +77,18 @@ export default function quitSession(pi: ExtensionAPI) {
 			kill_terminal: z
 				.boolean()
 				.optional()
-				.describe("After omp exits, SIGHUP its parent shell only if its process identity can be safely verified."),
+				.describe(
+					"After omp exits, SIGHUP its parent shell only if its process identity can be safely verified.",
+				),
 		}),
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			let terminalNotice = "";
 			if (params.kill_terminal) {
-				if (!terminalWatcherScheduled && process.platform === "linux" && process.ppid > 1) {
+				if (
+					!terminalWatcherScheduled &&
+					process.platform === "linux" &&
+					process.ppid > 1
+				) {
 					const ppid = process.ppid;
 					try {
 						const [ownStat, parentStat, parentExecutable] = await Promise.all([
@@ -81,25 +98,43 @@ export default function quitSession(pi: ExtensionAPI) {
 						]);
 						// /proc comm may contain spaces and ')'; fields after its last
 						// closing parenthesis begin at field 3. Start time is field 22.
-						const startTimes = [ownStat, parentStat].map(stat =>
-							stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\s+/)[19],
+						const startTimes = [ownStat, parentStat].map(
+							(stat) =>
+								stat
+									.slice(stat.lastIndexOf(")") + 2)
+									.trim()
+									.split(/\s+/)[19],
 						);
 						if (
 							SHELLS[path.basename(parentExecutable)] === true &&
-							startTimes.every(start => start !== undefined && /^\d+$/.test(start))
+							startTimes.every(
+								(start) => start !== undefined && /^\d+$/.test(start),
+							)
 						) {
 							const watcher = spawn(
 								"python3",
-								["-c", TERMINAL_WATCHER, String(process.pid), startTimes[0]!, String(ppid), startTimes[1]!, parentExecutable],
+								[
+									"-c",
+									TERMINAL_WATCHER,
+									String(process.pid),
+									startTimes[0]!,
+									String(ppid),
+									startTimes[1]!,
+									parentExecutable,
+								],
 								{ detached: true, stdio: ["ignore", "pipe", "ignore"] },
 							);
 							const armed = Promise.withResolvers<void>();
-							watcher.stdout?.once("data", data => {
+							watcher.stdout?.once("data", (data) => {
 								if (String(data).trim() === "ready") armed.resolve();
 								else armed.reject(new Error("Terminal watcher did not arm"));
 							});
 							watcher.once("error", armed.reject);
-							watcher.once("exit", () => armed.reject(new Error("Terminal watcher exited before arming")));
+							watcher.once("exit", () =>
+								armed.reject(
+									new Error("Terminal watcher exited before arming"),
+								),
+							);
 							const timeout = setTimeout(() => {
 								watcher.kill();
 								armed.reject(new Error("Terminal watcher arming timed out"));
