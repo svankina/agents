@@ -30,7 +30,7 @@ def transcript(settings, ref, live):
     return next((str(file) for file in files if not any(file.stem.endswith("_" + ident) for ident in open_ids)), None)
 
 
-def open_pane(settings, ref=None):
+def open_pane(settings, ref=None, restart=False):
     settings.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     for name in ("index.html", "designer.css", "designer.js", "designer.svg", "reviews.html", "reviews.css", "reviews.js"):
         if not (ROOT / "assets/designer-ui" / name).is_file():
@@ -47,7 +47,7 @@ def open_pane(settings, ref=None):
                 if not data.get("sampledAt"):
                     raise RuntimeError("Existing Designer dock has not recorded a snapshot")
                 # A dock without its own process is only a page; it is replaced, never reused.
-                if data.get("runtime", {}).get("pid"):
+                if not restart and data.get("runtime", {}).get("pid"):
                     print(f"Designer already ready in {live['id']}; focus unchanged")
                     return
             omp = shutil.which("omp")
@@ -98,6 +98,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--pane", action="store_true", help="open/reuse the background Herd dock hosting Designer (default)")
+    modes.add_argument("--restart", action="store_true", help="restart the background Herd dock hosting Designer")
     modes.add_argument("--attach", action="store_true", help=argparse.SUPPRESS)
     modes.add_argument("--snapshot", action="store_true", help="import current history and print the durable snapshot")
     modes.add_argument("--record", type=Path, metavar="IMAGE", help="archive an image revision under a stable contact and asset")
@@ -134,9 +135,7 @@ def main():
         finally:
             board.close()
     else:
-        open_pane(settings, args.resume)
-
-
+        open_pane(settings, args.resume, args.restart)
 if __name__ == "__main__":
     try:
         main()
