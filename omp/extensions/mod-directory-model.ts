@@ -1,23 +1,20 @@
 /**
  * `/mod` — pin a model as *this directory's* default.
  *
- * Writes `modelRoles.default` into `<cwd>/.omp/settings.json` (the project
- * settings layer, which beats `~/.omp/agent/config.yml`) and switches the live
- * session to it. The global default is left alone.
+ * The extension owns its state in `<cwd>/.omp/directory-model.json`, rather
+ * than OMP's project settings. At `session_start`, it applies that model unless
+ * `--no-directory-model` was passed. That lets a profile keep its own default.
  *
  *   /mod                      fuzzy-pick a subscription model
  *   /mod opus                 resolve a spec (provider/id, bare id, @role)
  *   /mod off                  drop this directory's pin
- *
- * Lives as an extension on purpose: the same command patched into omp core was
- * thrown away by the next `omp update`.
  */
 
 import fs from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { Model } from "@oh-my-pi/pi-ai/types";
-import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 
 /**
  * Provider identities are stable. Their models are supplied by ModelRegistry,
@@ -37,13 +34,14 @@ const CLEAR_ARGS: Record<string, true> = {
 };
 
 const ROLE = "default";
+const STATE_FILE = "directory-model.json";
 
 function abbreviate(target: string): string {
 	const relative = path.relative(homedir(), target);
 	return relative.startsWith("..") || path.isAbsolute(relative) ? target : `~/${relative}`;
 }
 
-function readSettings(file: string): Record<string, unknown> {
+function readJsonObject(file: string): Record<string, unknown> {
 	if (!fs.existsSync(file)) return {};
 	const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf-8"));
 	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -52,34 +50,47 @@ function readSettings(file: string): Record<string, unknown> {
 	return parsed as Record<string, unknown>;
 }
 
-/** Merge (or drop) `modelRoles.default`, preserving every other project setting. */
-function persistRole(file: string, selector: string | null): void {
-	const settings = readSettings(file);
-	const existing: unknown = settings.modelRoles;
-	const roles: Record<string, unknown> =
-		existing && typeof existing === "object" && !Array.isArray(existing)
-			? { ...(existing as Record<string, unknown>) }
-			: {};
+function readDirectoryModel(file: string): string | undefined {
+	const model = readJsonObject(file).model;
+	return typeof model === "string" && model.trim() ? model : undefined;
+}
 
+function persistDirectoryModel(file: string, selector: string | null): void {
 	if (selector === null) {
-		delete roles[ROLE];
-	} else {
-		roles[ROLE] = selector;
-	}
-
-	if (Object.keys(roles).length > 0) {
-		settings.modelRoles = roles;
-	} else {
-		delete settings.modelRoles;
-	}
-
-	if (Object.keys(settings).length === 0) {
 		fs.rmSync(file, { force: true });
 		return;
 	}
-
 	fs.mkdirSync(path.dirname(file), { recursive: true });
-	fs.writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`);
+	fs.writeFileSync(file, `${JSON.stringify({ model: selector }, null, 2)}\n`);
+}
+
+/**
+ * Move the old extension-owned setting out of core configuration. Existing
+ * directory state wins if both files are present. All unrelated settings and
+ * model roles remain untouched.
+ */
+function migrateLegacyRole(cwd: string): string | undefined {
+	const settingsFile = path.join(cwd, ".omp", "settings.json");
+	const stateFile = path.join(cwd, ".omp", STATE_FILE);
+	const settings = readJsonObject(settingsFile);
+	const modelRoles = settings.modelRoles;
+	if (!modelRoles || typeof modelRoles !== "object" || Array.isArray(modelRoles)) {
+		return readDirectoryModel(stateFile);
+	}
+
+	const roles = { ...(modelRoles as Record<string, unknown>) };
+	const legacy = typeof roles[ROLE] === "string" && roles[ROLE].trim() ? roles[ROLE] : undefined;
+	if (!legacy) return readDirectoryModel(stateFile);
+
+	const persisted = readDirectoryModel(stateFile);
+	if (!persisted) persistDirectoryModel(stateFile, legacy);
+	delete roles[ROLE];
+	if (Object.keys(roles).length > 0) settings.modelRoles = roles;
+	else delete settings.modelRoles;
+
+	if (Object.keys(settings).length === 0) fs.rmSync(settingsFile, { force: true });
+	else fs.writeFileSync(settingsFile, `${JSON.stringify(settings, null, 2)}\n`);
+	return persisted ?? legacy;
 }
 
 async function pick(ctx: ExtensionCommandContext): Promise<Model | undefined> {
@@ -105,24 +116,43 @@ async function pick(ctx: ExtensionCommandContext): Promise<Model | undefined> {
 
 	const chosen = await ctx.ui.select(`Default model for ${abbreviate(ctx.cwd)}`, options, {
 		initialIndex: currentIndex >= 0 ? currentIndex : 0,
-		helpText: "Saved to .omp/settings.json for this directory only",
+		helpText: "Saved to .omp/directory-model.json for this directory only",
 	});
 	return chosen === undefined ? undefined : byLabel.get(chosen);
 }
 
+async function applyDirectoryModel(api: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+	const selector = migrateLegacyRole(ctx.cwd) ?? readDirectoryModel(path.join(ctx.cwd, ".omp", STATE_FILE));
+	if (api.getFlag("directory-model") !== true || !selector) return;
+	const model = ctx.models.resolve(selector);
+	if (model) await api.setModel(model);
+}
+
 export default function modDirectoryModel(api: ExtensionAPI): void {
+	api.registerFlag("directory-model", {
+		type: "boolean",
+		default: true,
+		description: "Apply .omp/directory-model.json at session start; --no-directory-model keeps the profile default",
+	});
+	api.on("session_start", async (_event, ctx) => {
+		try {
+			await applyDirectoryModel(api, ctx);
+		} catch (error) {
+			api.logger.warn("Failed to apply directory model", {
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	});
 	api.registerCommand("mod", {
-		description: "Set this directory's default model (.omp/settings.json)",
+		description: "Set this directory's default model (.omp/directory-model.json)",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const spec = args.trim();
-			const file = path.join(ctx.cwd, ".omp", "settings.json");
+			const file = path.join(ctx.cwd, ".omp", STATE_FILE);
 
 			try {
 				if (CLEAR_ARGS[spec.toLowerCase()]) {
-					persistRole(file, null);
-					ctx.ui.notify(
-						`Cleared the directory model in ${abbreviate(file)}; the global default applies to new sessions`,
-					);
+					persistDirectoryModel(file, null);
+					ctx.ui.notify(`Cleared the directory model in ${abbreviate(file)}; the profile default applies to new sessions`);
 					return;
 				}
 
@@ -137,9 +167,8 @@ export default function modDirectoryModel(api: ExtensionAPI): void {
 					return;
 				}
 
-
 				const selector = `${model.provider}/${model.id}`;
-				persistRole(file, selector);
+				persistDirectoryModel(file, selector);
 				const switched = await api.setModel(model);
 				ctx.ui.notify(
 					switched
