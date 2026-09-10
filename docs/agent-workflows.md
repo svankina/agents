@@ -49,6 +49,58 @@ OMP configuration, extensions, and `~/.omp/agent/managed-skills` are not managed
 Pi and Claude skills, prompts, extensions, and commands remain historical
 resources, not install targets; other harness directories are untouched.
 
+### herdmon coordinator dispatch
+
+`omp/plugins/herdmon-dispatch` adds explicit durable dispatch without changes to
+OMP core. Link the package with `omp plugin link PATH/omp/plugins/herdmon-dispatch`.
+Create `~/.local/state/herd-manager/dispatch-config.json` with the exact
+`coordinatorSessionId` and optional `maxWorkers` (default 3) and `model`.
+`HERDMON_STATE_DIR` selects an isolated state directory for verification.
+Only that session can execute `herdmon_dispatch`. Worker SDK sessions disable
+extension discovery and have distinct identities, session files and worktrees.
+Activate through supported `/reload` only when the coordinator is idle and its
+editor is empty; never restart a live coordinator or discard its draft.
+
+The coordinator scopes each request with `op: "scope"` and `requests` containing
+`id`, `request`, `acceptance`, absolute `repo`, `targetBranch`, and optional
+`dependencies` (request IDs). The IDs are idempotency keys: identical replays do
+not launch twice; changed scopes are rejected. Dependencies can refer to other
+entries in the same batch; missing IDs and cycles reject the whole batch.
+Independent requests run concurrently, capped by `maxWorkers`. Dependencies
+wait for reviewed integrated completion, not a worker's handoff.
+
+`op: "inspect"` returns actual state. Review a ready worktree and use
+`op: "integrating", id, note` to record the review. Manually merge its original
+commits into the scoped target branch; dispatch never merges anything.
+Squash-only and cherry-pick-only integrations do not establish the required
+commit ancestry. Run `op: "verify", id, command: ["executable", "arg"]` to execute
+combined verification in the target checkout. A successful command, no
+uncommitted tracked changes, and all original worker commits in target ancestry
+are required. Unrelated untracked user files are preserved and do not block it.
+Then `op: "completed", id, note` accepts that exact verified target HEAD.
+Moving HEAD invalidates verification. Workers cannot accept their own work.
+
+`op: "block", id, note` records a blocker for stopped work.
+After interruption, inspect the recorded worktree and session before
+`op: "recover", id, note`. Recovery can move clean committed work to review;
+it never relaunches a worker. If launch stopped before recording a worktree,
+inspect any partial branch manually and use a new explicitly scoped ID.
+Shutdown records active work as interrupted before attempting to drain workers;
+OMP can bound the shutdown hook time. Process death also marks interrupted work
+blocked on next activation. A process-identity lease rejects duplicate owners.
+Supported reload retains the process runtime instead of duplicating workers.
+Worker handoffs enqueue a supported coordinator message and wake a turn, without
+writing terminal input or touching the editor. Messages say ready for review,
+not merged; failures include blockers. A durable pending-delivery bit survives
+interruption, and reload binds delivery to the current extension API. Heartbeats
+do not send messages. A crash after enqueue but before recording delivery can
+repeat an informational notification; it cannot duplicate a worker launch.
+
+`dispatch.sqlite` is the private authority. Atomic `dispatch.json` is a read-only
+version-1 dashboard projection, refreshed on transitions and every 15 seconds.
+Legacy `queue.json` and the manager Inbox remain separate: the coordinator
+explicitly decides scope rather than dispatching arbitrary chat.
+
 The resource lease plugin lives in `omp/plugins/resource-leases`. Install its
 helpers with `omp-install`, then link the package with
 `omp plugin link ~/src/agents/omp/plugins/resource-leases`. Restart OMP to load
