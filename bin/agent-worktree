@@ -1,30 +1,18 @@
 #!/usr/bin/env bash
-# agent-worktree — create/inspect/remove the per-feature git worktrees agents
-# are supposed to work in, instead of hand-rolling `git worktree add` and
-# forgetting to actually switch to the branch.
-#
-# Feature work lives in <repo>/.worktrees/<name> on branch <name>. This script
-# owns the whole ritual: pick the main checkout even when called from inside a
-# worktree, keep .worktrees/ out of git, reuse an existing branch instead of
-# failing, and CONFIRM that HEAD really is on the feature branch before it
-# reports success (creating a branch you never checked out is the failure mode
-# this exists to kill).
+# agent-worktree — manage per-feature Git worktrees without rewriting shared history.
 #
 # Usage:
 #   agent-worktree new <name> [--base <ref>] [--repo <path>]
-#   agent-worktree path <name> [--repo <path>]     # print dir, create nothing
+#   agent-worktree path <name> [--repo <path>]
 #   agent-worktree list [--repo <path>]
-#   agent-worktree rm <name> [--repo <path>] [--force] [--delete-branch]
-#   agent-worktree where [--repo <path>]           # what am I on right now?
+#   agent-worktree integrate <feature> --target <branch> --remote <remote> -- <verification argv...>
+#   agent-worktree rm <name> [--repo <path>] [--force] [--delete-branch --target <branch>]
+#   agent-worktree where [--repo <path>]
 #
-# `new` prints the worktree path on stdout (and a human summary on stderr), so
-# an agent can do:  cd "$(agent-worktree new my-feature)"
-# and a harness can use that path as the cwd for subsequent tool calls.
-#
-# Notes:
-#   - .worktrees/ is ignored via .git/info/exclude when it is not already
-#     ignored, so no tracked .gitignore is modified in someone else's repo.
-#   - Names may contain slashes (feat/foo -> .worktrees/feat/foo, branch feat/foo).
+# integrate fetches and fast-forwards the checked-out target, rebases an
+# unpublished feature worktree, runs the supplied verification command there,
+# and fast-forwards the target. It never pushes. Push remains a separate,
+# deliberate operation.
 
 set -euo pipefail
 
@@ -32,37 +20,30 @@ prog=agent-worktree
 die() { printf '%s: %s\n' "$prog" "$*" >&2; exit 1; }
 usage() { grep '^#' "$0" | sed 's/^# \{0,1\}//; 1d'; }
 
-repo_arg=""
-base=""
-force=0
-delete_branch=0
-positional=()
-
+repo_arg=""; base=""; target=""; remote=""; force=0; delete_branch=0
+positional=(); verification=()
 cmd="${1:-help}"
 [[ $# -gt 0 ]] && shift
-
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --repo)          repo_arg="$2"; shift 2 ;;
-        --base)          base="$2"; shift 2 ;;
-        --force|-f)      force=1; shift ;;
+        --repo) repo_arg="${2:-}"; [[ -n "$repo_arg" ]] || die "--repo needs a path"; shift 2 ;;
+        --base) base="${2:-}"; [[ -n "$base" ]] || die "--base needs a ref"; shift 2 ;;
+        --target) target="${2:-}"; [[ -n "$target" ]] || die "--target needs a branch"; shift 2 ;;
+        --remote) remote="${2:-}"; [[ -n "$remote" ]] || die "--remote needs a remote name"; shift 2 ;;
+        --force|-f) force=1; shift ;;
         --delete-branch) delete_branch=1; shift ;;
-        -h|--help)       usage; exit 0 ;;
-        --)              shift; positional+=("$@"); break ;;
-        -*)              die "unknown option '$1'" ;;
-        *)               positional+=("$1"); shift ;;
+        -h|--help) usage; exit 0 ;;
+        --) shift; verification=("$@"); break ;;
+        -*) die "unknown option '$1'" ;;
+        *) positional+=("$1"); shift ;;
     esac
 done
 
-# Main checkout root, even when invoked from inside a linked worktree.
 main_root() {
     local start="${repo_arg:-$PWD}"
-    git -C "$start" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
-        || die "not inside a git repository (${start})"
-    git -C "$start" worktree list --porcelain \
-        | awk '/^worktree / && !seen++ {print substr($0,10)}'
+    git -C "$start" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not inside a git repository ($start)"
+    git -C "$start" worktree list --porcelain | awk '/^worktree / && !seen++ {print substr($0,10)}'
 }
-
 root="$(main_root)"
 wt_dir="$root/.worktrees"
 
@@ -74,104 +55,199 @@ ensure_ignored() {
     printf '.worktrees/\n' >> "$exclude"
     printf '%s: ignored .worktrees/ via %s\n' "$prog" "$exclude" >&2
 }
-
 branch_exists() { git -C "$root" show-ref --verify --quiet "refs/heads/$1"; }
-
+valid_branch_name() {
+    local value="$1"
+    [[ "$value" != -* && "$value" != @ && "$value" != @\{-* && "$value" != refs/* ]] \
+        && git check-ref-format "refs/heads/$value" >/dev/null 2>&1
+}
 need_name() {
-    [[ ${#positional[@]} -ge 1 ]] || die "$1 needs a <name> (see --help)"
-    case "${positional[0]}" in
-        -*|*..*|*' '*) die "invalid worktree name '${positional[0]}'" ;;
-    esac
-    printf '%s' "${positional[0]}"
+    [[ ${#positional[@]} -eq 1 ]] || die "$1 needs exactly one <name> (see --help)"
+    local name="${positional[0]}"
+    valid_branch_name "$name" || die "invalid branch name '$name'"
+    printf '%s' "$name"
+}
+need_branch() {
+    local value="$1" label="$2"
+    [[ -n "$value" ]] || die "$label is required"
+    valid_branch_name "$value" || die "invalid branch name '$value'"
+}
+need_remote() {
+    [[ -n "$remote" ]] || die "integrate requires --remote <remote>"
+    [[ "$remote" != -* && "$remote" != *[[:space:]]* ]] || die "invalid remote name '$remote'"
+    git -C "$root" remote get-url "$remote" >/dev/null 2>&1 || die "unknown remote '$remote'"
+}
+canonical_dir() { (cd "$1" && pwd -P); }
+assert_checkout() {
+    local dir="$1" branch="$2" label="$3" top current
+    [[ -d "$dir" ]] || die "$label worktree is missing at $dir"
+    top="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)" || die "$label is not a Git worktree: $dir"
+    [[ "$(canonical_dir "$top")" == "$(canonical_dir "$dir")" ]] || die "$label must be checked out exactly at $dir"
+    current="$(git -C "$dir" symbolic-ref --quiet --short HEAD 2>/dev/null)" || die "$label is detached; expected branch '$branch'"
+    [[ "$current" == "$branch" ]] || die "$label is on '$current', expected '$branch'"
+}
+assert_clean() {
+    local dir="$1" label="$2"
+    [[ -z "$(git -C "$dir" status --porcelain)" ]] || die "$label worktree is dirty (including untracked files); commit or remove changes first"
+}
+assert_no_operation() {
+    local dir="$1" label="$2" gd
+    gd="$(git -C "$dir" rev-parse --git-dir)"
+    case "$gd" in /*) ;; *) gd="$dir/$gd" ;; esac
+    [[ ! -e "$gd/MERGE_HEAD" && ! -e "$gd/CHERRY_PICK_HEAD" && ! -e "$gd/REVERT_HEAD" && ! -d "$gd/rebase-apply" && ! -d "$gd/rebase-merge" && ! -e "$gd/index.lock" ]] || die "$label has an unfinished Git operation or index lock; resolve it before continuing"
+}
+assert_worktree_unlocked() {
+    local dir="$1" expected
+    expected="$(canonical_dir "$dir")"
+    if ! git -C "$root" worktree list --porcelain | awk -v expected="$expected" '
+        /^worktree / { path=substr($0,10); next }
+        /^locked/ { if (path == expected) exit 7 }
+        END { }'; then
+        die "feature worktree at $dir is locked; unlock it explicitly before removal"
+    fi
+}
+assert_branch_unpublished() {
+    local feature="$1" upstream ref ls_output ls_status
+    upstream="$(git -C "$root" config --get "branch.$feature.remote" || true)"
+    [[ -z "$upstream" ]] || die "feature '$feature' has tracking configured ($upstream); refusing to rewrite a published/shared branch"
+    while IFS= read -r ref; do
+        [[ -z "$ref" ]] || die "feature '$feature' has a known remote ref ($ref); refusing to rewrite a published/shared branch"
+    done < <(git -C "$root" for-each-ref --format='%(refname)' "refs/remotes/*/$feature")
+    if ls_output="$(git -C "$root" ls-remote --exit-code --heads "$remote" "refs/heads/$feature" 2>&1)"; then
+        die "feature '$feature' exists on remote '$remote'; refusing to rewrite a published/shared branch"
+    else
+        ls_status=$?
+        [[ "$ls_status" -eq 2 ]] || die "could not determine whether feature '$feature' is published on '$remote': $ls_output"
+    fi
+}
+acquire_integration_lock() {
+    local common
+    common="$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)"
+    mkdir -p "$common"; exec 9>"$common/agent-worktree-integrate.lock"
+    flock -n 9 || die "another agent-worktree integration is already running for this repository"
+}
+branch_delete_safe() {
+    local feature="$1" target_branch="$2" upstream
+    assert_checkout "$root" "$target_branch" "target"
+    git -C "$root" merge-base --is-ancestor "$feature" "$target_branch" || die "branch '$feature' is not an ancestor of explicit target '$target_branch'; refusing removal"
+    upstream="$(git -C "$root" rev-parse --verify --quiet "$feature@{upstream}" 2>/dev/null || true)"
+    if [[ -n "$upstream" ]]; then
+        git -C "$root" merge-base --is-ancestor "$feature" "$upstream" || die "branch '$feature' is not merged into its upstream; refusing removal"
+    fi
 }
 
 case "$cmd" in
   new)
-    name="$(need_name new)"
-    dest="$wt_dir/$name"
-
+    name="$(need_name new)"; dest="$wt_dir/$name"
     if [[ -d "$dest" ]]; then
-        cur="$(git -C "$dest" rev-parse --abbrev-ref HEAD)"
-        [[ "$cur" == "$name" ]] \
-            || die "$dest already exists but is on '$cur', not '$name'"
-        printf '%s: reusing existing worktree (branch %s)\n' "$prog" "$cur" >&2
-        echo "$dest"
-        exit 0
+        assert_checkout "$dest" "$name" "feature"
+        printf '%s: reusing existing worktree (branch %s)\n' "$prog" "$name" >&2
+        echo "$dest"; exit 0
     fi
-
-    ensure_ignored
-    mkdir -p "$(dirname "$dest")"
-
+    ensure_ignored; mkdir -p "$(dirname "$dest")"
     if branch_exists "$name"; then
         [[ -z "$base" ]] || die "branch '$name' already exists; drop --base or pick a new name"
         git -C "$root" worktree add "$dest" "$name" >&2
     else
         git -C "$root" worktree add -b "$name" "$dest" ${base:+"$base"} >&2
     fi
-
-    # The whole point: prove HEAD is actually on the feature branch.
-    cur="$(git -C "$dest" rev-parse --abbrev-ref HEAD)"
-    [[ "$cur" == "$name" ]] || die "worktree created but HEAD is '$cur', expected '$name'"
-
-    {
-        printf '%s: worktree %s\n' "$prog" "$dest"
-        printf '%s: branch   ⑂ %s (from %s)\n' "$prog" "$cur" \
-            "$(git -C "$dest" rev-parse --short HEAD)"
-        printf '%s: next     work with cwd=%s\n' "$prog" "$dest"
-    } >&2
+    assert_checkout "$dest" "$name" "feature"
+    printf '%s: worktree %s\n%s: branch   %s\n' "$prog" "$dest" "$prog" "$name" >&2
     echo "$dest"
     ;;
-
-  path)
-    name="$(need_name path)"
-    echo "$wt_dir/$name"
-    ;;
-
+  path) name="$(need_name path)"; echo "$wt_dir/$name" ;;
   list)
     git -C "$root" worktree list --porcelain | awk -v root="$wt_dir/" '
-        /^worktree /{path=substr($0,10)}
-        /^branch /{br=substr($0,8); sub("refs/heads/","",br)}
-        /^detached/{br="(detached)"}
-        /^$/{ if (path != "") printf "%-12s %s\n", (index(path, root)==1 ? "feature" : "main"), \
-                 (br == "" ? "?" : br) " -> " path; path=""; br="" }
-        END{ if (path != "") printf "%-12s %s\n", (index(path, root)==1 ? "feature" : "main"), \
-                 (br == "" ? "?" : br) " -> " path }'
+      /^worktree /{path=substr($0,10)} /^branch /{br=substr($0,8); sub("refs/heads/","",br)}
+      /^detached/{br="(detached)"} /^$/{if(path!="") printf "%-12s %s\n",(index(path,root)==1 ? "feature":"main"),(br==""?"?":br) " -> " path; path="";br=""}
+      END{if(path!="") printf "%-12s %s\n",(index(path,root)==1 ? "feature":"main"),(br==""?"?":br) " -> " path}'
     ;;
-
+  integrate)
+    feature="$(need_name integrate)"; need_branch "$target" "--target"; need_remote
+    [[ "$feature" != "$target" ]] || die "feature and target must be different branches"
+    [[ ${#verification[@]} -gt 0 ]] || die "integrate requires a verification command after --"
+    branch_exists "$feature" || die "feature branch '$feature' does not exist"
+    branch_exists "$target" || die "target branch '$target' does not exist locally"
+    dest="$wt_dir/$feature"
+    assert_checkout "$root" "$target" "target"
+    assert_worktree_unlocked "$dest"
+    assert_checkout "$dest" "$feature" "feature"
+    assert_clean "$root" "target"; assert_clean "$dest" "feature"
+    assert_no_operation "$root" "target"; assert_no_operation "$dest" "feature"
+    assert_branch_unpublished "$feature"
+    acquire_integration_lock
+    # Recheck after acquiring the repository-wide integration lock.
+    assert_worktree_unlocked "$dest"
+    assert_checkout "$root" "$target" "target"; assert_checkout "$dest" "$feature" "feature"
+    assert_clean "$root" "target"; assert_clean "$dest" "feature"
+    assert_no_operation "$root" "target"; assert_no_operation "$dest" "feature"
+    git -C "$root" fetch "$remote" "refs/heads/$target:refs/remotes/$remote/$target"
+    remote_target="refs/remotes/$remote/$target"
+    git -C "$root" show-ref --verify --quiet "$remote_target" || die "remote '$remote' has no target branch '$target'"
+    if git -C "$root" merge-base --is-ancestor "$target" "$remote_target"; then
+        git -C "$root" merge --ff-only "$remote_target" || die "could not fast-forward target '$target'; no feature rebase was attempted"
+    elif git -C "$root" merge-base --is-ancestor "$remote_target" "$target"; then
+        :
+    else
+        die "local target '$target' diverged from $remote/$target; reconcile it manually before integrating"
+    fi
+    target_head="$(git -C "$root" rev-parse HEAD)"
+    if ! git -C "$dest" rebase --no-autostash --no-update-refs "$target_head"; then
+        die "rebase stopped in $dest; resolve conflicts, then run 'git -C $dest rebase --continue' (or --abort). No merge was attempted"
+    fi
+    feature_head="$(git -C "$dest" rev-parse HEAD)"
+    if ! (cd "$dest" && "${verification[@]}"); then
+        die "verification failed in $dest; feature worktree and rebased branch were preserved"
+    fi
+    assert_checkout "$root" "$target" "target"; assert_checkout "$dest" "$feature" "feature"
+    assert_clean "$root" "target"; assert_clean "$dest" "feature"
+    assert_no_operation "$root" "target"; assert_no_operation "$dest" "feature"
+    [[ "$(git -C "$root" rev-parse HEAD)" == "$target_head" ]] || die "target '$target' advanced during verification; refusing to merge stale verification"
+    [[ "$(git -C "$dest" rev-parse HEAD)" == "$feature_head" ]] || die "verification changed feature HEAD; refusing to merge an unverified commit"
+    git -C "$root" merge --ff-only "$feature" || die "could not fast-forward target '$target'; feature worktree was preserved"
+    git -C "$root" merge-base --is-ancestor "$feature" "$target" || die "post-merge ancestry check failed"
+    printf '%s: rebased %s and fast-forwarded %s; push remains separate\n' "$prog" "$feature" "$target" >&2
+    ;;
   rm|remove)
-    name="$(need_name rm)"
-    dest="$wt_dir/$name"
-    [[ -d "$dest" ]] || die "no worktree at $dest"
-    if (( force )); then
-        git -C "$root" worktree remove --force "$dest"
-    else
-        git -C "$root" worktree remove "$dest" \
-            || die "worktree $dest is dirty; commit/stash there, or re-run with --force"
-    fi
-    printf '%s: removed %s\n' "$prog" "$dest" >&2
+    name="$(need_name rm)"; dest="$wt_dir/$name"
+    acquire_integration_lock
+    assert_no_operation "$root" "repository"
     if (( delete_branch )); then
-        git -C "$root" branch -d "$name" \
-            || die "branch '$name' not fully merged; delete it yourself with 'git branch -D $name'"
-    fi
-    ;;
-
-  where)
-    here="${repo_arg:-$PWD}"
-    top="$(git -C "$here" rev-parse --show-toplevel)"
-    br="$(git -C "$here" rev-parse --abbrev-ref HEAD)"
-    if [[ "$top" == "$root" ]]; then
-        printf 'main checkout %s on ⑂ %s\n' "$top" "$br"
-        printf 'feature work belongs in a worktree: agent-worktree new <name>\n'
+        need_branch "$target" "--target with --delete-branch"
+        [[ "$name" != "$target" ]] || die "feature and target must be different branches"
+        branch_exists "$name" || die "branch '$name' does not exist"
+        branch_exists "$target" || die "target branch '$target' does not exist locally"
+        if [[ -d "$dest" ]]; then
+            assert_worktree_unlocked "$dest"
+            assert_checkout "$dest" "$name" "feature"
+            assert_clean "$dest" "feature"; assert_no_operation "$dest" "feature"
+        fi
+        branch_delete_safe "$name" "$target"
+        # All branch/upstream safety checks precede removal. --force only retains
+        # legacy worktree-removal behavior for an explicitly requested removal.
+        if [[ -d "$dest" ]]; then
+            if (( force )); then git -C "$root" worktree remove --force "$dest"; else git -C "$root" worktree remove "$dest"; fi
+            printf '%s: removed %s\n' "$prog" "$dest" >&2
+        fi
+        git -C "$root" branch -d "$name" || die "branch '$name' could not be deleted after preflight; no force deletion was attempted"
     else
-        printf 'worktree %s on ⑂ %s\n' "$top" "$br"
+        [[ -z "$target" ]] || die "--target is only valid with --delete-branch"
+        [[ -d "$dest" ]] || die "no worktree at $dest"
+        assert_worktree_unlocked "$dest"
+        assert_checkout "$dest" "$name" "feature"
+        assert_no_operation "$dest" "feature"
+        if (( force )); then
+            git -C "$root" worktree remove --force "$dest"
+        else
+            git -C "$root" worktree remove "$dest" || die "worktree $dest is dirty; commit/stash there, or re-run with --force"
+        fi
+        printf '%s: removed %s\n' "$prog" "$dest" >&2
     fi
     ;;
-
-  help|--help|-h)
-    usage
+  where)
+    here="${repo_arg:-$PWD}"; top="$(git -C "$here" rev-parse --show-toplevel)"; br="$(git -C "$here" rev-parse --abbrev-ref HEAD)"
+    if [[ "$top" == "$root" ]]; then printf 'main checkout %s on branch %s\nfeature work belongs in a worktree: agent-worktree new <name>\n' "$top" "$br"; else printf 'worktree %s on branch %s\n' "$top" "$br"; fi
     ;;
-
-  *)
-    die "unknown subcommand '$cmd' (try: new, path, list, rm, where, help)"
-    ;;
+  help|--help|-h) usage ;;
+  *) die "unknown subcommand '$cmd' (try: new, path, list, integrate, rm, where, help)" ;;
 esac

@@ -9,7 +9,15 @@ const runtimeKey = Symbol.for("svankina.herdmon-dispatch.runtimes.v1");
 const globals = globalThis as typeof globalThis & { [runtimeKey]?: Map<string, DispatchRuntime> };
 const runtimes = globals[runtimeKey] ??= new Map<string, DispatchRuntime>();
 
+
 export default function herdmonDispatch(pi: ExtensionAPI) {
+  const dispatchParameters = pi.zod.z.object({
+    op: pi.zod.z.enum(["scope", "inspect", "rebase", "integrating", "verify", "completed", "block", "recover"]),
+    requests: pi.zod.z.array(pi.zod.z.object({
+      id: pi.zod.z.string(), request: pi.zod.z.string(), acceptance: pi.zod.z.string(), repo: pi.zod.z.string(), targetBranch: pi.zod.z.string(), dependencies: pi.zod.z.array(pi.zod.z.string()).optional(),
+    })).optional(),
+    id: pi.zod.z.string().optional(), note: pi.zod.z.string().optional(), command: pi.zod.z.array(pi.zod.z.string()).optional(),
+  });
   const directory = resolve(process.env.HERDMON_STATE_DIR ?? join(homedir(), ".local/state/herd-manager"));
   let config: DispatchConfig;
   try { config = JSON.parse(readFileSync(join(directory, "dispatch-config.json"), "utf8")); }
@@ -31,31 +39,27 @@ export default function herdmonDispatch(pi: ExtensionAPI) {
     const current = runtimes.get(directory);
     if (current) { await current.close(); runtimes.delete(directory); }
   });
-  const z = pi.zod;
   pi.registerTool({
     name: "herdmon_dispatch", label: "herdmon Dispatch", loadMode: "essential", approval: "exec",
-    description: "Coordinator-only explicitly scoped durable dispatch. scope launches bounded independent SDK workers in separate feature worktrees; dependencies wait for reviewed integrated completion. inspect returns actual state. integrating records your review but NEVER merges. Manually merge the recorded commits into the scoped target, verify runs a real combined-result argv command, completed accepts only integrated commits and successful verification at the current target HEAD. block records blockers on stopped work; recover accepts inspected committed work after interruption without relaunching. Never classify arbitrary chat as dispatch and never auto-merge.",
-    parameters: z.object({
-      op: z.enum(["scope", "inspect", "integrating", "verify", "completed", "block", "recover"]),
-      requests: z.array(z.object({
-        id: z.string(), request: z.string(), acceptance: z.string(), repo: z.string(), targetBranch: z.string(), dependencies: z.array(z.string()).optional(),
-      })).optional(),
-      id: z.string().optional(), note: z.string().optional(), command: z.array(z.string()).optional(),
-    }),
-    async execute(_callId, args, _signal, _update, ctx) {
+    description: "Coordinator-only explicitly scoped durable dispatch. scope launches bounded independent SDK workers in separate feature worktrees; dependencies wait for reviewed integrated completion. rebase rebases stopped ready/integrating worker work onto its scoped local target without fetching, merging, or pushing, preserves immutable original handoff identities, and invalidates review and verification for fresh integration review. Conflicted rebases remain blocked until the coordinator resolves the saved worktree and explicitly recovers its recorded rebase intent. integrating records your review but NEVER merges. verify runs a real combined-result argv command, completed accepts only integrated commits and successful verification at the current target HEAD. block records blockers on stopped work. Never classify arbitrary chat as dispatch and never auto-merge.",
+    parameters: dispatchParameters,
+    async execute(_callId, rawArgs: unknown, _signal, _update, ctx) {
+      const args = dispatchParameters.parse(rawArgs);
       const current = runtime(ctx);
       let result: unknown;
       if (args.op === "inspect") result = current.records();
       else if (args.op === "scope") result = await current.scope(args.requests ?? []);
       else {
         if (!args.id) throw new Error(`${args.op} requires id`);
-        if (args.op === "integrating") result = await current.review(args.id, args.note ?? "");
+        if (args.op === "rebase") result = await current.rebase(args.id, args.note ?? "");
+        else if (args.op === "integrating") result = await current.review(args.id, args.note ?? "");
         else if (args.op === "verify") result = await current.verify(args.id, args.command ?? []);
         else if (args.op === "completed") result = await current.complete(args.id, args.note ?? "");
         else if (args.op === "block") result = await current.block(args.id, args.note ?? "");
         else result = await current.recover(args.id, args.note ?? "");
       }
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], details: { dispatch: result } };
+      const content = [{ type: "text" as const, text: JSON.stringify(result, null, 2) }];
+      return { content, details: { dispatch: result } };
     },
   });
 }

@@ -128,18 +128,36 @@ The coordinator scopes each request with `op: "scope"` and `requests` containing
 not launch twice; changed scopes are rejected. Dependencies can refer to other
 entries in the same batch; missing IDs and cycles reject the whole batch.
 Independent requests run concurrently, capped by `maxWorkers`. Dependencies
-wait for reviewed integrated completion, not a worker's handoff.
+wait for reviewed, integrated completion, not a worker's handoff.
 
-`op: "inspect"` returns actual state. Review a ready worktree and use
-`op: "integrating", id, note` to record the review. Manually merge its original
-commits into the scoped target branch; dispatch never merges anything.
-Squash-only and cherry-pick-only integrations do not establish the required
-commit ancestry. Run `op: "verify", id, command: ["executable", "arg"]` to execute
-combined verification in the target checkout. A successful command, no
-uncommitted tracked changes, and all original worker commits in target ancestry
-are required. Unrelated untracked user files are preserved and do not block it.
-Then `op: "completed", id, note` accepts that exact verified target HEAD.
-Moving HEAD invalidates verification. Workers cannot accept their own work.
+Before rebasing dispatched work, explicitly synchronize the scoped local target
+with its authorized remote using a fetch and fast-forward-only update. Then use
+`op: "rebase", id, note` before a fresh integrating review. It rebases only the
+recorded, clean worker worktree onto that local target; it neither fetches,
+merges, nor pushes. It records an immutable audit of the original base and
+commit identities, replaces the authoritative identities with the post-rebase
+commits, clears prior review and verification, and returns the request ready.
+Concurrent target movement likewise invalidates review/verification. Any
+incomplete rebase — including a conflict or target race — preserves the worktree
+as pending and requires explicit `op: "recover", id, note`. Recovery accepts
+only an exact abort to the recorded original tip and commits, or a reflog-proven
+finished rebase from that recorded tip, and only while the recorded target is
+an ancestor of the current scoped target; it records recovery against the
+original target, returns ready, and requires another explicit rebase onto the
+latest target. It rejects arbitrary replacements, published/shared rewrites,
+remote divergence, and non-fast-forward target updates; all are blockers, never
+force operations.
+
+Review the rebased worktree and use `op: "integrating", id, note` to record the
+fresh review. Manually fast-forward merge its authoritative post-rebase commits
+into the scoped target; dispatch never merges or pushes anything. Run
+`op: "verify", id, command: ["executable", "arg"]` to execute combined
+verification in the target checkout. A successful command, no uncommitted
+tracked changes, and every authoritative post-rebase worker commit in target
+ancestry are required. Unrelated untracked user files are preserved and do not
+block it. Then `op: "completed", id, note` accepts that exact verified target
+HEAD. Moving HEAD invalidates verification. Workers cannot accept their own
+work.
 
 `op: "block", id, note` records a blocker for stopped work.
 After interruption, inspect the recorded worktree and session before
@@ -334,7 +352,8 @@ fails loudly if HEAD did not end up on the feature branch.
 agent-worktree new <feature-name>   # prints the worktree path on stdout
 agent-worktree list                 # main checkout + every feature worktree
 agent-worktree where                # what branch/worktree am I on right now?
-agent-worktree rm <feature-name> [--force] [--delete-branch]
+agent-worktree integrate <feature> --target <branch> --remote <remote> -- <verification argv...>
+agent-worktree rm <feature> [--force] [--delete-branch --target <branch>]
 ```
 
 - Work with your cwd set to the printed path: `cd "$(agent-worktree new foo)"`.
@@ -344,7 +363,18 @@ agent-worktree rm <feature-name> [--force] [--delete-branch]
   on the feature branch; confirm the status line shows `⑂ <feature-name>`
   before editing anything.
 - One worktree per feature, named after the feature/branch.
-- Remove it with `agent-worktree rm <name>` once the work is merged.
+- `integrate` fetches the named remote target, fast-forwards the local target
+  only, rebases an unpublished feature onto that synchronized target, runs the
+  supplied meaningful verification in the rebased feature worktree, then
+  fast-forward merges the target. It never pushes. Remote divergence, a
+  conflict, or published/shared feature work that would be rewritten stops
+  safely and preserves the feature worktree; resolve a conflict explicitly with
+  the reported `git -C <worktree> rebase --continue` or `--abort` path.
+- Remove a merged worktree with `agent-worktree rm <name>`. Branch deletion
+  requires `--delete-branch --target <branch>`: before removing anything it
+  proves the feature is an ancestor of that exact target. The same command
+  safely supports an idempotent retry after the worktree is already missing;
+  `--force` never bypasses branch-deletion safeguards.
 
 ## Shell aliases
 

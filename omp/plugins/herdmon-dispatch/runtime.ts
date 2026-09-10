@@ -1,20 +1,27 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync, readFileSync, writeFileSync, renameSync, openSync, fsyncSync, closeSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, renameSync, openSync, fsyncSync, closeSync, existsSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AgentSession, ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 
 type Status = "pending" | "running" | "ready" | "integrating" | "completed" | "blocked" | "failed";
+export interface RebaseAttempt {
+  fromBase: string; fromCommits: string[]; fromHead: string; targetHead: string; note: string; startedAt: number;
+  preReview: string | null; preVerifiedHead: string | null; pending: boolean;
+  rebasedBase?: string; rebasedCommits?: string[]; rebasedHead?: string; completedAt?: number; recoveryNote?: string;
+}
+export interface RebaseAudit { originalBase: string; originalCommits: string[]; originalHead: string; attempts: RebaseAttempt[]; }
 export interface RequestRecord {
   id: string; request: string; acceptance: string; repo: string; targetBranch: string;
   status: Status; workerId: string | null; worktree: string | null;
   dependencies: string[]; commits: string[]; verification: string[]; blockers: string[];
   updatedAt: number; base: string | null; sessionFile: string | null; review: string | null;
   integratedHead: string | null; verifiedHead: string | null; report: string | null;
-  notificationPending: boolean;
+  notificationPending: boolean; rebase?: RebaseAudit;
 }
 export interface DispatchConfig { coordinatorSessionId: string; maxWorkers?: number; model?: string; }
 export interface Scope { id: string; request: string; acceptance: string; repo: string; targetBranch: string; dependencies?: string[]; }
+interface WorkerResult { summary: string; verification: string[]; blockers: string[]; }
 const now = () => Date.now() / 1000;
 function processIdentity(pid: number): string | null {
   try { return readFileSync(`/proc/${pid}/stat`, "utf8").split(") ")[1].split(" ")[19]; }
@@ -174,17 +181,20 @@ export class DispatchRuntime {
       row.worktree = location.output;
       this.save(row);
       const manager = this.pi.pi.SessionManager.create(row.worktree, join(this.directory, "sessions"));
-      const z = this.pi.zod;
-      let report: { summary: string; verification: string[]; blockers: string[] } | undefined;
+      const workerResultParameters = this.pi.zod.z.object({ summary: this.pi.zod.z.string().min(1), verification: this.pi.zod.z.array(this.pi.zod.z.string()), blockers: this.pi.zod.z.array(this.pi.zod.z.string()) });
+      let report: WorkerResult | undefined;
       const created = await this.pi.pi.createAgentSession({
         cwd: row.worktree, sessionManager: manager, agentId: row.workerId!, agentDisplayName: row.workerId!,
         taskDepth: 1, parentAgentId: "Main", spawns: "", disableExtensionDiscovery: true,
-        modelPattern: this.config.model, hasUI: false,
         appendSystemPrompt: "You are a herdmon implementation worker, never the coordinator. Work only in the assigned feature worktree; do not create another worktree. Never merge, rebase, reset, or modify another worktree, never push. Commit requested changes only. Skip project-wide builds, formatters, linters and suites; the coordinator verifies the combined result. Do not dispatch child workers. Before finishing call herdmon_worker_result with your evidence and any blockers. Completion means ready for coordinator review, not accepted or merged.",
         customTools: [{
           name: "herdmon_worker_result", label: "Worker result", description: "Record the final handoff to the coordinator; never marks the request integrated or completed.",
-          parameters: z.object({ summary: z.string().min(1), verification: z.array(z.string()), blockers: z.array(z.string()) }),
-          async execute(_id, args) { report = args; return { content: [{ type: "text", text: "Handoff recorded for coordinator review." }] }; },
+          parameters: workerResultParameters,
+          async execute(_id: string, rawArgs: unknown) {
+            report = workerResultParameters.parse(rawArgs);
+            const content = [{ type: "text" as const, text: "Handoff recorded for coordinator review." }];
+            return { content };
+          },
         }],
       });
       session = created.session; row.sessionFile = session.sessionFile ?? manager.getSessionFile() ?? null; this.save(row);
@@ -223,9 +233,31 @@ export class DispatchRuntime {
       this.save(row); return row;
     });
   }
+  private async assertNoGitOperation(worktree: string): Promise<void> {
+    for (const ref of ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"]) {
+      if ((await command(worktree, ["git", "rev-parse", "--verify", "-q", ref])).code === 0) throw new Error(`Saved worker has an active ${ref} operation`);
+    }
+    for (const state of ["index.lock", "rebase-merge", "rebase-apply", "sequencer"]) {
+      if (existsSync(resolve(worktree, await git(worktree, "rev-parse", "--git-path", state)))) throw new Error(`Saved worker has active Git state: ${state}`);
+    }
+  }
+  private async assertWorktreeIdentity(row: RequestRecord): Promise<void> {
+    if (!row.worktree || !row.workerId || !row.base) throw new Error("Saved worker identity is incomplete");
+    if (resolve(await git(row.worktree, "rev-parse", "--show-toplevel")) !== resolve(row.worktree)) throw new Error("Saved worker worktree identity changed");
+    const branch = `herdmon/${row.id}-${row.workerId.slice(-12)}`;
+    if (await git(row.worktree, "branch", "--show-current") !== branch) throw new Error("Saved worker branch identity changed");
+    await this.assertNoGitOperation(row.worktree);
+    if (await git(row.worktree, "status", "--porcelain")) throw new Error("Saved worker worktree has uncommitted changes");
+    const latest = row.rebase?.attempts.at(-1);
+    if (latest?.pending) throw new Error("Rebase recovery remains pending");
+    if (latest?.rebasedHead && await git(row.worktree, "rev-parse", "HEAD") !== latest.rebasedHead) throw new Error("Rebased worker branch changed after recorded rebase");
+    const commits = (await git(row.worktree, "rev-list", "--reverse", `${row.base}..HEAD`)).split("\n").filter(Boolean);
+    if (latest?.rebasedCommits?.length !== 0 && JSON.stringify(commits) !== JSON.stringify(row.commits)) throw new Error("Saved worker commit set changed after handoff");
+  }
   private async assertIntegrated(row: RequestRecord): Promise<string> {
     const head = await git(row.repo, "rev-parse", `refs/heads/${row.targetBranch}`);
     if (!row.commits.length) throw new Error("No recorded worker commits to accept");
+    if (row.rebase) await this.assertWorktreeIdentity(row);
     for (const commit of row.commits) await git(row.repo, "merge-base", "--is-ancestor", commit, head);
     if (await git(row.repo, "status", "--porcelain", "--untracked-files=no")) throw new Error("Combined checkout has tracked changes; commit integration changes before verification/completion. Unrelated untracked files are preserved.");
     return head;
@@ -234,6 +266,7 @@ export class DispatchRuntime {
     return this.exclusive(async () => {
       const row = this.get(id);
       if (row.status !== "integrating" || !note.trim()) throw new Error("completed requires integrating status and a coordinator acceptance note");
+      if (await git(row.repo, "branch", "--show-current") !== row.targetBranch) throw new Error("Repository checkout is not on the scoped target branch");
       const head = await this.assertIntegrated(row);
       if (row.verifiedHead !== head) throw new Error("Run successful coordinator verification against the current integrated target HEAD before completion");
       row.status = "completed"; row.integratedHead = head; row.review += `\nAcceptance: ${note}`; row.blockers = [];
@@ -252,9 +285,78 @@ export class DispatchRuntime {
       const row = this.get(id);
       if (!["blocked", "failed"].includes(row.status) || this.jobs.has(id) || !note.trim()) throw new Error("recover requires stopped blocked/failed work and explicit inspection evidence");
       if (!row.worktree || !row.base) throw new Error("Launch was interrupted before a worktree was recorded. Inspect branch/worktree manually and submit a new explicit request id; this id is never relaunched.");
-      row.commits = (await git(row.worktree, "rev-list", "--reverse", `${row.base}..HEAD`)).split("\n").filter(Boolean);
-      if (!row.commits.length || await git(row.worktree, "status", "--porcelain")) throw new Error("Recovery requires committed work in a clean saved worktree; finish it manually, then recover");
-      row.status = "ready"; row.blockers = []; row.verification.push(`Coordinator recovery inspection: ${note}`); this.save(row); return row;
+      const pending = row.rebase?.attempts.at(-1);
+      if (pending?.pending) return this.recordRecoveredRebase(row, pending, note);
+      const commits = (await git(row.worktree, "rev-list", "--reverse", `${row.base}..HEAD`)).split("\n").filter(Boolean);
+      if (!commits.length || await git(row.worktree, "status", "--porcelain")) throw new Error("Recovery requires committed work in a clean saved worktree; finish it manually, then recover");
+      if (row.commits.length && JSON.stringify(commits) !== JSON.stringify(row.commits)) throw new Error("Recovery refuses to replace an already recorded handoff commit set");
+      row.commits = commits; row.status = "ready"; row.blockers = []; row.verification.push(`Coordinator recovery inspection: ${note}`); this.save(row); return row;
+    });
+  }
+  private async recordRecoveredRebase(row: RequestRecord, pending: RebaseAttempt, note: string): Promise<RequestRecord> {
+    if (!row.rebase || !row.workerId) throw new Error("Rebase audit is incomplete");
+    const branch = `herdmon/${row.id}-${row.workerId.slice(-12)}`;
+    if (resolve(await git(row.worktree!, "rev-parse", "--show-toplevel")) !== resolve(row.worktree!)) throw new Error("Saved worker worktree identity changed");
+    if (await git(row.worktree!, "branch", "--show-current") !== branch) throw new Error("Recovery refuses a different worker branch");
+    const currentTarget = await git(row.repo, "rev-parse", `refs/heads/${row.targetBranch}`);
+    await git(row.repo, "merge-base", "--is-ancestor", pending.targetHead, currentTarget);
+    await this.assertNoGitOperation(row.worktree!);
+    if (await git(row.worktree!, "status", "--porcelain")) throw new Error("Finish the rebase and leave the saved worktree clean before recovery");
+    const head = await git(row.worktree!, "rev-parse", "HEAD");
+    if (head === pending.fromHead) {
+      const original = (await git(row.worktree!, "rev-list", "--reverse", `${pending.fromBase}..HEAD`)).split("\n").filter(Boolean);
+      if (JSON.stringify(original) !== JSON.stringify(pending.fromCommits)) throw new Error("Recovery refuses a changed branch after rebase abort");
+      pending.pending = false; pending.recoveryNote = note; row.status = "ready"; row.blockers = []; this.save(row); return row;
+    }
+    await git(row.worktree!, "merge-base", "--is-ancestor", pending.targetHead, head);
+    const reflog = await git(row.worktree!, "reflog", "show", "--format=%H%x00%gs", "-2", branch);
+    const [finish, previous] = reflog.split("\n");
+    if (finish !== `${head}\0rebase (finish): refs/heads/${branch} onto ${pending.targetHead}` || !previous?.startsWith(`${pending.fromHead}\0`)) throw new Error("Recovery refuses a branch without recorded rebase-finish reflog evidence");
+    const commits = (await git(row.worktree!, "rev-list", "--reverse", `${pending.targetHead}..HEAD`)).split("\n").filter(Boolean);
+    const noOp = !commits.length && await this.allAncestors(row.repo, pending.fromCommits, pending.targetHead);
+    if (!noOp && commits.length !== pending.fromCommits.length) throw new Error("Recovery refuses a changed branch that cannot be proven to be this rebase");
+    row.base = pending.targetHead; row.commits = noOp ? pending.fromCommits : commits;
+    pending.pending = false; pending.rebasedBase = row.base; pending.rebasedCommits = commits; pending.rebasedHead = head; pending.completedAt = now(); pending.recoveryNote = note;
+    row.status = "ready"; row.review = null; row.verifiedHead = null; row.blockers = []; row.verification.push(`Coordinator rebase recovery inspection: ${note}`); this.save(row); return row;
+  }
+  private async allAncestors(repo: string, commits: string[], head: string): Promise<boolean> {
+    for (const commit of commits) if ((await command(repo, ["git", "merge-base", "--is-ancestor", commit, head])).code !== 0) return false;
+    return true;
+  }
+  rebase(id: string, note: string): Promise<RequestRecord> {
+    return this.exclusive(async () => {
+      const row = this.get(id);
+      if (row.rebase?.attempts.at(-1)?.pending) throw new Error("rebase refuses a pending rebase intent");
+      if (!["ready", "integrating"].includes(row.status) || this.jobs.has(id) || !note.trim()) throw new Error("rebase requires stopped ready/integrating work and an explicit coordinator review note");
+      if (!row.worktree || !row.workerId || !row.base || !row.commits.length) throw new Error("Rebase requires a recorded worker worktree, base, and commit set");
+      const branch = `herdmon/${row.id}-${row.workerId.slice(-12)}`;
+      if (resolve(await git(row.worktree, "rev-parse", "--show-toplevel")) !== resolve(row.worktree)) throw new Error("Saved worker worktree identity changed");
+      if (await git(row.worktree, "branch", "--show-current") !== branch) throw new Error("Rebase refuses a different worker branch");
+      if ((await command(row.worktree, ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"])).code === 0) throw new Error("Rebase refuses a published worker branch with an upstream");
+      const remoteRefs = await git(row.repo, "for-each-ref", "--format=%(refname)", "refs/remotes");
+      if (remoteRefs.split("\n").some(ref => ref.endsWith(`/${branch}`))) throw new Error("Rebase refuses a worker branch known on a remote");
+      await this.assertNoGitOperation(row.worktree);
+      if (await git(row.worktree, "status", "--porcelain")) throw new Error("Rebase requires a clean saved worker worktree");
+      const head = await git(row.worktree, "rev-parse", "HEAD");
+      const latest = row.rebase?.attempts.at(-1);
+      if (latest?.rebasedHead && head !== latest.rebasedHead) throw new Error("Rebase refuses a changed worker branch after recorded rebase");
+      const range = (await git(row.worktree, "rev-list", "--reverse", `${row.base}..HEAD`)).split("\n").filter(Boolean);
+      const priorNoOp = latest?.rebasedCommits?.length === 0 && await this.allAncestors(row.repo, row.commits, row.base);
+      if (!priorNoOp && JSON.stringify(range) !== JSON.stringify(row.commits)) throw new Error("Rebase refuses a worker branch whose commit set differs from the recorded handoff");
+      const targetHead = await git(row.repo, "rev-parse", `refs/heads/${row.targetBranch}`);
+      const attempt: RebaseAttempt = { fromBase: row.base, fromCommits: [...row.commits], fromHead: head, targetHead, note, startedAt: now(), preReview: row.review, preVerifiedHead: row.verifiedHead, pending: true };
+      row.rebase ??= { originalBase: row.base, originalCommits: [...row.commits], originalHead: head, attempts: [] };
+      row.rebase.attempts.push(attempt); row.status = "blocked"; row.review = null; row.verifiedHead = null; row.blockers = ["Rebase intent recorded; recover explicitly if Git does not finish."]; this.save(row);
+      const result = await command(row.worktree, ["git", "rebase", "--no-autostash", "--no-update-refs", targetHead]);
+      if (result.code) { row.blockers = [`Rebase requires manual resolution: ${result.output}`]; row.notificationPending = true; this.save(row); return row; }
+      if (await git(row.repo, "rev-parse", `refs/heads/${row.targetBranch}`) !== targetHead) { row.blockers = ["Target changed during rebase; recover explicitly from the recorded intent."]; this.save(row); return row; }
+      const rebasedHead = await git(row.worktree, "rev-parse", "HEAD");
+      const rebasedCommits = (await git(row.worktree, "rev-list", "--reverse", `${targetHead}..HEAD`)).split("\n").filter(Boolean);
+      const noOp = !rebasedCommits.length && await this.allAncestors(row.repo, attempt.fromCommits, targetHead);
+      if (!noOp && rebasedCommits.length !== attempt.fromCommits.length) { row.blockers = ["Rebase changed the recorded commit set without safe evidence; recover explicitly."]; this.save(row); return row; }
+      row.base = targetHead; row.commits = noOp ? attempt.fromCommits : rebasedCommits;
+      attempt.pending = false; attempt.rebasedBase = row.base; attempt.rebasedCommits = rebasedCommits; attempt.rebasedHead = rebasedHead; attempt.completedAt = now();
+      row.status = "ready"; row.blockers = []; row.verification.push(`Coordinator rebase: ${note}`); this.save(row); return row;
     });
   }
   async close(): Promise<void> {
