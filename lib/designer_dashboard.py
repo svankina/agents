@@ -29,23 +29,28 @@ class Settings:
     session_dir: Path
     channels_dir: Path
     project_dir: Path
+    contact_sessions_dir: Path | None = None
 
     @classmethod
     def defaults(cls):
         home = Path.home()
         state = Path(os.environ.get("XDG_STATE_HOME", home / ".local/state"))
-        project = Path(os.environ.get("DESIGNER_PROJECT_DIR", home / "src/designer")).expanduser().resolve()
-        agent = Path(os.environ.get("PI_CODING_AGENT_DIR", home / ".omp/agent")).expanduser()
-        project_key = str(project).removeprefix(str(home)).replace("/", "-")
+        root = home / "src/docked_agents/designer"
+        project = Path(os.environ.get("DESIGNER_PROJECT_DIR", root / "workspace")).expanduser().resolve()
         return cls(
-            Path(os.environ.get("DESIGNER_STATE_DIR", state / "designer-dock")).expanduser(),
-            Path(os.environ.get("DESIGNER_SESSION_DIR", agent / "sessions" / project_key)).expanduser(),
+            Path(os.environ.get("DESIGNER_STATE_DIR", root)).expanduser(),
+            Path(os.environ.get("DESIGNER_SESSION_DIR", root / "sessions")).expanduser(),
             state / "omp/peer-channels", project,
+            Path(os.environ.get("DESIGNER_CONTACT_SESSIONS_DIR",
+                                Path(os.environ.get("PI_CODING_AGENT_DIR", home / ".omp/agent")) / "sessions")).expanduser(),
         )
 
     def environment(self):
-        return {"DESIGNER_STATE_DIR": str(self.state_dir), "DESIGNER_SESSION_DIR": str(self.session_dir),
-                "DESIGNER_PROJECT_DIR": str(self.project_dir)}
+        environment = {"DESIGNER_STATE_DIR": str(self.state_dir), "DESIGNER_SESSION_DIR": str(self.session_dir),
+                       "DESIGNER_PROJECT_DIR": str(self.project_dir)}
+        if self.contact_sessions_dir is not None:
+            environment["DESIGNER_CONTACT_SESSIONS_DIR"] = str(self.contact_sessions_dir)
+        return environment
 
 
 def herd_module(name):
@@ -90,7 +95,8 @@ class Dashboard:
         self.lock = threading.RLock()
         self.discover = discover or herd_module("peers").discover_peers
         self.stopping = threading.Event()
-        self.history = History(settings.state_dir, settings.session_dir, settings.channels_dir, settings.project_dir)
+        self.history = History(settings.state_dir, settings.session_dir, settings.channels_dir, settings.project_dir,
+                               contact_sessions_dir=settings.contact_sessions_dir)
         # The OMP process this dashboard hosts; None for CLI imports, which observe the project.
         self.pid = pid
         self.snapshot = None

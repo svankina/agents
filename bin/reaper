@@ -41,6 +41,8 @@ def herd_module(name):
 
 def open_pane(restart=False):
     client_module = herd_module("brokerclient")
+    state = Path(os.environ.get("REAPER_STATE_DIR", Path.home() / "src/docked_agents/reaper")).expanduser().resolve()
+    state.mkdir(parents=True, exist_ok=True, mode=0o700)
     with client_module.Client() as client:
         old = [row for row in client.list_panes() if row.get("meta", {}).get(PANE_TAG) == "watch"]
         live = next((row for row in old if not row.get("dead")), None)
@@ -59,7 +61,7 @@ def open_pane(restart=False):
                 reservation.close()
                 pane = client.spawn(
                     [str(Path(__file__).resolve()), "--serve", "--port", str(port)],
-                    cwd=str(Path.home()), env={"REAPER_TOKEN": token},
+                    cwd=str(state), env={"REAPER_TOKEN": token, "REAPER_STATE_DIR": str(state)},
                     space=space, name="Reaper",
                     meta={PANE_TAG: "watch", "dock": "bots", "avatar": str(AVATAR), "webview": url},
                     cols=140, rows=46,

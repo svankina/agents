@@ -177,7 +177,7 @@ never authorize substitution by a similarly named agent. This is a small
 explicit registry, not periodic model-based capability discovery.
 
 The conversation resumes its private transcript under
-`~/.local/state/conversation/sessions`; its working directory is the adjacent
+`~/src/docked_agents/conversation/sessions`; its working directory is the adjacent
 `workspace`. `CONVERSATION_STATE_DIR` overrides this root and
 `CONVERSATION_PROJECT_ROOT` overrides the roster's default home-directory root.
 Home-wide discovery includes long-running bots under `~/.local/state` as well
@@ -246,10 +246,12 @@ designer-dock --record /path/to/capture.png --contact CONTACT_ID \
 ```
 
 Add `--event EVENT_ID` to link the picture to a recorded message.
-State is stored in `$XDG_STATE_HOME/designer-dock`, or
-`~/.local/state/designer-dock`. Agents can read `snapshot.json` there without
-depending on hub delivery. `DESIGNER_STATE_DIR`, `DESIGNER_SESSION_DIR`, and
-`DESIGNER_PROJECT_DIR` override the storage and source locations.
+State is stored in `~/src/docked_agents/designer`. Its `sessions` directory
+holds the private conversation; `workspace` is the docked agent's working directory.
+Agents can read `snapshot.json` there without depending on hub delivery.
+`DESIGNER_STATE_DIR`, `DESIGNER_SESSION_DIR`, and `DESIGNER_PROJECT_DIR`
+override those locations. `DESIGNER_CONTACT_SESSIONS_DIR` selects the separate
+global session store used to attribute collaborators' recorded requests.
 The HTTP surface is read-only, loopback-only, exact-Host checked, and protected
 by an unguessable URL path. No OMP core or Herd panel changes are required.
 

@@ -106,7 +106,8 @@ def _tool(name):
 
 
 class History:
-    def __init__(self, state_dir: Path, session_dir: Path, channels_dir: Path, project_dir: Path):
+    def __init__(self, state_dir: Path, session_dir: Path, channels_dir: Path, project_dir: Path,
+                 *, contact_sessions_dir: Path | None = None):
         self.state_dir = Path(state_dir).expanduser()
         self.session_dir = Path(session_dir).expanduser()
         self.channels_dir = Path(channels_dir).expanduser()
@@ -163,8 +164,8 @@ class History:
             self.db.execute('DELETE FROM cursors')
             self.db.execute('INSERT OR REPLACE INTO metadata VALUES (?,?)', ('importVersion', IMPORT_VERSION))
         self.db.commit()
-        # Contact transcripts live beside Designer's, one directory per project.
-        self.sessions_root = self.session_dir.parent
+        # Contacts retain their global project stores when Designer uses a private store.
+        self.sessions_root = Path(contact_sessions_dir).expanduser() if contact_sessions_dir is not None else self.session_dir.parent
 
     def _warn(self, message):
         self.db.execute('INSERT OR IGNORE INTO warnings VALUES (?)', (message,))

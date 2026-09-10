@@ -16,8 +16,8 @@ class HistoryBoundaries(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='designer-history-')
         self.root = Path(self.temp.name)
-        self.sessions = self.root / 'sessions'
-        self.sessions.mkdir()
+        self.sessions = self.root / 'private/designer/sessions'
+        self.sessions.mkdir(parents=True)
         self.channels = self.root / 'channels'
         self.file = self.sessions / 'main.jsonl'
         self.write(self.file, {'type': 'session', 'id': 'designer-session'})
@@ -28,7 +28,8 @@ class HistoryBoundaries(unittest.TestCase):
         self.temp.cleanup()
 
     def open(self):
-        return History(self.root / 'state', self.sessions, self.channels, self.root)
+        return History(self.root / 'state', self.sessions, self.channels, self.root,
+                       contact_sessions_dir=self.root)
 
     @staticmethod
     def write(path, *rows):

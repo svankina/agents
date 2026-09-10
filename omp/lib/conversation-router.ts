@@ -45,7 +45,7 @@ export class ConversationRouter {
 
   constructor(options: RouterOptions = {}) {
     this.#options = options;
-    this.stateDir = resolve(options.stateDir ?? process.env.CONVERSATION_STATE_DIR ?? join(homedir(), ".local/state/conversation"));
+    this.stateDir = resolve(options.stateDir ?? process.env.CONVERSATION_STATE_DIR ?? join(homedir(), "src/docked_agents/conversation"));
     this.projectRoot = resolve(options.projectRoot ?? process.env.CONVERSATION_PROJECT_ROOT ?? homedir());
   }
 

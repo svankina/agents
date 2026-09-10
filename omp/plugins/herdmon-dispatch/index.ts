@@ -18,7 +18,7 @@ export default function herdmonDispatch(pi: ExtensionAPI) {
     })).optional(),
     id: pi.zod.z.string().optional(), note: pi.zod.z.string().optional(), command: pi.zod.z.array(pi.zod.z.string()).optional(),
   });
-  const directory = resolve(process.env.HERDMON_STATE_DIR ?? join(homedir(), ".local/state/herd-manager"));
+  const directory = resolve(process.env.HERDMON_STATE_DIR ?? join(homedir(), "src/docked_agents/herdmon"));
   let config: DispatchConfig;
   try { config = JSON.parse(readFileSync(join(directory, "dispatch-config.json"), "utf8")); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }

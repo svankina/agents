@@ -37,7 +37,7 @@ or older handoffs to page through retained history.
 
 When a coordinator's responsibilities are not clear from its name/project,
 record them in optional `$CONVERSATION_STATE_DIR/agents.json` (default
-`~/.local/state/conversation/agents.json`). Its format is a JSON array of
+`~/src/docked_agents/conversation/agents.json`). Its format is a JSON array of
 `{"sessionId": "EXACT_SESSION_ID", "description": "Known responsibilities"}`.
 Use the live roster's stable session ID, not a display name or guessed peer ID.
 The registry is reread on roster refresh and applies only to the matching live
@@ -51,7 +51,7 @@ A timeout leaves the original work running. Keep the router open to receive
 late replies; after print-mode exits, inspect the recorded status rather than
 assuming success or failure.
 
-Private transcripts and handoff state live under `~/.local/state/conversation`
+Private transcripts and handoff state live under `~/src/docked_agents/conversation`
 (`CONVERSATION_STATE_DIR` overrides it). The roster's project root defaults to
 the home directory (`CONVERSATION_PROJECT_ROOT` narrows or overrides it), so
 long-running bots under `~/.local/state` remain discoverable alongside project
@@ -73,7 +73,7 @@ is what applies changed identity metadata; a live pane keeps the metadata it
 was spawned with.
 
 The agent stays available after each request. Its private coordination workspace
-and saved conversations live under `~/.local/state/cad-agent`; override that root
+and saved conversations live under `~/src/docked_agents/cad`; override that root
 with `CAD_AGENT_STATE_DIR`. After exit, run `cad-agent` to resume the saved
 conversation. This is a persistent Herd pane, not a reboot-started system service.
 Use the existing Conversation role registry to bind CAD's live session ID when
@@ -135,7 +135,7 @@ resources, not install targets; other harness directories are untouched.
 
 `omp/plugins/herdmon-dispatch` adds explicit durable dispatch without changes to
 OMP core. Link the package with `omp plugin link PATH/omp/plugins/herdmon-dispatch`.
-Create `~/.local/state/herd-manager/dispatch-config.json` with the exact
+Create `~/src/docked_agents/herdmon/dispatch-config.json` with the exact
 `coordinatorSessionId` and optional `maxWorkers` (default 3) and `model`.
 `HERDMON_STATE_DIR` selects an isolated state directory for verification.
 Only that session can execute `herdmon_dispatch`. Worker SDK sessions disable
@@ -260,7 +260,7 @@ events; the dashboard reads all of them and the terminal reads 40.
 Registry state takes precedence over incomplete event history. Missing release
 outcomes remain unknown, not live. Exact session IDs remain authoritative.
 Resolved labels and up to 120 observed samples for each of 256 resources are
-cached privately under `${XDG_STATE_HOME:-~/.local/state}/reaper`.
+cached privately under `~/src/docked_agents/reaper` (`REAPER_STATE_DIR` overrides it).
 Peaks are sampled observations, not lifetime maxima. Released requests retain
 last-observed usage, never a claim of current consumption. Observations from
 before Reaper watched a request are unavailable, not reconstructed.

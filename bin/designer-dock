@@ -32,6 +32,7 @@ def transcript(settings, ref, live):
 
 def open_pane(settings, ref=None, restart=False):
     settings.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    settings.project_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     for name in ("index.html", "designer.css", "designer.js", "designer.svg", "reviews.html", "reviews.css", "reviews.js"):
         if not (ROOT / "assets/designer-ui" / name).is_file():
             raise RuntimeError(f"Missing dashboard asset: {name}")
@@ -55,7 +56,10 @@ def open_pane(settings, ref=None, restart=False):
                 raise RuntimeError("omp is not installed")
             peers = herd_module("peers").discover_peers()["peers"]
             resume = transcript(settings, ref, peers)
-            command = [omp, f"--resume={resume}"] if resume else [omp]
+            command = [omp, "--session-dir", str(settings.session_dir), "--cwd", str(settings.project_dir),
+                       "--add-dir", str(Path.home() / "src/designer")]
+            if resume:
+                command.extend(["--resume", resume])
             # The state directory has one server; a superseded page must release it first.
             for row in old:
                 client.kill(row["id"])

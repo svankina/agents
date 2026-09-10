@@ -132,7 +132,7 @@ def main():
     # A missing portrait would silently downgrade the dock row to a glyph.
     if args.pane and not AVATAR.is_file():
         raise RuntimeError(f"Missing Conversation portrait: {AVATAR}")
-    state = Path(os.environ.get("CONVERSATION_STATE_DIR", Path.home() / ".local/state/conversation")).expanduser().resolve()
+    state = Path(os.environ.get("CONVERSATION_STATE_DIR", Path.home() / "src/docked_agents/conversation")).expanduser().resolve()
     project = Path(os.environ.get("CONVERSATION_PROJECT_ROOT", Path.home())).expanduser().resolve()
     os.umask(0o077)
     cwd, sessions = state / "workspace", state / "sessions"
@@ -155,7 +155,7 @@ def main():
     command = [omp, "--no-extensions", "--no-tools", "--no-skills", "--no-rules",
                "--no-lsp", "--no-title", "--thinking=minimal", f"--model={args.model}",
                "--config", str(config), "-e", str(plugin), "-e", str(bridge),
-               "--session-dir", str(sessions), "--continue"]
+               "--session-dir", str(sessions), "--cwd", str(cwd), "--continue"]
     if args.print_mode:
         command.append("--print")
     if args.message is not None:

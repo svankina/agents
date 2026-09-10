@@ -108,7 +108,7 @@ def main():
     # A missing portrait would silently downgrade the dock row to a glyph.
     if not args.terminal and not AVATAR.is_file():
         raise RuntimeError(f"Missing CAD portrait: {AVATAR}")
-    state = Path(os.environ.get("CAD_AGENT_STATE_DIR", Path.home() / ".local/state/cad-agent")).expanduser().resolve()
+    state = Path(os.environ.get("CAD_AGENT_STATE_DIR", Path.home() / "src/docked_agents/cad")).expanduser().resolve()
     cwd, sessions = state / "workspace", state / "sessions"
     os.umask(0o077)
     for directory in (state, cwd, sessions):
@@ -121,7 +121,7 @@ def main():
     os.set_inheritable(lock.fileno(), True)
     command = [omp, f"--model={MODEL}", "--thinking=high", "--no-title", "--no-prewalk",
                "-e", str(plugin), "--append-system-prompt", PROMPT,
-               "--session-dir", str(sessions)]
+               "--session-dir", str(sessions), "--cwd", str(cwd)]
     # Resolve within this private history, never OMP's global recent session.
     resume = max(sessions.glob("*.jsonl"), key=lambda path: path.stat().st_mtime_ns, default=None)
     if resume:

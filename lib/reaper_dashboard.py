@@ -75,8 +75,7 @@ def resource(row):
 class Dashboard:
     def __init__(self, loader, *, state_dir=None, collector=None):
         self.collector = collector or Collector(event_limit=2000, include_history=True)
-        self.state_dir = Path(state_dir) if state_dir else Path(
-            os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))) / "reaper"
+        self.state_dir = Path(state_dir) if state_dir else Path.home() / "src/docked_agents/reaper"
         self.cache_path = self.state_dir / "observations.json"
         self.observations = {}
         self.cache_error = None
