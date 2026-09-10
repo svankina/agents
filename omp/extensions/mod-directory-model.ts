@@ -3,7 +3,7 @@
  *
  * The extension owns its state in `<cwd>/.omp/directory-model.json`, rather
  * than OMP's project settings. At `session_start`, it applies that model unless
- * `--no-directory-model` was passed. That lets a profile keep its own default.
+ * `OMP_DIRECTORY_MODEL=0` is set. That lets a profile keep its own default.
  *
  *   /mod                      fuzzy-pick a subscription model
  *   /mod opus                 resolve a spec (provider/id, bare id, @role)
@@ -123,18 +123,12 @@ async function pick(ctx: ExtensionCommandContext): Promise<Model | undefined> {
 
 async function applyDirectoryModel(api: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
 	const selector = migrateLegacyRole(ctx.cwd) ?? readDirectoryModel(path.join(ctx.cwd, ".omp", STATE_FILE));
-	if (process.env.OMP_DIRECTORY_MODEL === "0" || api.getFlag("directory-model") !== true || !selector) return;
+	if (process.env.OMP_DIRECTORY_MODEL === "0" || !selector) return;
 	const model = ctx.models.resolve(selector);
 	if (model) await api.setModel(model);
 }
 
 export default function modDirectoryModel(api: ExtensionAPI): void {
-	api.registerFlag("directory-model", {
-		type: "boolean",
-		default: true,
-		description:
-			"Apply .omp/directory-model.json at session start; --no-directory-model or OMP_DIRECTORY_MODEL=0 keeps the profile default",
-	});
 	api.on("session_start", async (_event, ctx) => {
 		try {
 			await applyDirectoryModel(api, ctx);

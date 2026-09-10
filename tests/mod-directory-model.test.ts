@@ -11,7 +11,6 @@ test("/mod persists an extension-owned directory model and clears it", async () 
 	let handler: ((args: string, ctx: ExtensionCommandContext) => Promise<void>) | undefined;
 	let setModelCalls = 0;
 	const extension = {
-		registerFlag: () => {},
 		on: () => {},
 		registerCommand: (_name: string, command: { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }) => {
 			handler = command.handler;
@@ -48,20 +47,15 @@ test("/mod persists an extension-owned directory model and clears it", async () 
 	}
 });
 
-test("startup applies a saved directory model unless its CLI or environment opt-out is enabled", async () => {
+test("startup applies a saved directory model unless the environment opt-out is enabled", async () => {
 	const root = mkdtempSync(path.join(tmpdir(), "mod-directory-model-"));
 	const model = { provider: "google-antigravity", id: "gemini-live", name: "Gemini Live" };
 	mkdirSync(path.join(root, ".omp"));
 	writeFileSync(path.join(root, ".omp", "directory-model.json"), JSON.stringify({ model: "google-antigravity/gemini-live" }));
 	let startup: ((event: unknown, ctx: unknown) => Promise<void>) | undefined;
-	let enabled = true;
 	let setModelCalls = 0;
 	const previousEnvironment = process.env.OMP_DIRECTORY_MODEL;
 	const extension = {
-		registerFlag: (_name: string, options: { default?: boolean }) => {
-			enabled = options.default ?? false;
-		},
-		getFlag: () => enabled,
 		on: (_event: string, handler: (event: unknown, ctx: unknown) => Promise<void>) => {
 			startup = handler;
 		},
@@ -79,11 +73,6 @@ test("startup applies a saved directory model unless its CLI or environment opt-
 		await startup!({}, context);
 		expect(setModelCalls).toBe(1);
 
-		enabled = false;
-		await startup!({}, context);
-		expect(setModelCalls).toBe(1);
-
-		enabled = true;
 		process.env.OMP_DIRECTORY_MODEL = "0";
 		await startup!({}, context);
 		expect(setModelCalls).toBe(1);
@@ -103,8 +92,6 @@ test("startup migrates the legacy core setting without changing unrelated settin
 	);
 	let startup: ((event: unknown, ctx: unknown) => Promise<void>) | undefined;
 	const extension = {
-		registerFlag: () => {},
-		getFlag: () => false,
 		on: (_event: string, handler: (event: unknown, ctx: unknown) => Promise<void>) => {
 			startup = handler;
 		},
@@ -137,7 +124,6 @@ test("/mod picker offers live models and rejects unavailable explicit ids", asyn
 	let handler: ((args: string, ctx: ExtensionCommandContext) => Promise<void>) | undefined;
 	let setModelCalls = 0;
 	const extension = {
-		registerFlag: () => {},
 		on: () => {},
 		registerCommand: (_name: string, command: { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }) => {
 			handler = command.handler;
