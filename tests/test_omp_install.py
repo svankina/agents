@@ -55,6 +55,41 @@ def workspace(tmp_path):
     return repo, home
 
 
+def test_dock_extensions_install_only_in_docked_agent_directories(workspace, tmp_path):
+    repo, home = workspace
+    source = put(repo / "omp/dock-extensions/dock-peer-scope.ts", "export default () => {};\n")
+    put(repo / "omp/dock-extensions/notes.md")
+    docks = home / "src/docked_agents"
+    for relative in ("cad/workspace", "herdmon", "printing"):
+        (docks / relative).mkdir(parents=True)
+    put(docks / "migration.json", "{}\n")
+    project = put(home / "src/herd/README.md").parent
+    run(repo, home, "install")
+    installed = {
+        "cad/.omp/extensions/dock-peer-scope.ts",
+        "cad/workspace/.omp/extensions/dock-peer-scope.ts",
+        "herdmon/.omp/extensions/dock-peer-scope.ts",
+        "printing/.omp/extensions/dock-peer-scope.ts",
+    }
+    for relative in installed:
+        assert (docks / relative).is_symlink()
+        assert (docks / relative).resolve() == source
+    assert {str(path.relative_to(docks)) for path in docks.rglob("*.ts")} == installed
+    assert not (docks / "cad/.omp/extensions/notes.md").exists()
+    # Ordinary projects and the user extension directory stay out of it.
+    assert snapshot(project) == {"README.md": ("file", b"resource\n", (project / "README.md").stat().st_mode)}
+    assert not (home / ".omp/agent/extensions").exists()
+    run(repo, home, "check")
+    # A retired dock extension is pruned from every dock, foreign links are not.
+    foreign = link(docks / "herdmon/.omp/extensions/local.ts", tmp_path / "local.ts")
+    source.unlink()
+    run(repo, home, "check", expected=1)
+    run(repo, home, "install")
+    assert not any(path.is_symlink() for path in docks.rglob("dock-peer-scope.ts"))
+    assert foreign.is_symlink()
+    run(repo, home, "check")
+
+
 def test_instruction_edits_reach_sources_and_reinstall_keeps_links(workspace):
     repo, home = workspace
     run(repo, home)  # No subcommand means install.

@@ -109,6 +109,9 @@ Installed resources:
 - `shared/commands/*.md` → `~/.omp/agent/commands/`.
 - `shared/agents/*.md` → `~/.omp/agent/agents/`.
 - Executable non-`.py` files in `bin/` → `~/.local/bin/`.
+- `omp/dock-extensions/*.ts` → `<dock cwd>/.omp/extensions/`, for every
+  directory under `~/src/docked_agents/` and each `workspace` child.
+  `--docks PATH` selects another dock state root.
 
 Shared helpers include `agent-worktree`, `agent-gui`, `agent-shot`,
 `agent-display`, and `fair-run`. Prefer implementing a recurring procedure
@@ -129,9 +132,23 @@ Pruning only removes dangling links into the corresponding source subtree
 from OMP resource directories and `~/.local/bin`; foreign links are preserved.
 Inspect conflicts and resolve them explicitly before rerunning the installer.
 
-OMP configuration, extensions, and `~/.omp/agent/managed-skills` are not managed.
+OMP configuration, machine-wide extensions, and `~/.omp/agent/managed-skills`
+are not managed; dock extensions below are the one extension exception.
 Pi and Claude skills, prompts, extensions, and commands remain historical
 resources, not install targets; other harness directories are untouched.
+
+### Dock extensions
+
+`omp/dock-extensions/` holds extensions that only Herd-docked agents get.
+They are not machine-wide plugins and are not listed in `~/.omp/agent/config.yml`;
+OMP discovers project extensions in the session's own cwd only, so the installer
+links each file into every docked agent's working directory. Rerun `omp-install`
+after adding a dock or a dock extension; `omp-install check` reports the drift.
+
+`dock-peer-scope.ts` reads the current `HERD_PANE` metadata from the broker and
+forces `hub list` to `scope=all` for `dock=bots` panes, including explicitly
+requested project scope. Ordinary panes and other hub operations are unchanged.
+A running session must restart before a newly linked extension loads.
 
 ### herdmon coordinator dispatch
 

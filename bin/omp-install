@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Link this checkout's instructions, resources and helpers into OMP's home.
 
+Dock extensions are installed per docked-agent working directory instead,
+because OMP discovers project extensions in the session's own cwd only.
 No instruction generation, configuration writes, or other harness installation.
 Existing files and foreign links are conflicts, never overwritten.
 """
@@ -16,7 +18,25 @@ def link_target(path: Path) -> Path:
     return Path(os.path.abspath(path.parent / os.readlink(path)))
 
 
-def desired_links(repo: Path, home: Path) -> tuple[list, list]:
+def dock_directories(docks: Path) -> list:
+    """Working directories of Herd-docked agents, under their state root.
+
+    Dock panes run with their cwd set to an agent's state directory or to its
+    `workspace` child, and OMP discovers project extensions in the cwd only.
+    """
+    if not docks.is_dir():
+        return []
+    directories = []
+    for path in sorted(docks.iterdir()):
+        if path.name.startswith(".") or not path.is_dir():
+            continue
+        directories.append(path)
+        if (path / "workspace").is_dir():
+            directories.append(path / "workspace")
+    return directories
+
+
+def desired_links(repo: Path, home: Path, docks: Path) -> tuple[list, list]:
     omp = home / ".omp" / "agent"
     links = [
         (omp / "AGENTS.md", repo / "omp" / "AGENTS.md"),
@@ -25,11 +45,14 @@ def desired_links(repo: Path, home: Path) -> tuple[list, list]:
     for _link, source in links:
         if not source.is_file():
             raise FileNotFoundError(f"Required instruction file missing: {source}")
+    dock_extensions = repo / "omp" / "dock-extensions"
     groups = [
         (repo / "shared" / "skills", omp / "skills", "skills"),
         (repo / "shared" / "commands", omp / "commands", "markdown"),
         (repo / "shared" / "agents", omp / "agents", "markdown"),
         (repo / "bin", home / ".local" / "bin", "executables"),
+        *((dock_extensions, cwd / ".omp" / "extensions", "extensions")
+          for cwd in dock_directories(docks)),
     ]
     for source, destination, kind in groups:
         if not source.is_dir():
@@ -39,6 +62,8 @@ def desired_links(repo: Path, home: Path) -> tuple[list, list]:
                 include = path.is_dir()
             elif kind == "markdown":
                 include = path.is_file() and path.suffix == ".md"
+            elif kind == "extensions":
+                include = path.is_file() and path.suffix == ".ts"
             else:
                 include = path.is_file() and path.suffix != ".py" and os.access(path, os.X_OK)
             if include:
@@ -46,8 +71,8 @@ def desired_links(repo: Path, home: Path) -> tuple[list, list]:
     return links, groups
 
 
-def installation_plan(repo: Path, home: Path) -> tuple[list, list, list]:
-    links, groups = desired_links(repo, home)
+def installation_plan(repo: Path, home: Path, docks: Path) -> tuple[list, list, list]:
+    links, groups = desired_links(repo, home, docks)
     changes, orphans, conflicts = [], [], []
     for link, target in links:
         if not target.exists():
@@ -88,10 +113,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("command", nargs="?", choices=("install", "check"), default="install")
     parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parent.parent)
     parser.add_argument("--home", type=Path, default=Path.home())
+    parser.add_argument("--docks", type=Path,
+                        help="Herd dock state root (default: HOME/src/docked_agents)")
     args = parser.parse_args(argv)
     try:
         repo, home = args.repo.expanduser().resolve(), args.home.expanduser().resolve()
-        changes, orphans, conflicts = installation_plan(repo, home)
+        docks = (args.docks.expanduser() if args.docks else home / "src" / "docked_agents").resolve()
+        changes, orphans, conflicts = installation_plan(repo, home, docks)
         for message in conflicts:
             print(message)
         if args.command == "check":
