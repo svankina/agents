@@ -6,7 +6,7 @@ import { join } from "node:path";
  * only agents docked in Herd discover peers across every project by default.
  */
 export const description =
-	"Forces hub list to scope=all for OMP agents running in a Herd dock pane.";
+	"Forces peers list to scope=all for OMP agents running in a Herd dock pane.";
 
 // Read live metadata: docking can change without restarting the agent.
 async function isDocked(): Promise<boolean> {
@@ -51,7 +51,7 @@ async function isDocked(): Promise<boolean> {
 export default function dockPeerScope(pi: ExtensionAPI) {
 	pi.setLabel("Dock Peer Scope");
 	pi.on("tool_call", async (event) => {
-		if (event.toolName !== "hub" || event.input.op !== "list") return;
+		if (event.toolName !== "peers" || event.input.op !== "list") return;
 		if (event.input.scope === "all" || !(await isDocked())) return;
 		return { input: { ...event.input, scope: "all" } };
 	});

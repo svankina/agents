@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import dockPeerScope from "../omp/dock-extensions/dock-peer-scope";
 
-test("only a docked pane's hub list is widened, and only when it asked for less", async () => {
+test("only a docked pane's peers list is widened, and only when it asked for less", async () => {
 	const root = mkdtempSync(join(tmpdir(), "dock-peer-scope-"));
 	const oldPane = process.env.HERD_PANE,
 		oldSocket = process.env.HERD_BROKER_SOCK;
@@ -20,7 +20,7 @@ test("only a docked pane's hub list is widened, and only when it asked for less"
 		});
 	});
 	let handler!: Function;
-	const call = (input: object, toolName = "hub") => handler({ toolName, input });
+	const call = (input: object, toolName = "peers") => handler({ toolName, input });
 	try {
 		const ready = Promise.withResolvers<void>();
 		server.listen(process.env.HERD_BROKER_SOCK, ready.resolve);
@@ -43,6 +43,8 @@ test("only a docked pane's hub list is widened, and only when it asked for less"
 		expect(await call({ op: "list", scope: "all" })).toBeUndefined();
 		expect(await call({ op: "send", to: "Main", message: "hi" })).toBeUndefined();
 		expect(await call({ op: "list" }, "task")).toBeUndefined();
+		// The deprecated native hub tool name is no longer the peer directory.
+		expect(await call({ op: "list" }, "hub")).toBeUndefined();
 		expect(requests).toBe(before);
 
 		// A pane the broker does not report as docked keeps project scope.

@@ -146,8 +146,8 @@ links each file into every docked agent's working directory. Rerun `omp-install`
 after adding a dock or a dock extension; `omp-install check` reports the drift.
 
 `dock-peer-scope.ts` reads the current `HERD_PANE` metadata from the broker and
-forces `hub list` to `scope=all` for `dock=bots` panes, including explicitly
-requested project scope. Ordinary panes and other hub operations are unchanged.
+forces `peers list` to `scope=all` for `dock=bots` panes, including explicitly
+requested project scope. Ordinary panes and other peers operations are unchanged.
 A running session must restart before a newly linked extension loads.
 
 ### herdmon coordinator dispatch

@@ -92,19 +92,20 @@ retrying or rolling back against a potentially different session. Source
 changes take effect in newly launched OMP processes, not already-loaded
 extension instances; no OMP core files need editing.
 
-## Unified hub plugin
+## Cross-process peers plugin
 
-`omp/extensions/peers.ts` extends the native `hub` tool through the public
+`omp/extensions/peers.ts` registers the `peers` tool through the public
 extension API. It does not modify the OMP executable or require a core fork.
-The plugin preserves the native schema and delegates local agents, jobs,
-inbox operations, and process controls to the native implementation.
+OMP 18.3.0 deprecated the native `hub` tool. Local jobs, services, and
+subagents use the native `wait` tool, `proc://`, and `agent://`. The plugin
+owns only messages between OMP processes.
 
-`hub list` also discovers live OMP sessions that have the plugin loaded.
+`peers list` discovers live OMP sessions that have the plugin loaded.
 `scope: "project"` filters remote sessions to the exact working directory.
 Qualified `omp:<instance>/<local-id>` addresses select remote message targets.
-Remote `send` and `wait` use the existing same-user Unix socket transport.
+`send` and `wait` use the same-user Unix socket transport.
 Remote job cancellation, process control, and parked-session revival are not
-supported. Local ownership stays with native OMP.
+supported. Empty `to`, `from`, and `replyTo` values count as absent.
 
 Incoming peer requests run in isolated channel workers, not in the receiving
 agent's main conversation. Each sender session has one persistent channel.
@@ -140,16 +141,15 @@ may have partially executed. Up to 64 messages can be outstanding per receiver.
 Replies preserve `replyTo` and omit `await`. A receipt means queue acceptance,
 not completed work. Requests never satisfy the receiving main agent's waits.
 Replies go to the matching wait or arrive once as an aside in the requesting
-main session. Later waits and inbox reads do not replay them. Timeouts do not
-cancel channel work. Delivery failures are visible and are not retried.
+main session. Later waits do not replay them. Timeouts do not cancel channel
+work. Delivery failures are visible and are not retried.
 `external:herd` and wake-relay messages keep their direct aside route.
-`OMP_PEERS_DIR=off` disables remote transport without disabling native hub.
+`OMP_PEERS_DIR=off` disables the remote transport.
 
 The configured extension directory loads the plugin in new OMP processes.
 Use `/reload` in an existing session to load changes without restarting OMP.
 Reload preserves channel histories and completed results. The plugin uses
-public SDK sessions and same-name `ctx.invokeTool` delegation, verified with
-stock OMP 18.1.14.
+public SDK sessions and was verified with stock OMP 18.3.0.
 
 ## Conversation router
 
@@ -211,7 +211,7 @@ that asked for it. A peer that launches `omp --resume <Designer transcript>
 --print <brief>` leaves a plain user turn; the dock reads that peer's own
 transcript (by its recorded project directory and session id) and attributes
 the turn only when the identical prompt appears there. A user-typed turn in
-which Designer `hub send`s to exactly one peer is recorded under that contact
+which Designer `peers send`s to exactly one peer is recorded under that contact
 as `User → Designer · about <name>`; it never counts as the contact's feedback.
 Other user turns stay unattributed and are not shown. Each recorded turn
 carries the files Designer wrote or edited and the `git commit` commands it
@@ -248,7 +248,7 @@ designer-dock --record /path/to/capture.png --contact CONTACT_ID \
 Add `--event EVENT_ID` to link the picture to a recorded message.
 State is stored in `~/src/docked_agents/designer`. Its `sessions` directory
 holds the private conversation; `workspace` is the docked agent's working directory.
-Agents can read `snapshot.json` there without depending on hub delivery.
+Agents can read `snapshot.json` there without depending on peer delivery.
 `DESIGNER_STATE_DIR`, `DESIGNER_SESSION_DIR`, and `DESIGNER_PROJECT_DIR`
 override those locations. `DESIGNER_CONTACT_SESSIONS_DIR` selects the separate
 global session store used to attribute collaborators' recorded requests.

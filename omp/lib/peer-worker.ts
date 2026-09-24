@@ -104,7 +104,7 @@ export async function createPeerWorker(
 	const channelDir = path.resolve(options.channelDir);
 	const sessionFile = path.join(channelDir, "session.jsonl");
 	const builtinNames = new Set(pi.getAllTools().filter(tool => tool.sourceInfo.source === "builtin").map(tool => tool.name));
-	const excluded: Record<string, true> = { hub: true, task: true, ask: true, yield: true };
+	const excluded: Record<string, true> = { task: true, ask: true, yield: true };
 	const toolNames = pi.getActiveTools().filter(name => builtinNames.has(name) && !excluded[name]);
 	const excerpts = receiverExcerpts(ctx);
 	await fs.mkdir(channelDir, { recursive: true, mode: 0o700 });

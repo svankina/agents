@@ -4,11 +4,11 @@ All public calls are serialized by the caller. Source cursors and imported rows
 commit together; archives are immutable and may safely outlive a rolled-back row.
 
 Three sources feed one record per contact. Peer transport (peer messages, channel
-workers, `hub send`) carries its sender. Designer's own transcript turns do not:
+workers, `peers send`) carries its sender. Designer's own transcript turns do not:
 a peer that launches `omp --resume <Designer transcript> --print <brief>` leaves a
 plain user turn behind. Those turns are kept aside until proof of their author
 arrives -- the identical prompt in that peer's transcript -- or until the turn's
-own `hub send` names exactly one peer, in which case the prompt is recorded as
+own `peers send` names exactly one peer, in which case the prompt is recorded as
 user-originated work about that contact, never as the contact's words.
 """
 from __future__ import annotations
@@ -103,6 +103,11 @@ def _text(content):
 
 def _tool(name):
     return str(name).rsplit('.', 1)[-1].rsplit('/', 1)[-1]
+
+
+# `hub` is the native tool that carried peer sends before OMP 18.3.0 deprecated it;
+# transcripts recorded under that name are still imported.
+_PEER_TOOLS = frozenset({'peers', 'hub'})
 
 
 class History:
@@ -403,7 +408,7 @@ class History:
         return [(name, args)]
 
     def _calls(self, block):
-        return [args for name, args in self._tool_calls(block) if name == 'hub']
+        return [args for name, args in self._tool_calls(block) if name in _PEER_TOOLS]
 
     def _absolute(self, value, cwd=None):
         path = Path(str(value)).expanduser()
@@ -530,7 +535,7 @@ class History:
                     if change.get('call') == call_id and 'hash' not in change:
                         change['hash'] = self._commit_hash(_text(message.get('content')), change['summary'])
             call = self.db.execute('SELECT events FROM calls WHERE id=?', (call_id,)).fetchone()
-            if _tool(message.get('toolName', '')) == 'hub' or call:
+            if _tool(message.get('toolName', '')) in _PEER_TOOLS or call:
                 self._details(details, timestamp, source, record)
                 result = details.get('peerHub', details) if isinstance(details, dict) else {}
                 receipt = result.get('receipt', {})

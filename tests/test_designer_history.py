@@ -155,12 +155,13 @@ class HistoryBoundaries(unittest.TestCase):
 
     def test_user_turn_about_one_peer_is_recorded_as_user_originated(self):
         self.write(self.file, self.incoming(body='Hello', session='peer-session'))
+        # `peers` is the current tool; `hub` is how transcripts before OMP 18.3.0 recorded sends.
         self.write(self.file, *self.turn('Ask the collaborator to widen the header', 'user-turn', reply='Sent', calls=[
-            dict(name='hub', arguments=dict(op='send', to='omp:old/Main', message='Widen the header')),
+            dict(name='peers', arguments=dict(op='send', to='omp:old/Main', message='Widen the header')),
             dict(name='write', arguments=dict(path='mock.html', i='Header mock', content='<h1>'))], results=['{}', 'wrote']))
         self.write(self.file, *self.turn('Tell both of them', 'broadcast', reply='Sent', calls=[
             dict(name='hub', arguments=dict(op='send', to='omp:old/Main', message='One')),
-            dict(name='hub', arguments=dict(op='send', to='omp:other/Main', message='Two'))], results=['{}', '{}']))
+            dict(name='peers', arguments=dict(op='send', to='omp:other/Main', message='Two'))], results=['{}', '{}']))
         self.history.sync([])
         snapshot = self.history.snapshot()
         prompts = [e for e in snapshot['events'] if e['id'].startswith('prompt:')]
