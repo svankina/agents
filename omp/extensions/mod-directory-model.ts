@@ -93,6 +93,32 @@ function migrateLegacyRole(cwd: string): string | undefined {
 	return persisted ?? legacy;
 }
 
+/**
+ * Bring the catalog up to date before listing or resolving.
+ *
+ * `ctx.models.list()`/`.resolve()` read `ModelRegistry.getAvailable()`, a
+ * snapshot built at session start. Core's `/model` hub re-fetches on open
+ * (`ModelHubComponent` calls `registry.refresh("online")`), so without this
+ * `/mod` keeps offering the startup list — a model published, discovered, or
+ * added to `models.yml` after launch is missing until the session restarts.
+ * A failed refresh is not fatal: the cached snapshot still works offline.
+ */
+async function refreshCatalog(api: ExtensionAPI, ctx: ExtensionContext, provider?: string): Promise<void> {
+	const status = provider ? `refreshing ${provider} models…` : "refreshing models…";
+	ctx.ui.setStatus("mod-refresh", status);
+	try {
+		if (provider) await ctx.modelRegistry.refreshProvider(provider, "online");
+		else await ctx.modelRegistry.refresh("online");
+	} catch (error) {
+		api.logger.warn("/mod: model catalog refresh failed; using the cached catalog", {
+			provider,
+			error: error instanceof Error ? error.message : String(error),
+		});
+	} finally {
+		ctx.ui.setStatus("mod-refresh", undefined);
+	}
+}
+
 async function pick(ctx: ExtensionCommandContext): Promise<Model | undefined> {
 	const all = ctx.models.list();
 	const subscribed = all.filter(model => SUBSCRIPTION_PROVIDERS[model.provider]);
@@ -124,8 +150,19 @@ async function pick(ctx: ExtensionCommandContext): Promise<Model | undefined> {
 async function applyDirectoryModel(api: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
 	const selector = migrateLegacyRole(ctx.cwd) ?? readDirectoryModel(path.join(ctx.cwd, ".omp", STATE_FILE));
 	if (process.env.OMP_DIRECTORY_MODEL === "0" || !selector) return;
-	const model = ctx.models.resolve(selector);
-	if (model) await api.setModel(model);
+	let model = ctx.models.resolve(selector);
+	if (!model) {
+		// Startup resolves against the pre-discovery catalog, so a pin that only
+		// materializes through discovery would be dropped silently. Re-fetch the
+		// pinned provider once — not the whole catalog — and retry.
+		await refreshCatalog(api, ctx, selector.includes("/") ? selector.split("/")[0] : undefined);
+		model = ctx.models.resolve(selector);
+	}
+	if (!model) {
+		api.logger.warn("Directory model is not available", { selector, cwd: ctx.cwd });
+		return;
+	}
+	await api.setModel(model);
 }
 
 export const description =
@@ -159,6 +196,9 @@ export default function modDirectoryModel(api: ExtensionAPI): void {
 					return;
 				}
 
+				// Same refresh `/model` runs when its hub opens, so both surfaces
+				// offer the same catalog at the same time.
+				await refreshCatalog(api, ctx);
 				const model = spec ? ctx.models.resolve(spec) : await pick(ctx);
 				if (!model) {
 					if (spec) ctx.ui.notify(`/mod: no model matches "${spec}"`, "error");
