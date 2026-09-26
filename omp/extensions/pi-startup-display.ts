@@ -276,14 +276,12 @@ async function discoverStartupResources(
 	api: ExtensionAPI,
 	ctx: ExtensionContext,
 ): Promise<StartupResources> {
-	const skillSettings = {
-		...api.pi.settings.getGroup("skills"),
-		disabledExtensions: api.pi.settings.get("disabledExtensions") ?? [],
-	};
-	const [contextResult, extensionResult, skillResult] = await Promise.allSettled([
+	// Skills come from the session's own resolved set: core loads them with
+	// the user's skill settings before `session_start`, so re-discovering here
+	// would duplicate (and drift from) that configuration.
+	const [contextResult, extensionResult] = await Promise.allSettled([
 		api.pi.discoverContextFiles(ctx.cwd),
 		api.pi.discoverSessionExtensionPaths({}, ctx.cwd, api.pi.settings),
-		api.pi.discoverSkills(ctx.cwd, undefined, skillSettings),
 	]);
 	const contextFiles =
 		contextResult.status === "fulfilled"
@@ -312,16 +310,14 @@ async function discoverStartupResources(
 			path: abbreviateHome(extensionPath),
 		})),
 	);
-	const skills =
-		skillResult.status === "fulfilled"
-			? skillResult.value.skills
-					.filter((skill) => !skill.hide)
-					.map((skill) => ({
-						name: skill.name,
-						description: firstSentence(skill.description ?? ""),
-						path: abbreviateHome(skill.filePath),
-					}))
-			: [];
+	const skills = api.pi
+		.getActiveSkills()
+		.filter((skill) => !skill.hide)
+		.map((skill) => ({
+			name: skill.name,
+			description: firstSentence(skill.description ?? ""),
+			path: abbreviateHome(skill.filePath),
+		}));
 	const byName = (a: ResourceEntry, b: ResourceEntry) =>
 		a.name.localeCompare(b.name);
 
