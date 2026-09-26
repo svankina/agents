@@ -8,6 +8,10 @@ import type {
 	QuestionResult,
 } from "@oh-my-pi/pi-coding-agent/tools/ask";
 import {
+	cfgAskNotify,
+	cfgAskTimeout,
+} from "@oh-my-pi/pi-coding-agent/modes/settings";
+import {
 	askLocally,
 	formatAnswers,
 	questionBridge,
@@ -202,18 +206,18 @@ export default function herdQuestionsExtension(pi: ExtensionAPI) {
 					params.questions,
 					(answers) => finish(answers),
 				);
-			// Public settings singleton retains project/user/runtime ask timeout settings.
+			// Typed descriptors read the effective (runtime/project/user) ask settings.
 			// ExtensionContext exposes no plan-mode state; never inspect private session state.
 			const local = Promise.resolve().then(() => {
 				controller.signal.throwIfAborted();
-				if (pi.pi.settings.get("ask.notify") !== "off") {
+				if (cfgAskNotify.get(pi.pi.settings) !== "off") {
 					ctx.ui.notify("Waiting for input", "info");
 				}
 				return askLocally(
 					ctx,
 					params.questions,
 					controller.signal,
-					pi.pi.settings.get("ask.timeout"),
+					cfgAskTimeout.get(pi.pi.settings),
 				);
 			});
 			void local.then(
