@@ -20,10 +20,10 @@ STALE_DAYS=60
 PROJECT_MAP_HEADING="## Project map"
 EMPTY_COMMENT="<!-- project-map-empty: Add only facts for which the litmus is yes: would a fresh agent work incorrectly or slowly without this? Remove this comment when the map has content. -->"
 SECTIONS=("### Architecture" "### Where things live" "### Verify" "### Invariants & gotchas" "### Decisions")
-# Machine-wide rules already in the generated global instructions. Restating
-# them per repo is duplication, never repo context.
-GLOBAL_FAIL='psudo|serve-report|fair-run|trash-put|agent-worktree|python3 -m http\.server|:8789'
-GLOBAL_WARN='build123d|OpenSCAD|Blender|serve-cad|homer-notify|agent-shot|agent-gui'
+# Tools and rules already in the global instructions. A line naming one may
+# restate a global rule or record a repo-specific fact (a bug, a URL contract);
+# a keyword cannot tell which, so lint only warns.
+GLOBAL_TOOLS='psudo|serve-report|fair-run|trash-put|agent-worktree|python3 -m http\.server|:8789|build123d|OpenSCAD|Blender|serve-cad|homer-notify|agent-shot|agent-gui'
 # Session residue: commit hashes and scratch paths never belong in a brief.
 RESIDUE='`[0-9a-f]{7,40}`|commit [0-9a-f]{7,40}|/tmp/'
 
@@ -153,15 +153,7 @@ EOF
       rc=1
     fi
 
-    # The repo that ships these commands (bin/project-map lives there) may
-    # name them; everywhere else they are restated global rules.
-    if [ ! -f "$dir/bin/project-map" ] && hits=$(grep -nE "$GLOBAL_FAIL" "$agents"); then
-      echo "FAIL $agents: restates machine-wide rules already in the global instructions — delete these lines:" >&2
-      echo "$hits" | sed 's/^/  /' >&2
-      rc=1
-    fi
-
-    if hits=$(grep -nE "$GLOBAL_WARN" "$agents"); then
+    if hits=$(grep -nE "$GLOBAL_TOOLS" "$agents"); then
       echo "WARN $agents: mentions global tools/rules — keep only if the line says something repo-specific:" >&2
       echo "$hits" | sed 's/^/  /' >&2
     fi
