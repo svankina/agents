@@ -30,7 +30,8 @@ test("/mod persists an extension-owned directory model and clears it", async () 
 			current: () => undefined,
 			resolve: (spec: string) => (spec === "gemini-live" ? model : undefined),
 		},
-		ui: { notify: () => {} },
+		modelRegistry: { refresh: async () => {} },
+		ui: { notify: () => {}, setStatus: () => {} },
 	} as unknown as ExtensionCommandContext;
 
 	try {
@@ -115,11 +116,13 @@ test("startup migrates the legacy core setting without changing unrelated settin
 	}
 });
 
-test("/mod picker offers live models and rejects unavailable explicit ids", async () => {
+test("/mod picker matches abbreviations and lists models refreshed while it is open", async () => {
 	const root = mkdtempSync(path.join(tmpdir(), "mod-directory-model-"));
-	const gemini = { provider: "google-antigravity", id: "gemini-live", name: "Gemini Live" };
-	const claude = { provider: "anthropic", id: "claude-live", name: "Claude Live" };
-	const options: Array<{ label: string; description: string }> = [];
+	const opus5 = { provider: "anthropic", id: "claude-opus-5", name: "Claude Opus 5" };
+	const opus55 = { provider: "anthropic", id: "claude-opus-5-5", name: "Claude Opus 5.5" };
+	const sonnet46 = { provider: "anthropic", id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" };
+	let catalog = [opus5, opus55];
+	let releaseRefresh: () => void = () => {};
 	const notifications: Array<{ message: string; level: string }> = [];
 	let handler: ((args: string, ctx: ExtensionCommandContext) => Promise<void>) | undefined;
 	let setModelCalls = 0;
@@ -132,37 +135,69 @@ test("/mod picker offers live models and rejects unavailable explicit ids", asyn
 			setModelCalls++;
 			return true;
 		},
+		logger: { warn: () => {} },
 	};
 	modDirectoryModel(extension as unknown as ExtensionAPI);
+	const theme = { fg: (_color: string, text: string) => text, bg: (_color: string, text: string) => text, bold: (text: string) => text };
+	type Picker = { handleInput(data: string): void; render(width: number): string[] };
+	let picker: Picker | undefined;
+	let onRender = () => {};
 	const context = {
 		cwd: root,
 		hasUI: true,
 		models: {
-			list: () => [claude, gemini],
+			list: () => catalog,
 			current: () => undefined,
-			resolve: (spec: string) => [claude, gemini].find(model => spec === `${model.provider}/${model.id}`),
+			resolve: (spec: string) => catalog.find(model => spec === `${model.provider}/${model.id}`),
+		},
+		// Settles only when the test releases it, so the picker must open first.
+		modelRegistry: {
+			refresh: () => {
+				const { promise, resolve } = Promise.withResolvers<void>();
+				releaseRefresh = () => {
+					catalog = [...catalog, sonnet46];
+					resolve();
+				};
+				return promise;
+			},
 		},
 		ui: {
-			select: async (_title: string, choices: Array<{ label: string; description: string }>) => {
-				options.push(...choices);
-				return "google-antigravity/gemini-live";
-			},
+			setStatus: () => {},
 			notify: (message: string, level: string) => notifications.push({ message, level }),
+			custom: (factory: (...args: unknown[]) => Picker) => {
+				const { promise, resolve } = Promise.withResolvers<unknown>();
+				picker = factory({ requestRender: () => onRender() }, theme, {}, resolve);
+				return promise;
+			},
 		},
 	} as unknown as ExtensionCommandContext;
+	const selectedRow = () => picker!.render(120).find(line => line.startsWith("❯"));
 
 	try {
-		await handler!("", context);
-		expect(options).toEqual([
-			{ label: "anthropic/claude-live", description: "Claude Live" },
-			{ label: "google-antigravity/gemini-live", description: "Gemini Live" },
-		]);
-		expect(setModelCalls).toBe(1);
-		await handler!("google-antigravity/gemini-unavailable", context);
-		expect(notifications.at(-1)).toEqual({
-			message: '/mod: no model matches "google-antigravity/gemini-unavailable"',
-			level: "error",
+		const picking = handler!("", context);
+		expect(picker!.render(120).join("\n")).not.toContain("claude-sonnet-4-6");
+		for (const key of "op55") picker!.handleInput(key);
+		expect(selectedRow()).toContain("anthropic/claude-opus-5-5");
+		picker!.handleInput("\x15");
+
+		const { promise: swapped, resolve: rendered } = Promise.withResolvers<void>();
+		onRender = rendered;
+		releaseRefresh();
+		await swapped;
+		onRender = () => {};
+		for (const key of "son46") picker!.handleInput(key);
+		expect(selectedRow()).toContain("anthropic/claude-sonnet-4-6");
+		picker!.handleInput("\r");
+		await picking;
+		expect(JSON.parse(readFileSync(path.join(root, ".omp", "directory-model.json"), "utf8"))).toEqual({
+			model: "anthropic/claude-sonnet-4-6",
 		});
+		expect(setModelCalls).toBe(1);
+
+		const explicit = handler!("anthropic/claude-unavailable", context);
+		releaseRefresh();
+		await explicit;
+		expect(notifications.at(-1)).toEqual({ message: '/mod: no model matches "anthropic/claude-unavailable"', level: "error" });
 		expect(setModelCalls).toBe(1);
 	} finally {
 		rmSync(root, { recursive: true, force: true });

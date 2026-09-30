@@ -49,6 +49,11 @@ extension, or `managed-skills` is managed, and no `CLAUDE.md` alias is installed
 - Dock extensions must stay dock-only: OMP discovers project extensions in the
   session cwd alone, so an extension for docked agents belongs in
   `omp/dock-extensions/`, not in a linked plugin or `config.yml`.
+- OMP's shared fuzzy matcher (`ui.select`, `/model`) cannot match cross-word
+  abbreviations such as `op55` → `claude-opus-5-5`. Model pickers here filter
+  with `omp/lib/model-match.ts` in a `ui.custom` component instead.
+- Tests that import `@oh-my-pi/*` values need `node_modules/@oh-my-pi` linked
+  to `~/.bun/install/global/node_modules/@oh-my-pi`; the repo has no manifest.
 
 ### Decisions
 
