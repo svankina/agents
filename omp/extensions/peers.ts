@@ -90,40 +90,48 @@ export default function peersExtension(pi: ExtensionAPI) {
 	}
 
 	/**
-	 * Rounded card with the sender in the top rule, a Markdown body, and time/flags on the right.
+	 * Rounded card: envelope and sender chip in the top rule, colored flags and time on the right,
+	 * and a Markdown body behind an accent gutter bar.
 	 * Every row is padded to the full width so the background fill and right border line up.
 	 */
 	function messageCard(message: PeerMessage, expanded: boolean, theme: Parameters<MessageRenderer>[2], outgoing = false, timestamp?: number) {
 		const color = outgoing ? "success" : "accent";
+		const peer = outgoing ? message.to : message.from;
+		const name = peerLabel(peer);
+		// ◈ Herd itself, ● this session, ◆ any other agent.
+		const icon = peer === "external:herd" ? "◈" : name === "This agent" ? "●" : "◆";
 		const body = new Markdown(message.body.trim(), 1, 0, pi.pi.getMarkdownTheme());
 		const routing = outgoing ? [`to ${message.to}`] : [`from ${message.from}`, `to ${message.to}`];
 		if (message.replyTo) routing.push(`thread ${message.replyTo}`);
 		const meta = [
-			...(message.expectsReply ? ["reply requested"] : []),
-			...(message.wakeRelay ? ["wake relay"] : []),
-			...(timestamp ? [new Date(timestamp).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })] : []),
-		].join(" · ");
+			...(message.expectsReply ? [theme.fg("warning", "↩ reply requested")] : []),
+			...(message.wakeRelay ? [theme.fg("muted", "↻ wake relay")] : []),
+			...(timestamp ? [theme.fg("dim", `◷ ${new Date(timestamp).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`)] : []),
+		].join(theme.fg("dim", " · "));
 		return {
 			invalidate() { body.invalidate(); },
 			render(width: number) {
 				const chars = theme.boxRound;
 				const border = (text: string) => theme.fg(color, text);
 				const inner = width - 2;
-				if (inner < 16) return body.render(Math.max(1, width));
+				if (inner < 20) return body.render(Math.max(1, width));
 				const fill = (line: string) => {
 					const fitted = truncateToWidth(line, inner);
 					return border(chars.vertical) + theme.bg("customMessageBg", fitted + " ".repeat(Math.max(0, inner - visibleWidth(fitted)))) + border(chars.vertical);
 				};
-				const name = peerLabel(outgoing ? message.to : message.from);
-				const lead = `${border(chars.horizontal)} ${theme.fg(color, outgoing ? "→" : "←")} ${theme.fg("dim", outgoing ? "to" : "from")} `;
-				const withMeta = meta ? ` ${theme.fg("dim", meta)} ${border(chars.horizontal)}` : border(chars.horizontal);
-				// Time and flags yield first; the sender name is truncated only when it alone overflows.
-				const right = visibleWidth(lead) + visibleWidth(name) + visibleWidth(withMeta) + 2 <= inner ? withMeta : border(chars.horizontal);
-				const label = truncateToWidth(name, Math.max(1, inner - visibleWidth(lead) - visibleWidth(right) - 2));
-				const left = `${lead}${theme.bold(theme.fg(color, label))} `;
+				const lead = `${border(chars.horizontal)} ${theme.fg("customMessageLabel", "✉")} ${theme.fg("dim", outgoing ? "to" : "from")} `;
+				const withMeta = meta ? ` ${meta} ${border(chars.horizontal)}` : border(chars.horizontal);
+				// The chip adds " icon " + " " around the name. Flags and time yield first; the name truncates last.
+				const chipExtra = 4;
+				const right = visibleWidth(lead) + chipExtra + visibleWidth(name) + visibleWidth(withMeta) + 2 <= inner ? withMeta : border(chars.horizontal);
+				const label = truncateToWidth(name, Math.max(1, inner - visibleWidth(lead) - chipExtra - visibleWidth(right) - 2));
+				// Default foreground on the selection background: accent-on-selection is unreadable in blue themes.
+				const chip = theme.bg("selectedBg", theme.bold(` ${icon} ${label} `));
+				const left = `${lead}${chip} `;
 				const rule = border(chars.horizontal.repeat(Math.max(0, inner - visibleWidth(left) - visibleWidth(right))));
-				const rows = ["", ...body.render(inner)];
-				if (expanded) rows.push("", ...routing.map(line => ` ${theme.fg("dim", line)}`));
+				const gutter = theme.fg(color, "▎");
+				const rows = ["", ...body.render(inner - 1).map(line => gutter + line)];
+				if (expanded) rows.push("", ...routing.map(line => theme.fg("dim", ` ↳ ${line}`)));
 				rows.push("");
 				return [
 					border(chars.topLeft) + left + rule + right + border(chars.topRight),
