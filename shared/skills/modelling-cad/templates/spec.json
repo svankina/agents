@@ -1,0 +1,13 @@
+{
+  "step": "out/part.step",
+  "solids": 1,
+  "bbox": {"size": [80, 40, 10], "tol": 0.01},
+  "volume": {"value": 31657.9, "rel_tol": 0.001},
+  "probes": [
+    {"name": "H1 axis", "point": [20, 20, 5], "expect": "void"},
+    {"name": "H1 inside diameter", "point": [23.25, 20, 5], "expect": "void"},
+    {"name": "H1 outside diameter", "point": [23.35, 20, 5], "expect": "material"}
+  ],
+  "stl": "out/part.stl",
+  "glb": "out/part.glb"
+}

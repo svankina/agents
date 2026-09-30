@@ -1,0 +1,265 @@
+#!/usr/bin/env python3
+"""Check exported CAD files against an independent JSON acceptance spec.
+
+usage: cad-check SPEC.json
+
+The spec states expectations taken from the requirements, not from the
+generator. Relative paths resolve against the spec's directory. Lengths are mm.
+
+  {
+    "step": "out/part.step",                     required; reimported, not trusted
+    "solids": 1,                                 expected solid count
+    "bbox": {"size": [80, 40, 10], "tol": 0.05}, optional "min"/"max" corners
+    "volume": {"value": 29100.0, "rel_tol": 0.005},
+    "probes": [                                  material/void at a point
+      {"name": "H1 bore axis", "point": [20, 0, 5], "expect": "void"},
+      {"name": "H1 wall", "point": [23.5, 0, 5], "expect": "material"}
+    ],
+    "interference": {                            assemblies; pairs by solid index
+      "max_mm3": 0.001,
+      "allowed": [{"a": 0, "b": 1, "reason": "M3 thread engagement"}]
+    },
+    "clearance": [{"a": 0, "b": 1, "min": 0.15, "max": 0.25}],
+    "stl": "out/part.stl",                       closed, consistently wound, volume
+    "glb": "out/part.glb"                        viewer extents equal STEP mm extents
+  }
+
+Probe points just past a feature boundary (e.g. radius +/- 0.05) to check
+diameter, side, and position; a point on the surface is ambiguous.
+Exit status: 0 all checks passed, 1 a check failed, 2 spec or file load error.
+"""
+
+import json
+import math
+import os
+import struct
+import sys
+import traceback
+from pathlib import Path
+
+try:
+    import build123d as bd
+except ImportError:
+    if os.environ.get("CAD_CHECK_REEXEC"):
+        sys.exit("cad-check: build123d unavailable in cad-workbench environment")
+    os.environ["CAD_CHECK_REEXEC"] = "1"
+    try:
+        os.execvp("cad-workbench", ["cad-workbench", "python", __file__, *sys.argv[1:]])
+    except FileNotFoundError:
+        sys.exit("cad-check: needs build123d or cad-workbench on PATH")
+
+
+class LoadError(Exception):
+    pass
+
+
+class Report:
+    def __init__(self):
+        self.failed = 0
+        self.passed = 0
+
+    def check(self, ok, name, detail):
+        print(f"{'PASS' if ok else 'FAIL'} {name}: {detail}")
+        if ok:
+            self.passed += 1
+        else:
+            self.failed += 1
+
+
+def _path(base, value):
+    path = (base / value).resolve()
+    if not path.is_file():
+        raise LoadError(f"missing file: {path}")
+    return path
+
+
+def _solids(shape):
+    return list(shape.solids())
+
+
+def check_step(spec, base, report):
+    path = _path(base, spec["step"])
+    try:
+        shape = bd.import_step(str(path))
+    except Exception as exc:  # OCCT raises assorted types
+        raise LoadError(f"STEP import failed: {path}: {exc}") from exc
+    solids = _solids(shape)
+    report.check(bool(solids) and all(s.is_valid for s in solids), "brep valid",
+                 f"{len(solids)} solid(s), invalid: "
+                 f"{[i for i, s in enumerate(solids) if not s.is_valid]}")
+    if "solids" in spec:
+        report.check(len(solids) == spec["solids"], "solid count",
+                     f"{len(solids)} expected {spec['solids']}")
+
+    box = shape.bounding_box()
+    if "bbox" in spec:
+        want = spec["bbox"]
+        tol = want.get("tol", 0.01)
+        for key, got in (("size", box.size), ("min", box.min), ("max", box.max)):
+            if key in want:
+                got = [got.X, got.Y, got.Z]
+                ok = all(abs(g - w) <= tol for g, w in zip(got, want[key]))
+                report.check(ok, f"bbox {key}", f"{_fmt(got)} expected {_fmt(want[key])} ±{tol}")
+
+    volume = sum(s.volume for s in solids)
+    if "volume" in spec:
+        want = spec["volume"]
+        rel = abs(volume - want["value"]) / want["value"]
+        report.check(rel <= want.get("rel_tol", 0.005), "volume",
+                     f"{volume:.3f} expected {want['value']:.3f} (rel err {rel:.2e})")
+
+    for probe in spec.get("probes", []):
+        point = bd.Vector(*probe["point"])
+        inside = any(s.is_inside(point) for s in solids)
+        expect = probe["expect"]
+        if expect not in ("material", "void"):
+            raise LoadError(f"probe {probe.get('name')}: expect must be material or void")
+        got = "material" if inside else "void"
+        report.check(got == expect, f"probe {probe.get('name', probe['point'])}",
+                     f"{got} at {_fmt(probe['point'])}, expected {expect}")
+
+    if "interference" in spec:
+        cfg = spec["interference"]
+        allowed = set()
+        for entry in cfg.get("allowed", []):
+            if not str(entry.get("reason", "")).strip():
+                raise LoadError(f"allowed overlap {entry['a']}-{entry['b']} needs a reason")
+            allowed.add(frozenset((entry["a"], entry["b"])))
+        limit = cfg.get("max_mm3", 0.001)
+        overlaps = []
+        for i in range(len(solids)):
+            for j in range(i + 1, len(solids)):
+                if frozenset((i, j)) in allowed:
+                    continue
+                if not _boxes_touch(solids[i].bounding_box(), solids[j].bounding_box()):
+                    continue
+                common = solids[i].intersect(solids[j])
+                overlap = common.volume if common is not None else 0.0
+                if overlap > limit:
+                    overlaps.append(f"{i}-{j} {overlap:.4f} mm3")
+        report.check(not overlaps, "interference",
+                     f"{len(solids)} solids, limit {limit} mm3, overlaps: {overlaps or 'none'}")
+
+    for pair in spec.get("clearance", []):
+        a, b = pair["a"], pair["b"]
+        gap = solids[a].distance_to(solids[b])
+        ok = pair.get("min", -math.inf) <= gap <= pair.get("max", math.inf)
+        report.check(ok, f"clearance {a}-{b}",
+                     f"{gap:.4f} expected [{pair.get('min', '-')}, {pair.get('max', '-')}]")
+
+    return box, volume
+
+
+def _read_stl(path):
+    data = path.read_bytes()
+    if len(data) >= 84:
+        count = struct.unpack_from("<I", data, 80)[0]
+        if 84 + 50 * count == len(data):
+            tris = []
+            for k in range(count):
+                v = struct.unpack_from("<12f", data, 84 + 50 * k)
+                tris.append((v[3:6], v[6:9], v[9:12]))
+            return tris
+    tris, verts = [], []
+    for line in data.decode("ascii", "replace").splitlines():
+        parts = line.split()
+        if parts[:1] == ["vertex"]:
+            verts.append(tuple(float(x) for x in parts[1:4]))
+            if len(verts) == 3:
+                tris.append(tuple(verts))
+                verts = []
+    return tris
+
+
+def check_stl(spec, base, report, step_volume):
+    path = _path(base, spec["stl"])
+    tris = _read_stl(path)
+    if not tris:
+        raise LoadError(f"no triangles in {path}")
+    key = {}
+
+    def vid(v):
+        q = tuple(round(c, 5) for c in v)
+        return key.setdefault(q, len(key))
+
+    directed = {}
+    signed = 0.0
+    for a, b, c in tris:
+        ia, ib, ic = vid(a), vid(b), vid(c)
+        for e in ((ia, ib), (ib, ic), (ic, ia)):
+            directed[e] = directed.get(e, 0) + 1
+        signed += (a[0] * (b[1] * c[2] - b[2] * c[1])
+                   - a[1] * (b[0] * c[2] - b[2] * c[0])
+                   + a[2] * (b[0] * c[1] - b[1] * c[0])) / 6.0
+    open_edges = sum(1 for (u, v) in directed if (v, u) not in directed)
+    repeated = sum(1 for n in directed.values() if n > 1)
+    report.check(open_edges == 0 and repeated == 0, "stl closed and consistently wound",
+                 f"{len(tris)} triangles, {open_edges} unmatched edges, {repeated} repeated")
+    report.check(signed > 0, "stl outward winding", f"signed volume {signed:.3f}")
+    rel = abs(abs(signed) - step_volume) / step_volume if step_volume else math.inf
+    report.check(rel <= 0.02, "stl volume matches step",
+                 f"{abs(signed):.3f} vs {step_volume:.3f} (rel err {rel:.2e})")
+
+
+def check_glb(spec, base, report, box):
+    path = _path(base, spec["glb"])
+    data = path.read_bytes()
+    if data[:4] != b"glTF":
+        raise LoadError(f"not a binary glTF: {path}")
+    length = struct.unpack_from("<I", data, 12)[0]
+    doc = json.loads(data[20:20 + length])
+    lo = [math.inf] * 3
+    hi = [-math.inf] * 3
+    for mesh in doc.get("meshes", []):
+        for prim in mesh.get("primitives", []):
+            acc = doc["accessors"][prim["attributes"]["POSITION"]]
+            lo = [min(x, y) for x, y in zip(lo, acc["min"])]
+            hi = [max(x, y) for x, y in zip(hi, acc["max"])]
+    scales = [n["scale"] for n in doc.get("nodes", []) if "scale" in n]
+    got = sorted(h - l for l, h in zip(lo, hi))
+    want = sorted([box.size.X, box.size.Y, box.size.Z])
+    ok = not scales and all(abs(g - w) <= max(0.01, 0.001 * w) for g, w in zip(got, want))
+    detail = f"sorted extents {_fmt(got)} vs STEP mm {_fmt(want)}"
+    if scales:
+        detail += f"; node scale transforms present {scales}"
+    report.check(ok, "glb extents in mm", detail)
+
+
+def _boxes_touch(a, b):
+    lo_a, hi_a, lo_b, hi_b = (tuple(v) for v in (a.min, a.max, b.min, b.max))
+    return all(lo_a[k] <= hi_b[k] and lo_b[k] <= hi_a[k] for k in range(3))
+
+
+def _fmt(values):
+    return "[" + ", ".join(f"{v:.3f}" for v in values) + "]"
+
+
+def main(argv):
+    if len(argv) != 1 or argv[0] in ("-h", "--help"):
+        print(__doc__)
+        return 0 if argv and argv[0] in ("-h", "--help") else 2
+    spec_path = Path(argv[0]).resolve()
+    report = Report()
+    try:
+        spec = json.loads(spec_path.read_text())
+        if "step" not in spec:
+            raise LoadError("spec needs a \"step\" path")
+        base = spec_path.parent
+        box, volume = check_step(spec, base, report)
+        if "stl" in spec:
+            check_stl(spec, base, report, volume)
+        if "glb" in spec:
+            check_glb(spec, base, report, box)
+    except LoadError as exc:
+        print(f"ERROR {exc}; checks incomplete")
+        return 2
+    except Exception:  # a crash is not a failed assertion; keep it distinct
+        traceback.print_exc()
+        print("ERROR cad-check crashed; checks incomplete")
+        return 2
+    print(f"{report.passed} passed, {report.failed} failed")
+    return 1 if report.failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
