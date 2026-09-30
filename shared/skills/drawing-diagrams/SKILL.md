@@ -1,14 +1,21 @@
 ---
 name: drawing-diagrams
-description: Draw architecture, flow, sequence, state, before/after, or timeline diagrams for served HTML reports with D2 and the house style, and realistic to-scale hardware wiring pictures (boards, pins, wires) with draw-wiring. Read before drawing any report diagram; charts of data are out of scope.
-compatibility: Requires draw-diagram and draw-wiring (bin/ of ~/src/agents), d2 on PATH or ~/go/bin/d2, PyYAML for draw-wiring, OpenCV for photo preparation, and google-chrome or chromium.
+description: Draw architecture, flow, sequence, state, before/after, or timeline diagrams for served HTML reports with D2 and the house style, and realistic to-scale hardware wiring pictures (which hole or pin each wire uses) with rectify-board and draw-wiring. Read before drawing any report diagram or wiring guide; charts of data are out of scope.
+compatibility: Requires draw-diagram, draw-wiring and rectify-board (bin/ of ~/src/agents), d2 on PATH or ~/go/bin/d2, PyYAML, OpenCV with NumPy for rectify-board, and google-chrome or chromium.
 ---
 
 # Drawing diagrams
 
-Write D2 source, render it with `draw-diagram`, look at the preview, fix, then
-inline the SVG in the report. Never publish a diagram you have not looked at.
-`draw-diagram --help` covers flags, outputs, and exit codes.
+Pick the tool by the question the reader has:
+
+- **How does the software fit together?** Write D2 source, render it with
+  `draw-diagram`, look at the preview, fix it, and inline the SVG in the report.
+- **Which hole or pin does this wire go in?** Use the hardware workflow below.
+  D2 boxes, schematics and pinout posters do not answer that question; the user
+  rejected all three for the heater wiring.
+
+Never publish a diagram you have not looked at. Each helper's `--help` covers
+its flags, outputs and exit codes.
 
 ## Procedure
 
@@ -118,29 +125,62 @@ after: After {
 
 ## Hardware wiring pictures
 
-For "which hole does this wire go in", do not use D2 boxes. Use `draw-wiring`
-(see `--help`), which composes to-scale parts from a YAML spec. The spec is the
-only source for wires, pins, and callouts.
+`draw-wiring` composes to-scale part images from one YAML spec. The spec is the
+only source for wires, pin names and callouts. Do not keep a second
+hand-drawn copy: the old heater schematic went stale (it kept GP22 after the
+wire moved to GP28).
 
-1. **One part file per board.** It holds a straight top-down image and the pin
-   positions in mm. Take the pin geometry from the datasheet or dimension drawing,
-   and the pin names from the official pinout.
-   - **Image source:** prefer the user's own photo. Straighten it with OpenCV,
-     using a homography on four known features such as mounting holes. Use the
-     vendor's top-down render only when the user has no usable photo.
-   - **Photo edits:** edit the image to match the real state, for example jumper
-     positions. Remove stray wires, then state what you changed in the part
-     file's `source`.
-2. **Check the alignment.** Render with `--debug` and zoom into the preview.
-   Every magenta pin dot must sit on its hole or header pin.
-3. **Wires.** Draw each wire in the colour of the real wire. Give it `via`
-   points so that parallel wires stay apart. Callout titles come from the part
-   file (`Pin 34 · GP28`). Add the position in words, for example "right column,
-   7th from top", and the destination.
-4. **Review.** Apply the review checklist to the preview. Callout boxes must not
-   cover wires. A leader may cross a wire, because it has a white outline.
-5. **Storage.** Keep vendor artwork and user photos with the project, not in
-   this public repository.
+1. **Identify the exact board.** Read the silkscreen in the user's photo or the
+   board's firmware banner before you collect assets. "Pico W" artwork is wrong
+   for a Pico 2 W: the Wi-Fi can, the debug header and the antenna differ.
+2. **Reuse a part** from `~/.local/share/draw-wiring/parts` (`part: <name>`) when
+   one matches the board and its state. Otherwise make one:
+   - **Geometry and names from primary sources.** Take hole positions, pitch and
+     mounting holes from the datasheet's mechanical drawing or the vendor's
+     dimension drawing. Take pin names from the official pinout. Write both in
+     the part file, with its `source`.
+   - **Image, in this order:**
+     1. The user's photo of their board. It is their exact variant and state.
+     2. A vendor top-down render, scaled from the dimension drawing.
+     3. A render of the official 3D model. Raspberry Pi's Pico 2 STEP is MIT
+        licensed, but it has no Pico 2 W Wi-Fi can.
+
+     Do not use unlicensed art (Wokwi boards) or copyrighted pinout posters in
+     this repository.
+   - **Straighten it with `rectify-board`.** Run `--zoom` and correct the
+     reference pixels until every cross sits on its hole centre. Then rectify
+     with `--check PART.yaml`. Every pin ring must sit on its hole, and each
+     residual must be under about 0.2 mm. A larger residual means a bad pick.
+     Automatic circle fitting was tried and dropped: pad rings and textured
+     bores pulled it off centre.
+   - **Edit the image to the real state,** and record each edit in `source`.
+     For example, move jumpers to the position the user uses. To remove a stray
+     wire, copy a clean strip of the board edge from a whole number of pin
+     pitches away.
+3. **Write the spec.**
+   - Draw each wire in the colour of the real wire. If two wires have the same
+     colour, say which is which in their callouts.
+   - Give a measured part value as `value`, and the marked value as `nominal`,
+     which sets the colour bands.
+   - Give each wire `via` points so that parallel wires stay apart.
+   - Callout titles come from the part file (`Pin 34 · GP28`). Add the position
+     in words ("right column, 7th from top") and the destination.
+   - When you choose pins, choose ones near a landmark such as the end of a
+     column. The user objected to counting to GP22, the 12th hole.
+4. **Check the alignment.** Render with `--debug` and zoom into the preview.
+   Every magenta dot must sit on its hole or header pin.
+5. **Review the preview.**
+   - Callout boxes must not cover wires. A leader may cross a wire, because it
+     has a white outline.
+   - The canvas should fit in about 180 mm.
+6. **Publish it.**
+   - When the picture replaces older figures, delete the old images.
+   - The caption states where each part image came from.
+   - Check the live page with the browser tool, using an element screenshot.
+     Headless `google-chrome --screenshot` ignores `#anchor` URLs.
+   - If you edited another session's artifact, tell that session.
+7. **Storage.** Keep vendor artwork and user photos in the parts library or the
+   project, not in this public repository.
 
 ## Gotchas
 

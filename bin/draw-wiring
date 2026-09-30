@@ -5,6 +5,7 @@ import argparse
 import base64
 import html
 import math
+import os
 import re
 import shutil
 import subprocess
@@ -40,11 +41,15 @@ Spec (all lengths in mm, y grows downward):
     - {at: [120, 28], text: DS18B20 probe}
   notes: [text, ...]
 
-Part file: name, image (beside the part file), image_box [x, y, w, h] in part mm,
-pins {id: {at: [x, y], name: GP0}}. Callouts print "Pin <id> · <name>" from the
-part file, so pin names are never retyped in the spec.
-Built-in kinds: resistor (pins a, b; 5-band colours from value), ds18b20
-(pins black, red, yellow at the jacket end; the cable runs toward +x).
+Part file: name, source, image (beside the part file), image_box [x, y, w, h] in
+part mm, pins {id: {at: [x, y], name: GP0}}. Callouts print "Pin <id> · <name>"
+from the part file, so pin names are never retyped in the spec. A bare part name
+(part: pico2w) loads $DRAW_WIRING_PARTS/<name>.yaml, default
+~/.local/share/draw-wiring/parts; a path is relative to the spec. Make part
+images with rectify-board.
+Built-in kinds: resistor (pins a, b; 5-band colours from nominal, else value;
+give a measured value as value and the marked one as nominal), ds18b20 (pins
+black, red, yellow at the jacket end; the cable runs toward +x).
 
 Outputs OUTPUT.svg (images embedded) and OUTPUT.png (headless-Chrome preview).
 --debug marks every pin with its id to check the photo alignment.
@@ -116,7 +121,13 @@ class Drawing:
     def photo_part(self, part_id, entry):
         if "part" not in entry:
             raise SpecError(f"part {part_id}: needs 'part: <file.yaml>'")
-        part_file = (self.base / entry["part"]).resolve()
+        name = str(entry["part"])
+        if "/" in name or name.endswith((".yaml", ".yml")):
+            part_file = (self.base / name).resolve()
+        else:
+            library = Path(os.environ.get("DRAW_WIRING_PARTS",
+                                          Path.home() / ".local/share/draw-wiring/parts"))
+            part_file = library / f"{name}.yaml"
         if not part_file.is_file():
             raise SpecError(f"part {part_id}: {part_file} not found")
         part = yaml.safe_load(part_file.read_text(encoding="utf-8"))
@@ -157,7 +168,7 @@ class Drawing:
         body = min(6.3, length * 0.62)
         angle = math.degrees(math.atan2(b[1] - a[1], b[0] - a[0]))
         mid = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
-        bands = resistor_bands(entry.get("value", "4.7k"))
+        bands = resistor_bands(entry.get("nominal", entry.get("value", "4.7k")))
         stripes = "".join(
             f'<rect x="{fmt(-body / 2 + body * p)}" y="-1.15" width="{fmt(body * 0.075)}" '
             f'height="2.3" fill="{c}"/>'

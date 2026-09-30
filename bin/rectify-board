@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+"""Straighten a board photo to a to-scale, top-down part image for draw-wiring."""
+
+import argparse
+import math
+import sys
+from pathlib import Path
+
+EPILOG = """\
+Each --point pairs a photo pixel with the board position it shows (mm, origin
+at the board's top-left corner, y down). Use features with datasheet positions:
+mounting-hole centres first, then header pins. Four points fit a perspective;
+more are fitted by least squares and reduce the effect of one bad pick.
+
+Workflow:
+  1. --zoom: write OUTPUT-zoom.png, one 6 mm tile per point with a 0.5 mm grid
+     and a cross on the given pixel. Look at it, correct the pixels, repeat
+     until every cross sits on its feature's centre. Nothing else is written.
+  2. Without --zoom: write OUTPUT (the board plus --margin on every side at
+     --px-per-mm) and print the image_box line and the per-point residual.
+  3. --check PART.yaml: also write OUTPUT-check.png with every pin of that
+     part file drawn on the image. Each magenta ring must sit on its hole or
+     pin. Edge-to-edge drift means a wrong reference; fix it and rerun.
+
+Example (Pico 2 W, holes at 4.8/16.2 mm x and 2.0/49.0 mm y, USB overhang kept):
+  rectify-board photo.jpg --board 21,51 \\
+    --point 1043,1383:4.8,2 --point 1539,1372:16.2,2 \\
+    --point 1106,3378:4.8,49 --point 1600,3341:16.2,49 \\
+    --keep 6.3,-1.6,8.4,1.6 -o parts/pico2w-top.webp --check parts/pico2w.yaml
+
+Exit status: 0 written, 1 image error, 2 usage.
+Requires OpenCV (cv2) and NumPy; PyYAML only for --check.
+"""
+
+
+def pair(text, what):
+    try:
+        x, y = (float(v) for v in text.split(","))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{what} must be X,Y, got {text!r}") from None
+    return x, y
+
+
+def point(text):
+    if ":" not in text:
+        raise argparse.ArgumentTypeError(f"--point must be PX,PY:MMX,MMY, got {text!r}")
+    pixel, mm = text.split(":", 1)
+    return pair(pixel, "photo pixel"), pair(mm, "board mm")
+
+
+def rect(text):
+    try:
+        values = [float(v) for v in text.split(",")]
+    except ValueError:
+        values = []
+    if len(values) != 4:
+        raise argparse.ArgumentTypeError(f"--keep must be X,Y,W,H in mm, got {text!r}")
+    return values
+
+
+def zoom_sheet(cv2, np, photo, pixels, photo_px_per_mm):
+    """One tile per reference: 6 mm square, 0.5 mm grid, cross on the given pixel."""
+    half = int(3 * photo_px_per_mm)
+    tiles = []
+    for i, (x, y) in enumerate(pixels):
+        padded = cv2.copyMakeBorder(photo, half, half, half, half, cv2.BORDER_CONSTANT)
+        cx, cy = int(round(x)) + half, int(round(y)) + half
+        tile = padded[cy - half:cy + half, cx - half:cx + half].copy()
+        tile = cv2.resize(tile, (300, 300), interpolation=cv2.INTER_CUBIC)
+        step = 300 / 12
+        for k in range(1, 12):
+            colour = (255, 0, 255) if k == 6 else (200, 120, 200)
+            cv2.line(tile, (round(k * step), 0), (round(k * step), 299), colour, 1)
+            cv2.line(tile, (0, round(k * step)), (299, round(k * step)), colour, 1)
+        cv2.drawMarker(tile, (150, 150), (0, 255, 255), cv2.MARKER_CROSS, 24, 2)
+        cv2.putText(tile, f"{i + 1}: {x:.0f},{y:.0f}", (6, 20), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.55, (0, 255, 255), 2)
+        tiles.append(tile)
+    return np.hstack(tiles)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="rectify-board", description=__doc__.strip(), epilog=EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("photo", type=Path)
+    parser.add_argument("--point", type=point, action="append", required=True,
+                        metavar="PX,PY:MMX,MMY", help="photo pixel and its board position; 4 or more")
+    parser.add_argument("--board", type=lambda t: pair(t, "--board"), required=True,
+                        metavar="W,H", help="board size in mm")
+    parser.add_argument("--margin", type=float, default=2.0, help="mm kept around the board (default 2)")
+    parser.add_argument("--px-per-mm", type=float, default=20.0, help="output scale (default 20)")
+    parser.add_argument("--zoom", action="store_true",
+                        help="only write OUTPUT-zoom.png tiles to check the reference pixels")
+    parser.add_argument("--alpha", choices=("board", "white", "none"), default="board",
+                        help="transparency: outside the board rectangle and --keep areas (default), "
+                             "near-white background (vendor renders), or none")
+    parser.add_argument("--keep", type=rect, action="append", default=[], metavar="X,Y,W,H",
+                        help="extra opaque area in board mm, e.g. a connector overhanging the edge")
+    parser.add_argument("--corner-radius", type=float, default=0.0, help="board corner radius in mm")
+    parser.add_argument("-o", "--output", type=Path, required=True, metavar="OUTPUT.webp")
+    parser.add_argument("--check", type=Path, metavar="PART.yaml", help="draw this part file's pins")
+    args = parser.parse_args()
+
+    if len(args.point) < 4:
+        parser.error("give at least four --point references")
+    if args.output.suffix.lower() not in (".webp", ".png"):
+        parser.error("--output must end in .webp or .png")
+    try:
+        import cv2
+        import numpy as np
+    except ImportError as exc:
+        sys.exit(f"rectify-board: OpenCV and NumPy are required: {exc}")
+
+    photo = cv2.imread(str(args.photo), cv2.IMREAD_COLOR)  # applies EXIF orientation
+    if photo is None:
+        sys.exit(f"rectify-board: cannot read {args.photo}")
+    pixels = [p for p, _ in args.point]
+    mms = [m for _, m in args.point]
+    ratios = [math.dist(pixels[i], pixels[j]) / math.dist(mms[i], mms[j])
+              for i in range(len(mms)) for j in range(i + 1, len(mms)) if math.dist(mms[i], mms[j]) > 0]
+    if not ratios:
+        parser.error("the --point board positions must differ")
+    photo_px_per_mm = sorted(ratios)[len(ratios) // 2]
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+
+    if args.zoom:
+        zoom_path = args.output.with_name(args.output.stem + "-zoom.png")
+        cv2.imwrite(str(zoom_path), zoom_sheet(cv2, np, photo, pixels, photo_px_per_mm))
+        print(f"zoom: {zoom_path} (tile = 6 mm, grid = 0.5 mm, photo {photo_px_per_mm:.1f} px/mm)")
+        return
+
+    scale, margin = args.px_per_mm, args.margin
+    width, height = args.board
+    target = np.float32([[(mx + margin) * scale, (my + margin) * scale] for mx, my in mms])
+    homography, _ = cv2.findHomography(np.float32(pixels), target, 0)
+    if homography is None:
+        sys.exit("rectify-board: the references do not define a perspective (collinear points?)")
+    mapped = cv2.perspectiveTransform(np.float32(pixels).reshape(-1, 1, 2), homography).reshape(-1, 2)
+    for i, (got, want) in enumerate(zip(mapped, target)):
+        print(f"point {i + 1}: residual {math.dist(got, want) / scale:.2f} mm")
+    size = (round((width + 2 * margin) * scale), round((height + 2 * margin) * scale))
+    flat = cv2.warpPerspective(photo, homography, size, flags=cv2.INTER_LANCZOS4,
+                               borderValue=(255, 255, 255))
+
+    def box(x, y, w, h):
+        return (round((x + margin) * scale), round((y + margin) * scale),
+                round((x + w + margin) * scale), round((y + h + margin) * scale))
+
+    if args.alpha == "none":
+        out = flat
+    else:
+        alpha = np.zeros(flat.shape[:2], np.uint8)
+        if args.alpha == "board":
+            x0, y0, x1, y1 = box(0, 0, width, height)
+            radius = round(args.corner_radius * scale)
+            cv2.rectangle(alpha, (x0 + radius, y0), (x1 - radius, y1), 255, -1)
+            cv2.rectangle(alpha, (x0, y0 + radius), (x1, y1 - radius), 255, -1)
+            for cx, cy in ((x0 + radius, y0 + radius), (x1 - radius, y0 + radius),
+                           (x0 + radius, y1 - radius), (x1 - radius, y1 - radius)):
+                cv2.circle(alpha, (cx, cy), radius, 255, -1)
+        else:
+            solid = (flat.min(axis=2) < 235).astype(np.uint8) * 255
+            solid = cv2.morphologyEx(solid, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
+            count, labels, stats, _ = cv2.connectedComponentsWithStats(solid)
+            if count < 2:
+                sys.exit("rectify-board: no foreground found for --alpha white")
+            largest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+            contours, _ = cv2.findContours((labels == largest).astype(np.uint8) * 255,
+                                           cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+            cv2.drawContours(alpha, contours, -1, 255, -1)
+        for keep in args.keep:
+            x0, y0, x1, y1 = box(*keep)
+            cv2.rectangle(alpha, (x0, y0), (x1, y1), 255, -1)
+        out = cv2.cvtColor(flat, cv2.COLOR_BGR2BGRA)
+        out[:, :, 3] = cv2.GaussianBlur(alpha, (3, 3), 0)
+
+    params = [cv2.IMWRITE_WEBP_QUALITY, 88] if args.output.suffix.lower() == ".webp" else []
+    if not cv2.imwrite(str(args.output), out, params):
+        sys.exit(f"rectify-board: cannot write {args.output}")
+    print(f"image: {args.output} ({size[0]}x{size[1]} px, photo was {photo_px_per_mm:.1f} px/mm)")
+    print(f"image_box: [{-margin:g}, {-margin:g}, {width + 2 * margin:g}, {height + 2 * margin:g}]")
+
+    if args.check:
+        try:
+            import yaml
+        except ImportError:
+            sys.exit("rectify-board: --check needs PyYAML")
+        part = yaml.safe_load(args.check.read_text(encoding="utf-8"))
+        check = flat.copy()
+        for pin_id, pin in (part.get("pins") or {}).items():
+            px = (round((pin["at"][0] + margin) * scale), round((pin["at"][1] + margin) * scale))
+            cv2.circle(check, px, max(4, round(0.55 * scale)), (255, 0, 255), 2)
+            cv2.putText(check, str(pin_id), (px[0] + 6, px[1] - 6), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.35, (255, 0, 255), 1)
+        for got in mapped:
+            cv2.drawMarker(check, (round(got[0]), round(got[1])), (0, 200, 255), cv2.MARKER_CROSS, 16, 2)
+        check_path = args.output.with_name(args.output.stem + "-check.png")
+        cv2.imwrite(str(check_path), check)
+        print(f"check: {check_path}")
+
+
+if __name__ == "__main__":
+    main()
