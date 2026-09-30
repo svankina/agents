@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""Render a D2 diagram to report-ready SVG plus a PNG preview for review."""
+
+import argparse
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+HOUSE = (Path(__file__).resolve().parent.parent
+         / "shared/skills/drawing-diagrams/assets/house.d2")
+WIDE_PX = 1200
+
+EPILOG = f"""\
+The house style ({HOUSE}) is prepended to the source
+in one file, because D2 scopes globs from imports to the imported file.
+Error locations are mapped back to INPUT.d2 or house.d2.
+
+Outputs, next to OUTPUT.svg:
+  OUTPUT.svg  no XML tag, IDs salted with the output stem: paste it inline
+              into report HTML. Remote icons are bundled into the file.
+  OUTPUT.png  headless-Chrome preview at 1:1. Open it and review the layout
+              before publishing.
+
+Exit status: 0 rendered, 1 D2 or preview failed, 2 usage or missing tool.
+Requires d2 on PATH or at ~/go/bin/d2 (go install github.com/d2lang/d2@latest)
+and google-chrome or chromium for the preview.
+"""
+
+
+def die(message, code=2):
+    print(f"draw-diagram: {message}", file=sys.stderr)
+    sys.exit(code)
+
+
+def find_d2():
+    found = shutil.which("d2")
+    if found:
+        return found
+    fallback = Path.home() / "go/bin/d2"
+    if fallback.is_file() and os.access(fallback, os.X_OK):
+        return str(fallback)
+    die("d2 not found; install it with: go install github.com/d2lang/d2@latest")
+
+
+def find_chrome():
+    for name in ("google-chrome", "chromium", "chromium-browser"):
+        found = shutil.which(name)
+        if found:
+            return found
+    die("google-chrome or chromium is required for the preview (or pass --no-preview)")
+
+
+def remap(stderr, combined, source, house_lines):
+    """Point D2 diagnostics at the file the author edits."""
+    pattern = re.compile(re.escape(str(combined)) + r":(\d+):(\d+)")
+
+    def replace(match):
+        line, column = int(match.group(1)), match.group(2)
+        if line > house_lines:
+            return f"{source}:{line - house_lines}:{column}"
+        return f"{HOUSE}:{line}:{column}"
+
+    return pattern.sub(replace, stderr).replace(str(combined), str(source))
+
+
+def svg_size(svg):
+    match = re.search(r'viewBox="[-\d.]+ [-\d.]+ ([\d.]+) ([\d.]+)"', svg.read_text(encoding="utf-8"))
+    if not match:
+        die(f"{svg}: no viewBox in D2 output", 1)
+    return (round(float(match.group(1))), round(float(match.group(2))))
+
+
+def preview(svg, png, size):
+    chrome = find_chrome()
+    width, height = size
+    with tempfile.TemporaryDirectory(prefix="draw-diagram-chrome-") as profile:
+        result = subprocess.run(
+            [chrome, "--headless=new", "--disable-gpu", "--hide-scrollbars",
+             "--no-first-run", f"--user-data-dir={profile}",
+             "--force-device-scale-factor=1", f"--window-size={width},{height}",
+             f"--screenshot={png}", svg.resolve().as_uri()],
+            capture_output=True, text=True, timeout=120)
+    if result.returncode != 0 or not png.is_file():
+        die(f"preview failed:\n{result.stderr.strip()}", 1)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="draw-diagram",
+        description="Render INPUT.d2 with the house style (ELK layout) to inline-ready "
+                    "SVG and a PNG preview.",
+        epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("input", type=Path, metavar="INPUT.d2")
+    parser.add_argument("-o", "--output", type=Path, metavar="OUTPUT.svg",
+                        help="default: INPUT with .svg suffix")
+    parser.add_argument("--layout", choices=("elk", "dagre"), default="elk",
+                        help="layout engine (default: elk, orthogonal routing)")
+    parser.add_argument("--sketch", action="store_true", help="hand-drawn rendering")
+    parser.add_argument("--no-house", action="store_true",
+                        help="render the source alone, without the house style")
+    parser.add_argument("--no-preview", action="store_true", help="skip the PNG preview")
+    args = parser.parse_args()
+
+    source = args.input
+    if not source.is_file():
+        parser.error(f"input not found: {source}")
+    output = args.output or source.with_suffix(".svg")
+    if output.suffix.lower() != ".svg":
+        parser.error("--output must end in .svg")
+    if output.resolve() == source.resolve():
+        parser.error("output cannot replace the source")
+    if not args.no_house and not HOUSE.is_file():
+        die(f"house style missing: {HOUSE}")
+    d2 = find_d2()
+
+    house = "" if args.no_house else HOUSE.read_text(encoding="utf-8")
+    if house and not house.endswith("\n"):
+        house += "\n"
+    house_lines = house.count("\n")
+    # Stay beside the source so its relative imports and icon paths resolve.
+    fd, combined_name = tempfile.mkstemp(prefix=f".{source.stem}.", suffix=".d2",
+                                         dir=source.resolve().parent)
+    combined = Path(combined_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(house + source.read_text(encoding="utf-8"))
+        command = [d2, "--layout", args.layout, "--pad", "24", "--scale", "1",
+                   "--no-xml-tag", "--omit-version", "--salt", output.stem]
+        if args.sketch:
+            command.append("--sketch")
+        result = subprocess.run([*command, str(combined), str(output)],
+                                capture_output=True, text=True)
+    finally:
+        combined.unlink(missing_ok=True)
+    if result.returncode != 0:
+        sys.stderr.write(remap(result.stderr, combined, source, house_lines))
+        sys.exit(1)
+
+    size = svg_size(output)
+    print(f"svg: {output} ({size[0]}x{size[1]} px)")
+    if not args.no_preview:
+        png = output.with_suffix(".png")
+        preview(output, png, size)
+        print(f"preview: {png}")
+    if size[0] > WIDE_PX:
+        print(f"warning: wider than {WIDE_PX} px; text shrinks in a report column. "
+              "Try direction: down, fewer nodes per rank, or split the diagram.",
+              file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,42 @@
+# House style, prepended to every diagram by draw-diagram.
+# Globs must share a file with the shapes they style: D2 scopes imported globs.
+vars: {
+  d2-config: {
+    theme-overrides: {
+      N1: "#0f172a"
+      N2: "#334155"
+      N3: "#64748b"
+      N4: "#94a3b8"
+      N5: "#cbd5e1"
+      N6: "#e2e8f0"
+      N7: "#ffffff"
+      B1: "#334155"
+      B2: "#475569"
+      B3: "#94a3b8"
+      B4: "#e2e8f0"
+      B5: "#f1f5f9"
+      B6: "#ffffff"
+      AA2: "#4f46e5"
+      AA4: "#c7d2fe"
+      AA5: "#eef2ff"
+      AB4: "#bae6fd"
+      AB5: "#f0f9ff"
+    }
+  }
+}
+
+**.style.border-radius: 8
+(** -> **)[*].style.stroke-width: 2
+
+classes: {
+  changed: {style: {fill: "#fef3c7"; stroke: "#d97706"; stroke-width: 3}}
+  added: {style: {fill: "#dcfce7"; stroke: "#16a34a"; stroke-width: 3}}
+  removed: {style: {fill: "#fee2e2"; stroke: "#dc2626"; stroke-dash: 4; font-color: "#991b1b"}}
+  external: {style: {fill: "#f8fafc"; stroke: "#94a3b8"; stroke-dash: 3; font-color: "#64748b"}}
+  focus: {style: {fill: "#eef2ff"; stroke: "#4f46e5"; stroke-width: 3}}
+  store: {shape: cylinder}
+  queue: {shape: queue}
+  person: {shape: person}
+  hot: {style: {stroke: "#dc2626"; stroke-width: 3}}
+  async: {style: {stroke-dash: 4}}
+}

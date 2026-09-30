@@ -53,9 +53,9 @@ Draw a diagram for:
 
 Rules:
 
-- Diagrams must be **self-contained in the HTML**: inline SVG (hand-written or
-  generated), or Mermaid rendered to SVG before serving. No CDN scripts, no
-  external image URLs.
+- Diagrams must be **self-contained in the HTML**: inline SVG rendered with
+  `draw-diagram` (`skill://drawing-diagrams`). No CDN scripts, no external
+  image URLs.
 - Style them like the report: same fonts/palette, color used for meaning
   (green/amber/red, changed-part highlighted), every box labeled with the real
   name (file, service, function) — not "Component A".
