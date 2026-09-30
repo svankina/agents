@@ -24,7 +24,9 @@ OUT = Path(__file__).with_name("out")
 def build_plate():
     plate = Box(PLATE_L, PLATE_W, PLATE_T, align=(Align.MIN, Align.MIN, Align.MIN))
     hole = Pos(HOLE_X, HOLE_Y, PLATE_T / 2) * Cylinder(HOLE_D / 2, PLATE_T)
-    return plate - hole
+    part = plate - hole
+    part.label = "plate"  # viewer legend name; unlabelled solids read "SOLID"
+    return part
 
 
 def main():

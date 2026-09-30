@@ -66,7 +66,8 @@ its `OPERATING.txt` states limits. Set `CAD_WORKBENCH_HOME` only for another eng
 - Name load-bearing parameters and derive dependent dimensions explicitly.
   Use millimeters and document coordinate frames and assembly datums.
 - Prefer part-builder functions with generation/export under a main entrypoint.
-  Keep part identities, labels, and colors through assembly export.
+  Set `part.label` on every exported solid; unlabelled parts appear as
+  "SOLID" in the viewer legend. Keep colors through assembly export.
 - Use feature-based mating where authoritative references exist. Otherwise use
   placements derived from named datums and parameters, not unexplained coordinates.
 - Keep independent parts as separate solids; do not fuse moving parts to pass
@@ -93,9 +94,11 @@ a crash is not a failed assertion. `cad-check --help` shows the spec format.
   An `allowed` overlap needs the actual thread, contact, or deformation reason.
 - Add project-specific scripts only for what the spec cannot express, such as
   sections or motion sweeps. They must print failures and return nonzero.
-- Inspect several three.js views, including an inner or back view, for topology
-  and placement. Images do not verify diameters or depths. State when you did
-  not inspect visually.
+- Open the served viewer before delivery and inspect several views, including
+  an inner or back view, for topology and placement. For assemblies, use the
+  Assembly preset: the legend must list one named row per part, and Explode
+  must move whole parts, not faces. Images do not verify diameters or depths.
+  State when you did not inspect visually.
 - When auditing an existing model, write the spec from the requirements first,
   then run it; do not read expectations out of the model source.
 

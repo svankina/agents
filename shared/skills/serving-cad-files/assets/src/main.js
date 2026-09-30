@@ -216,15 +216,35 @@ let dragging = false;
 let hoverNode = null;                  // highlighted section (or bare mesh)
 const hoverOriginals = new Map();      // mesh -> material(s) displaced by clones
 
-const AUTO_NAME = /^mesh_\d+(_\d+)?$/; // glTF loader ids for unnamed primitives
+// Loader-generated names: glTF ids for unnamed primitives ("mesh_25", "mesh_25_1")
+// and OCCT/XDE label ids that build123d writes as node names ("=>[0:1:1:3]",
+// sanitized by three to "=>0113").
+const AUTO_NAME = /^(mesh_\d+(_\d+)?|=>\[?[\d:]*\]?)$/;
 
-// A name counts only if it isn't loader-generated: bare "mesh_25"/"mesh_25_1",
-// or a primitive-split suffix of the parent ("vertical_post_1-1" -> "…_1").
+// A name counts only if it isn't loader-generated: bare ids, a primitive-split
+// suffix of the parent ("vertical_post_1-1" -> "…_1"), or the parent's own name.
 function isSection(o) {
   if (!o.name || AUTO_NAME.test(o.name)) return false;
   const p = o.parent;
+  if (o.userData.primitive) return false;
   const tail = p && p.name && o.name.startsWith(`${p.name}_`) && o.name.slice(p.name.length + 1);
   return !(tail && /^\d+$/.test(tail));
+}
+
+// GLTFLoader turns one multi-primitive glTF mesh (build123d writes one primitive
+// per BREP face) into a Group of per-primitive Meshes with loader-uniquified
+// names ("SOLID_3", "SOLID_4"…). Make the Group the part: name it after the
+// glTF mesh when its node name is an id, and hide the primitives from naming.
+function namePrimitiveGroups(gltf) {
+  const { associations, json } = gltf.parser;
+  gltf.scene.traverse((group) => {
+    const assoc = associations.get(group);
+    if (!group.isGroup || !assoc || assoc.meshes === undefined || assoc.primitives !== undefined) return;
+    const parts = group.children.filter((c) => associations.get(c)?.meshes === assoc.meshes);
+    if (parts.length < 2) return;
+    for (const part of parts) part.userData.primitive = true;
+    if (!group.name || AUTO_NAME.test(group.name)) group.name = json.meshes[assoc.meshes].name || '';
+  });
 }
 
 // Nearest ancestor (or the mesh itself) with a real name; null for bare geometry.
@@ -232,6 +252,9 @@ function sectionOf(mesh) {
   for (let o = mesh; o && o !== modelRoot; o = o.parent) if (isSection(o)) return o;
   return null;
 }
+
+// Unnamed geometry: a face primitive belongs to its glTF mesh group.
+const partOf = (mesh) => (mesh.userData.primitive ? mesh.parent : mesh);
 
 function highlight(mat) {
   const c = mat.clone();
@@ -280,7 +303,7 @@ function updateHover() {
   // three r166's raycaster ignores object.visible, so hit-test the filtered set.
   const hit = raycaster.intersectObjects(hitMeshes, false)[0]; // non-recursive: skips edges
   const section = hit ? sectionOf(hit.object) : null;
-  const node = section || (hit ? hit.object : null);
+  const node = section || (hit ? partOf(hit.object) : null);
   if (node !== hoverNode) {
     clearHover();
     if (node) setHover(node);
@@ -480,7 +503,7 @@ function preparePresentation() {
   modelRoot.updateMatrixWorld(true);
   const groups = new Map();
   for (const mesh of meshes) {
-    const section = sectionOf(mesh) || mesh;
+    const section = sectionOf(mesh) || partOf(mesh);
     if (!groups.has(section)) groups.set(section, []);
     groups.get(section).push(mesh);
   }
@@ -718,6 +741,7 @@ async function parseModel(file, data) {
   }
   if (ext === 'glb' || ext === 'gltf') {
     const gltf = await new GLTFLoader().parseAsync(data, './');
+    namePrimitiveGroups(gltf);
     return { object: gltf.scene, zUp: false };
   }
   throw new Error(`unsupported format: .${ext}`);

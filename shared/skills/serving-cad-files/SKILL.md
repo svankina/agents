@@ -76,7 +76,9 @@ Iso/Top/Front/Right, Fit, and Grid/Wire/Edges controls remain available.
 - **Assembly:** consistent component colors, numbered callouts and legend,
   visibility controls, and an Explode slider. Separation is an explanatory
   layout, not a motion simulation. Returning to zero restores original poses.
-  Single-component models disable the slider.
+  Single-component models disable the slider. A component is a named node or
+  a whole glTF mesh; build123d's one-primitive-per-face meshes stay one part.
+  Name comes from the part label, so unlabelled build123d solids read "SOLID".
 - **Save PNG:** exports an opaque canvas image without panels or callouts.
   For annotated assembly illustrations, capture the viewer with its callouts.
 - **Open vector drawing:** shown when the publisher attached an SVG sheet.
