@@ -5,12 +5,12 @@ This repository installs OMP instructions and resources. It also preserves histo
 ## Repository layout
 
 - `omp/AGENTS.md` — direct OMP standing instructions and user facts.
-- `home/AGENTS.md` — home project context.
 - `shared/skills/`, `shared/commands/`, `shared/agents/` — resources installed into OMP.
 - `bin/` — executable helpers installed into `~/.local/bin`.
 - `pi/extensions/` — historical Pi coding-agent extensions. See [`pi/extensions/README.md`](pi/extensions/README.md).
 - `pi/prompts/`, `pi/skills/`, `claude/commands/` — preserved historical resources, not installer targets.
 - `omp/extensions/` — standalone OMP extensions; `omp/lib/` contains their shared implementations.
+- `omp/plugins/*/README.md` — setup and operation of each OMP plugin.
 
 ## Configuration
 
@@ -19,9 +19,10 @@ Machine-specific paths and URLs are not hardcoded. Copy [`.env.example`](.env.ex
 ## Default context
 
 `omp/AGENTS.md` is the single direct source for OMP standing instructions and
-user facts. Detailed procedures live in
-[`docs/agent-workflows.md`](docs/agent-workflows.md) and
-[`docs/machine-operations.md`](docs/machine-operations.md), not in every prompt.
+user facts; `omp-install check` fails when it exceeds its line budget.
+Procedures load on demand as skills in `shared/skills/`, helper usage lives in
+each helper's `--help`, and plugin details live in plugin READMEs.
+Plugin tools use `loadMode: "discoverable"` unless most sessions need them.
 
 ## Install OMP resources
 
@@ -33,7 +34,6 @@ The repository defaults to the executable's resolved location; use
 | Source | Installed link |
 | --- | --- |
 | `omp/AGENTS.md` | `~/.omp/agent/AGENTS.md` |
-| `home/AGENTS.md` | `~/AGENTS.md` |
 | `shared/skills/` child directories | `~/.omp/agent/skills/` children |
 | `shared/commands/*.md` | `~/.omp/agent/commands/` children |
 | `shared/agents/*.md` | `~/.omp/agent/agents/` children |
@@ -46,7 +46,8 @@ Foreign files, directories, or links block installation with exit code 2;
 the whole plan is checked before any changes. Missing required instruction
 sources also block installation.
 
-`check` never mutates: exit code 0 means clean, and 1 means drift.
+`check` never mutates: exit code 0 means clean, and 1 means drift or an
+instruction lint failure (`project-map lint` or the global line budget).
 Only dangling links pointing within the corresponding source subtree are pruned
 from OMP resource directories and `~/.local/bin`; foreign links are preserved.
 The installer does not manage OMP configuration, `managed-skills`, extensions,
@@ -153,41 +154,7 @@ public SDK sessions and was verified with stock OMP 18.3.0.
 
 ## Conversation router
 
-Run `conversation` after `omp-install` to talk to existing named agents through
-one lightweight OMP terminal. Use `conversation --pane` for a background Herd
-dock: repeated launches reuse its live pane without changing focus or touching
-other panes. `conversation --print 'Which agents are available?'` runs one
-noninteractive exchange; `--model MODEL` overrides the default configured
-`@smol` role.
-
-Conversation exposes only `list_agents`, `route_request`, and `request_status`.
-It routes by the live named-agent roster and asks when the target is ambiguous;
-it does not create replacement specialists or expose coding tools. New requests
-discover current targets; follow-ups stay bound to the original session.
-Delivery uses the existing receiver-side persistent peer channel, with that
-agent's role and context—not a user turn in its main terminal. Queue acceptance
-is not completion, and a timeout does not cancel remote work or justify a retry.
-
-For responsibilities not apparent from names and project paths, an optional
-`agents.json` in the Conversation state directory holds an array of
-`{"sessionId": "EXACT_SESSION_ID", "description": "Known responsibilities"}`.
-Each roster refresh reads it and matches descriptions to exact live session
-identities. Update entries when an agent starts a new session; descriptions
-never authorize substitution by a similarly named agent. This is a small
-explicit registry, not periodic model-based capability discovery.
-
-The conversation resumes its private transcript under
-`~/src/docked_agents/conversation/sessions`; its working directory is the adjacent
-`workspace`. `CONVERSATION_STATE_DIR` overrides this root and
-`CONVERSATION_PROJECT_ROOT` overrides the roster's default home-directory root.
-Home-wide discovery includes long-running bots under `~/.local/state` as well
-as project agents under `~/src`; set the override to narrow discovery.
-Authentication and configured model roles remain shared with normal OMP.
-A session lock prevents competing writers. The launcher loads its extension
-explicitly and disables automatic extension discovery, built-in tools, skills,
-rules, LSP, title generation, and unrelated autonomous features. Do not globally
-link the router plugin. Keep the terminal running for late replies; a print-mode
-exit with pending work is not evidence that the request failed or completed.
+See [`omp/plugins/conversation-router/README.md`](omp/plugins/conversation-router/README.md).
 
 ## Designer dock
 

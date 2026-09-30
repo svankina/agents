@@ -10,7 +10,11 @@ Existing files and foreign links are conflicts, never overwritten.
 import argparse
 import os
 from pathlib import Path
+import subprocess
 import sys
+
+# Every OMP session loads the global instructions; keep them to rules most sessions need.
+GLOBAL_LINE_BUDGET = 80
 
 
 def link_target(path: Path) -> Path:
@@ -36,12 +40,25 @@ def dock_directories(docks: Path) -> list:
     return directories
 
 
+def instruction_problems(repo: Path, home: Path) -> list:
+    """Global line budget, plus project-map lint for maps every session under ~/src loads."""
+    problems = []
+    lines = len((repo / "omp" / "AGENTS.md").read_text().splitlines())
+    if lines > GLOBAL_LINE_BUDGET:
+        problems.append(f"[budget] omp/AGENTS.md has {lines} lines; limit {GLOBAL_LINE_BUDGET}")
+    tool = repo / "bin" / "project-map"
+    if os.access(tool, os.X_OK):
+        for directory in (repo, home / "src"):
+            if (directory / "AGENTS.md").is_file():
+                result = subprocess.run([str(tool), "lint", str(directory)], capture_output=True, text=True)
+                problems += [f"[lint] {line}" for line in (result.stdout + result.stderr).splitlines()
+                             if line.startswith("FAIL")]
+    return problems
+
+
 def desired_links(repo: Path, home: Path, docks: Path) -> tuple[list, list]:
     omp = home / ".omp" / "agent"
-    links = [
-        (omp / "AGENTS.md", repo / "omp" / "AGENTS.md"),
-        (home / "AGENTS.md", repo / "home" / "AGENTS.md"),
-    ]
+    links = [(omp / "AGENTS.md", repo / "omp" / "AGENTS.md")]
     for _link, source in links:
         if not source.is_file():
             raise FileNotFoundError(f"Required instruction file missing: {source}")
@@ -127,7 +144,10 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"[unlinked] {link} -> {target}")
             for path in orphans:
                 print(f"[orphan] {path}")
-            if conflicts or changes or orphans:
+            problems = instruction_problems(repo, home)
+            for message in problems:
+                print(message)
+            if conflicts or changes or orphans or problems:
                 return 1
         elif conflicts:
             print("Installation blocked; resolve conflicts before retrying. No changes made.")

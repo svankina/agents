@@ -50,7 +50,6 @@ def run(repo, home, *args, expected=0):
 def workspace(tmp_path):
     repo, home = tmp_path / "repo", tmp_path / "home"
     put(repo / "omp" / "AGENTS.md", "OMP instructions\n")
-    put(repo / "home" / "AGENTS.md", "Home instructions\n")
     home.mkdir()
     return repo, home
 
@@ -93,10 +92,7 @@ def test_dock_extensions_install_only_in_docked_agent_directories(workspace, tmp
 def test_instruction_edits_reach_sources_and_reinstall_keeps_links(workspace):
     repo, home = workspace
     run(repo, home)  # No subcommand means install.
-    installed = {
-        home / ".omp/agent/AGENTS.md": repo / "omp/AGENTS.md",
-        home / "AGENTS.md": repo / "home/AGENTS.md",
-    }
+    installed = {home / ".omp/agent/AGENTS.md": repo / "omp/AGENTS.md"}
     for destination, source in installed.items():
         assert destination.is_symlink()
         assert destination.resolve() == source
@@ -147,7 +143,7 @@ def test_new_resources_install_without_touching_other_harnesses(workspace):
     current = snapshot(home)
     assert {path: current[path] for path in protected} == protected
     assert set(current) - set(protected) == {
-        "AGENTS.md", ".omp/agent/AGENTS.md", ".omp/agent/skills",
+        ".omp/agent/AGENTS.md", ".omp/agent/skills",
         ".omp/agent/commands", ".omp/agent/agents", ".local", ".local/bin",
         *resources,
     }
@@ -170,7 +166,7 @@ def test_conflicts_block_entire_plan_without_clobbering(workspace, tmp_path, con
     run(repo, home, "install", expected=2)
     assert snapshot(home) == before
     assert foreign.read_text() == "private content\n"
-    assert not (home / "AGENTS.md").exists()
+    assert not (home / ".omp/agent/AGENTS.md").exists()
 
 
 def test_owned_stale_links_repair_but_repo_prefix_neighbors_block(workspace, tmp_path):
@@ -183,7 +179,6 @@ def test_owned_stale_links_repair_but_repo_prefix_neighbors_block(workspace, tmp
     neighbor = put(tmp_path / "repo-neighbor/review.md", "foreign command\n")
     # Relative targets must be classified using their destination directory.
     link(destination, os.path.relpath(neighbor, destination.parent))
-    (home / "AGENTS.md").unlink()
     before = snapshot(home)
     run(repo, home, "install", expected=2)
     assert snapshot(home) == before
@@ -230,7 +225,6 @@ def test_check_never_installs_repairs_or_creates_directories(workspace):
     run(repo, home, "check", expected=1)
     assert snapshot(home) == {}
     run(repo, home)
-    (home / "AGENTS.md").unlink()
     omp = home / ".omp/agent/AGENTS.md"
     omp.unlink()
     link(omp, repo / "old/AGENTS.md")
@@ -241,12 +235,21 @@ def test_check_never_installs_repairs_or_creates_directories(workspace):
     run(repo, home, "check")
 
 
-@pytest.mark.parametrize("missing", ["omp/AGENTS.md", "home/AGENTS.md"])
-def test_missing_required_instructions_block_without_broken_links(workspace, missing):
+def test_missing_required_instructions_block_without_broken_links(workspace):
     repo, home = workspace
-    (repo / missing).unlink()
+    (repo / "omp/AGENTS.md").unlink()
     put(repo / "shared/commands/review.md")
     run(repo, home, "install", expected=2)
     assert snapshot(home) == {}
     run(repo, home, "check", expected=1)
     assert snapshot(home) == {}
+
+
+def test_check_fails_when_global_instructions_exceed_budget(workspace):
+    repo, home = workspace
+    run(repo, home)
+    put(repo / "omp/AGENTS.md", "rule\n" * 80)
+    run(repo, home, "check")
+    put(repo / "omp/AGENTS.md", "rule\n" * 81)
+    result = run(repo, home, "check", expected=1)
+    assert "[budget]" in result.stdout

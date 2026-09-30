@@ -32,7 +32,13 @@ export default function herdmonDispatch(pi: ExtensionAPI) {
     return current;
   };
   pi.setLabel("herdmon Dispatch");
-  pi.on("session_start", (_event, ctx) => { if (enabled(ctx)) runtime(ctx).start(); });
+  // Other sessions never see the tool: it stays inactive unless this is the coordinator.
+  pi.on("session_start", async (_event, ctx) => {
+    if (!enabled(ctx)) return;
+    runtime(ctx).start();
+    const active = pi.getActiveTools();
+    if (!active.includes("herdmon_dispatch")) await pi.setActiveTools([...active, "herdmon_dispatch"]);
+  });
   // Merely switching away must not interrupt sessions or falsely fail ongoing work.
   pi.on("session_shutdown", async (_event, ctx) => {
     if (!enabled(ctx)) return;
@@ -40,7 +46,7 @@ export default function herdmonDispatch(pi: ExtensionAPI) {
     if (current) { await current.close(); runtimes.delete(directory); }
   });
   pi.registerTool({
-    name: "herdmon_dispatch", label: "herdmon Dispatch", loadMode: "essential", approval: "exec",
+    name: "herdmon_dispatch", label: "herdmon Dispatch", loadMode: "essential", defaultInactive: true, approval: "exec",
     description: "Coordinator-only explicitly scoped durable dispatch. scope launches bounded independent SDK workers in separate feature worktrees; dependencies wait for reviewed integrated completion. rebase rebases stopped ready/integrating worker work onto its scoped local target without fetching, merging, or pushing, preserves immutable original handoff identities, and invalidates review and verification for fresh integration review. Conflicted rebases remain blocked until the coordinator resolves the saved worktree and explicitly recovers its recorded rebase intent. integrating records your review but NEVER merges. verify runs a real combined-result argv command, completed accepts only integrated commits and successful verification at the current target HEAD. block records blockers on stopped work. Never classify arbitrary chat as dispatch and never auto-merge.",
     parameters: dispatchParameters,
     async execute(_callId, rawArgs: unknown, _signal, _update, ctx) {

@@ -328,7 +328,7 @@ export default function peersExtension(pi: ExtensionAPI) {
 	const definition: ToolDefinition<typeof parameters> & { interruptible(params: Partial<PeersParams>): boolean } = {
 		name: "peers",
 		label: "Peers",
-		loadMode: "essential",
+		loadMode: "discoverable",
 		approval: "read",
 		interruptible: args => args.op === "wait",
 		parameters,

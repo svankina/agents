@@ -8,9 +8,9 @@ Remote: `github.com/svankina/agents`. It is not an installable package.
 
 ### Architecture
 
-`bin/omp-install` links the direct `omp/AGENTS.md` into `~/.omp/agent/AGENTS.md`
-and `home/AGENTS.md` into `~/AGENTS.md`. It links shared skills, commands, and
-agent definitions into OMP, and executable helpers into `~/.local/bin`.
+`bin/omp-install` links the direct `omp/AGENTS.md` into `~/.omp/agent/AGENTS.md`.
+It links shared skills, commands, and agent definitions into OMP, and
+executable helpers into `~/.local/bin`.
 It also links `omp/dock-extensions/*.ts` into each Herd-docked agent's working
 directory under `~/src/docked_agents/`, the only per-session install target.
 Source edits take effect through links without generation; run the installer
@@ -21,14 +21,15 @@ extension, or `managed-skills` is managed, and no `CLAUDE.md` alias is installed
 
 - `bin/omp-install`: standard-library Python resource installer and read-only
   `check` command. `tests/`: isolated installer behavior checks.
-- `docs/agent-workflows.md`: on-demand command procedures and source maintenance.
-  `docs/machine-operations.md`: task-specific machine configuration.
+- `shared/skills/maintaining-agent-resources/`: where new guidance belongs,
+  installer and dock-extension procedure. Other procedures are skills too.
+- `omp/plugins/*/README.md`: plugin setup and operation.
 - `pi/extensions/README.md`: historical extension catalog and activation flags;
   read before changing an extension. `pi/prompts/`, `pi/skills/`, and
   `claude/commands/` are also preserved historical resources, not install targets.
-- `omp/AGENTS.md`: standing instructions and user facts. `home/AGENTS.md`:
-  home project context. `shared/skills/`, `shared/commands/`, `shared/agents/`:
-  resources installed into OMP. `omp/extensions/` is configured separately.
+- `omp/AGENTS.md`: standing instructions and user facts, under a line budget.
+  `shared/skills/`, `shared/commands/`, `shared/agents/`: resources installed
+  into OMP. `omp/extensions/` is configured separately.
 - `bin/project-map`: project instruction format checks. `shared/commands/wq.md`:
   wrap-up procedure. `scripts/warpfork/`: terminal session forking.
 

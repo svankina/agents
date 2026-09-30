@@ -1,18 +1,20 @@
+---
+name: machine-operations
+description: Use before Spark (DGX) model, service, or benchmark work, chemistry tooling, GPU driver, clock, or memory changes, workstation compute configuration, or resuming work across Claude usage limits.
+---
+
 # Machine operations
 
-Read this reference before Spark model/service, benchmark, chemistry, driver,
-clock or memory operations, workstation compute configuration, or Claude
-cross-limit resumption. These are recorded configurations, not live probes;
-check current service/config state before changing it.
+These are recorded configurations, not live probes; check current service and
+config state before changing it.
 
 ## Privilege boundary
 
-The workstation has no passwordless sudo: use the parent agent's `psudo`
-handoff procedure in `~/src/agents/docs/agent-workflows.md`. Never request or
-handle a password in chat. Spark has passwordless sudo for its login account:
-the top-level agent runs `ssh spark sudo <cmd>` directly, without `psudo`.
-Subagents must report privileged commands to their parent rather than run
-sudo/psudo themselves. Docker on the workstation needs no sudo.
+The workstation has no passwordless sudo: the parent agent uses the `psudo`
+handoff in the `running-privileged-commands` skill. Spark has passwordless sudo
+for its login account: the top-level agent runs `ssh spark sudo <cmd>` directly,
+without `psudo`. Subagents report privileged commands to their parent rather
+than run sudo/psudo themselves. Docker on the workstation needs no sudo.
 
 ## Spark safety and routing (2026-08-13 to 2026-08-18)
 

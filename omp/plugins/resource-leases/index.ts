@@ -46,7 +46,7 @@ export default function resourceLeases(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "resources",
 		label: "Resources",
-		loadMode: "essential",
+		loadMode: "discoverable",
 		approval: "exec",
 		description:
 			"Acquire owned processes or a dedicated headless browser; list, release, or clean up this session's leases. For browser use op=browser, then attach the existing Eval browser facade with app.cdp_url from the result. Use broker acquisition for persistent processes and GUI applications. Completion requires cleanup. Borrowed user browsers are never killed. Direct unmanaged subprocess/browser launches are outside this plugin's enforcement.",

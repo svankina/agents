@@ -113,7 +113,8 @@ serve-report restart       # stop + start fresh
   Use `serve-report`.
 - **Never** `serve-report stop`/`restart` just to clean up your own report —
   other agents are using the same server. Use `serve-report rm <slug>` (or `gc`).
-- Give the full URL printed by the command, including its selected host,
+- Fetch the published URL and confirm it shows the expected content. Then give
+  the full URL printed by the command, unchanged, including its selected host,
   port, and slug, so the link is directly clickable.
 - Prefer the default symlink mode for reports you may regenerate; use `--copy`
   only when the artifact must survive its source being removed.

@@ -1,36 +1,32 @@
+These standing instructions live in `~/src/agents/omp/AGENTS.md`; edit that
+source with the `maintaining-agent-resources` skill.
+
 ## Working agreements
 
 - Make requested changes in code, not new instructions. Verify the changed
-  behavior and commit only the requested work, ready to push. Do not push
-  without authorization. Preserve unrelated edits and staged work.
+  behavior, then commit the requested work so it is ready to push; an
+  uncommitted change is unfinished. Do not push without authorization.
+  Preserve unrelated edits and staged work.
 - Keep initiative within the requested scope and existing safety boundaries.
   Answer questions and tradeoff discussions directly; do not treat them as
   permission to make unrelated changes.
-- New features use `agent-worktree new <name>`; work in the returned directory.
-  Do not make feature changes in the main checkout.
+- Any new feature or enhancement, however small, starts with
+  `agent-worktree new <name>` before the first edit. Edit, verify, and commit
+  in the printed directory, never in the main checkout.
 - For OMP features, first try a plugin, extension, or skill using existing
-  supported interfaces rather than changing OMP core. Inspect the available
-  hooks and existing examples before choosing an implementation. Change core
-  only when those mechanisms cannot meet the requirements; state the concrete
-  limitation and keep the core change minimal.
-- Use current code, configuration, and focused documentation as evidence.
-  Keep project `AGENTS.md` to current operating constraints, at most 150 lines.
-  Do not turn it into a changelog or repeat global instructions.
+  supported interfaces rather than changing OMP core. Change core only when
+  those mechanisms cannot meet the requirements; state the concrete limitation
+  and keep the core change minimal.
 
 ## Initiative
 
-- Infer intent and scope from the request and the conversation so far, and
-  bias toward action. "Can you…", "I want…", "help me…", "look into…" are
-  instructions to do the work, not invitations to describe it. Do not stop at
-  acknowledging capability, proposing a plan, or offering to continue, and do
-  not settle for a partial result to save effort or tokens.
-- Reversible work, read-only actions, reviews and fixes, and anything the
-  conversation or task already authorized need no further permission. Before
-  asking a question, finish everything already authorized so the user approves
-  a concrete, reviewable result rather than a plan. Ask first only for the
-  irreversible: deleting outside the task, pushing, publishing, spending,
-  privileges, credentials. If blocked, state the exact blocker. Add no
-  unsolicited warnings, disclaimers, or approval steps for hypothetical risk.
+- "Can you…", "I want…", "help me…", "look into…" are instructions to do the
+  work, not invitations to describe it. Do not stop at a plan or an offer.
+- Reversible work, read-only actions, reviews and fixes, and anything already
+  authorized need no further permission. Ask first only for the irreversible:
+  deleting outside the task, pushing, publishing, spending, privileges,
+  credentials. If blocked, state the exact blocker. Add no unsolicited
+  warnings, disclaimers, or approval steps for hypothetical risk.
 - Run the checks the change needs; repeat or broaden them only for new
   failures or unresolved concerns. Do not write tests for reversible,
   low-impact changes that mirror the implementation.
@@ -50,9 +46,9 @@ Use a checklist for resumable state. No emojis.
 
 ## Safety
 
-- Never request passwords in chat. Workstation privileges require a narrow,
-  reviewable `psudo --wait` handoff. Only the parent runs it; subagents report
-  the exact command and reason. Use the least-privileged identity.
+- Never request passwords in chat. Root requires a `psudo --wait` handoff that
+  only the parent agent runs; subagents report the exact command instead.
+  Docker needs no sudo.
 - Wrap CPU/RAM-heavy work in `fair-run`. Cap explicit parallelism at half the
   cores; never allocate more than about 75%. Apply the same limits to workers.
 - Do not steal focus or capture the user's desktop. Use `agent-gui` for visible
@@ -61,51 +57,23 @@ Use a checklist for resumable state. No emojis.
 - Agent shell `rm` deletes permanently; the user's interactive `rm` uses trash.
   Confirm destructive operations unless the user has explicitly authorized them.
 
-## Task-specific procedures
+## Helpers and locations
 
-For user screenshots or pictures, check `~/shared/`, `~/Pictures/`, and
-`~/Pictures/Screenshots/` before asking for an upload or path. Use newest
-modification time to find recent images.
+- Read a helper's `--help` before first use: `agent-worktree`, `fair-run`,
+  `psudo`, `agent-gui`, `agent-shot`, `user-queue`, `homer-notify`.
+- `user-queue add` only for work the user explicitly defers; preserve the
+  wording and report the ID. `homer-notify` only for important events or
+  required user action; report failed delivery.
+- User screenshots and phone-shared files: check `~/shared/`, `~/Pictures/`,
+  and `~/Pictures/Screenshots/` by newest mtime before asking for an upload.
+- Unfamiliar shell shorthand: look it up in `~/src/dotfiles`.
 
-Read only the section needed for the operation in
-`~/src/agents/docs/agent-workflows.md`:
+## User and workstation
 
-| Operation | Section |
-| --- | --- |
-| Edit OMP instructions or installed resources | `source-maintenance` |
-| Privileged handoff | `privileged-commands` |
-| Create, switch, or remove feature worktrees | `feature-worktrees` |
-| Heavy compute | `compute-fairness` |
-| GUI launch or capture | `gui-launches`, `agent-screenshots` |
-| Independent UI/CLI verification | `tester-handoff` |
-| Interpret unfamiliar shell shorthand | `shell-aliases` |
-| Deferred user work | `user-queue` |
-| Android notification | `android-notifications` |
-
-Use the isolated tester when independent verification is useful; do not ask
-the user to test something an agent can exercise. Never include unrelated
-changes merely to satisfy a tester's clean-checkout requirement.
-
-For reports and publication, use the matching `writing-reports` and
-`serving-reports` skills. Publish through the shared server, not a new server.
-Do not restart shared infrastructure for cleanup. Verify the delivered URL
-shows the expected content and return the emitted URL unchanged.
-
-Queue only work the user explicitly defers, not active work or prerequisites.
-Use `user-queue`, preserve the wording, and report its ID. Send Android
-notifications only for important events or required user action; report failed
-delivery honestly.
-
-## User preferences
-
+- Sravan lives in Hyderabad (Asia/Kolkata); use the local `date` for
+  time-sensitive work. Shopping: amazon.in.
 - Public/technical writeups use ASD-STE100: short sentences, one instruction
   per sentence, active voice, no idioms. This does not apply to chat.
-- Lives in Hyderabad, India. Timezone: Asia/Kolkata (IST, UTC+5:30).
-  Use the system's local `date` for time-sensitive work. Shopping: amazon.in.
-
-## Workstation
-
-- Linux, i3, tmux, zsh; no passwordless sudo.
-- Compute GPU: NVIDIA RTX 3090 Ti, 24 GB. Display GPU: AMD RX 580.
-  Use the compute GPU for ML; check `nvidia-smi` before assuming it is busy.
-- CPU: Threadripper 1920X, 12 cores / 24 threads. RAM: 64 GB.
+- Linux, i3, tmux, zsh. Threadripper 1920X (24 threads), 64 GB RAM.
+  ML runs on the RTX 3090 Ti (24 GB; check `nvidia-smi`); the RX 580 drives
+  the display.
