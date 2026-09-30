@@ -97,11 +97,14 @@ export default function peersExtension(pi: ExtensionAPI) {
 	function messageCard(message: PeerMessage, expanded: boolean, theme: Parameters<MessageRenderer>[2], outgoing = false, timestamp?: number) {
 		const color = outgoing ? "success" : "accent";
 		const peer = outgoing ? message.to : message.from;
-		const name = peerLabel(peer);
+		// `herd message` run inside an agent names that agent; delivery stays Herd's, so say "via Herd".
+		const relayed = !outgoing && peer === "external:herd" && message.senderName ? message.senderName : undefined;
+		const name = relayed ?? peerLabel(peer);
 		// ◈ Herd itself, ● this session, ◆ any other agent.
-		const icon = peer === "external:herd" ? "◈" : name === "This agent" ? "●" : "◆";
+		const icon = relayed ? "◆" : peer === "external:herd" ? "◈" : name === "This agent" ? "●" : "◆";
 		const body = new Markdown(message.body.trim(), 1, 0, pi.pi.getMarkdownTheme());
 		const routing = outgoing ? [`to ${message.to}`] : [`from ${message.from}`, `to ${message.to}`];
+		if (relayed && message.senderSessionId) routing.push(`relayed for session ${message.senderSessionId}`);
 		if (message.replyTo) routing.push(`thread ${message.replyTo}`);
 		const meta = [
 			...(message.expectsReply ? [theme.fg("warning", "↩ reply requested")] : []),
@@ -121,13 +124,14 @@ export default function peersExtension(pi: ExtensionAPI) {
 				};
 				const lead = `${border(chars.horizontal)} ${theme.fg("customMessageLabel", "✉")} ${theme.fg("dim", outgoing ? "to" : "from")} `;
 				const withMeta = meta ? ` ${meta} ${border(chars.horizontal)}` : border(chars.horizontal);
+				const via = relayed ? theme.fg("dim", " via Herd") : "";
 				// The chip adds " icon " + " " around the name. Flags and time yield first; the name truncates last.
-				const chipExtra = 4;
+				const chipExtra = 4 + visibleWidth(via);
 				const right = visibleWidth(lead) + chipExtra + visibleWidth(name) + visibleWidth(withMeta) + 2 <= inner ? withMeta : border(chars.horizontal);
 				const label = truncateToWidth(name, Math.max(1, inner - visibleWidth(lead) - chipExtra - visibleWidth(right) - 2));
 				// Default foreground on the selection background: accent-on-selection is unreadable in blue themes.
 				const chip = theme.bg("selectedBg", theme.bold(` ${icon} ${label} `));
-				const left = `${lead}${chip} `;
+				const left = `${lead}${chip}${via} `;
 				const rule = border(chars.horizontal.repeat(Math.max(0, inner - visibleWidth(left) - visibleWidth(right))));
 				const gutter = theme.fg(color, "▎");
 				const rows = ["", ...body.render(inner - 1).map(line => gutter + line)];
