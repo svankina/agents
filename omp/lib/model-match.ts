@@ -14,8 +14,8 @@ const INNER_SKIP_COST = 10;
 const PIECE_COST = 1;
 /** A piece that stops short of its word's end. */
 const PARTIAL_WORD_COST = 0.5;
-/** Words left after the match: `op5` should list `opus-5` before `opus-5-5`. */
-const TRAILING_WORD_COST = 0.5;
+/** Build dates (`20250805`) are this long; they break ties after the version. */
+const DATE_DIGITS = 6;
 /** Plain substring anywhere in the compact text ranks after every prefix chain. */
 const SUBSTRING_COST = 20;
 const MIN_SUBSTRING_LENGTH = 3;
@@ -25,7 +25,7 @@ function prefixChainCost(token: string, words: string[]): number | undefined {
 	const width = words.length + 1;
 	const memo = new Map<number, number | undefined>();
 	const solve = (offset: number, next: number): number | undefined => {
-		if (offset === token.length) return (words.length - next) * TRAILING_WORD_COST;
+		if (offset === token.length) return 0;
 		const key = offset * width + next;
 		if (memo.has(key)) return memo.get(key);
 		let best: number | undefined;
@@ -56,10 +56,29 @@ function tokenCost(token: string, words: string[]): number | undefined {
 	return substring === undefined ? chain : Math.min(chain, substring);
 }
 
+/** Positive when `a` is the newer model: version numbers descending, then build date. */
+function compareNewest(aWords: string[], bWords: string[]): number {
+	const split = (words: string[]) => {
+		const numbers = words.filter(word => /^[0-9]+$/.test(word));
+		return {
+			version: numbers.filter(word => word.length < DATE_DIGITS).map(Number),
+			date: Number(numbers.find(word => word.length >= DATE_DIGITS) ?? 0),
+		};
+	};
+	const a = split(aWords);
+	const b = split(bWords);
+	for (let index = 0; index < Math.max(a.version.length, b.version.length); index++) {
+		const diff = (a.version[index] ?? -1) - (b.version[index] ?? -1);
+		if (diff !== 0) return diff;
+	}
+	return a.date - b.date;
+}
+
 /**
- * Items whose text matches every query token, cheapest first; ties keep input
- * order. Whitespace separates tokens; punctuation inside one is ignored, so
- * `5-5` and `55` are the same token.
+ * Items whose text matches every query token, cheapest first; equally good
+ * matches list the newest model first, then keep input order. Whitespace
+ * separates tokens; punctuation inside one is ignored, so `5-5` and `55` are
+ * the same token.
  */
 export function rankByAbbreviation<T>(items: readonly T[], query: string, textOf: (item: T) => string): T[] {
 	const tokens = query
@@ -68,7 +87,7 @@ export function rankByAbbreviation<T>(items: readonly T[], query: string, textOf
 		.map(token => token.replace(/[^a-z0-9]/g, ""))
 		.filter(token => token.length > 0);
 	if (tokens.length === 0) return [...items];
-	const ranked: { item: T; cost: number; order: number }[] = [];
+	const ranked: { item: T; words: string[]; cost: number; order: number }[] = [];
 	items.forEach((item, order) => {
 		// Alphanumeric runs, split again at letter/digit boundaries: `gpt-4o` → gpt, 4, o.
 		const words = textOf(item).toLowerCase().match(/[a-z]+|[0-9]+/g) ?? [];
@@ -78,8 +97,8 @@ export function rankByAbbreviation<T>(items: readonly T[], query: string, textOf
 			if (cost === undefined) return;
 			total += cost;
 		}
-		ranked.push({ item, cost: total, order });
+		ranked.push({ item, words, cost: total, order });
 	});
-	ranked.sort((a, b) => a.cost - b.cost || a.order - b.order);
+	ranked.sort((a, b) => a.cost - b.cost || compareNewest(b.words, a.words) || a.order - b.order);
 	return ranked.map(entry => entry.item);
 }
