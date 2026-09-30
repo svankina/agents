@@ -2,6 +2,9 @@
 __pycache__/
 *.py[cod]
 
+# Local link to OMP packages for bun tests (see AGENTS.md Verify)
+node_modules/
+
 # Local machine-specific config (real values live here, never committed)
 .env
 .env.local

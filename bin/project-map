@@ -2,9 +2,10 @@
 # project-map — curated per-project agent context in AGENTS.md.
 #
 # The embedded Project map section is the distilled, auto-read project brief:
-# architecture, where-things-live, invariants, and dated decisions. The WHOLE
-# AGENTS.md is hard-capped so it stays curated. Existing NOTES.md files are
-# optional archives. Review age comes from git, not from an in-file marker.
+# architecture, where-things-live, verify commands, invariants, and dated
+# decisions. The WHOLE AGENTS.md is hard-capped so it stays curated. Existing
+# NOTES.md files are optional archives. Review age comes from git, not from an
+# in-file marker.
 #
 # Usage:
 #   project-map owned [DIR]    exit 0 if DIR is a repo the user owns
@@ -18,7 +19,7 @@ STALE_COMMITS=30
 STALE_DAYS=60
 PROJECT_MAP_HEADING="## Project map"
 EMPTY_COMMENT="<!-- project-map-empty: Add only facts for which the litmus is yes: would a fresh agent work incorrectly or slowly without this? Remove this comment when the map has content. -->"
-SECTIONS=("### Architecture" "### Where things live" "### Invariants & gotchas" "### Decisions")
+SECTIONS=("### Architecture" "### Where things live" "### Verify" "### Invariants & gotchas" "### Decisions")
 # Machine-wide rules already in the generated global instructions. Restating
 # them per repo is duplication, never repo context.
 GLOBAL_FAIL='psudo|serve-report|fair-run|trash-put|agent-worktree|python3 -m http\.server|:8789'
@@ -94,6 +95,8 @@ $EMPTY_COMMENT
 
 ### Where things live
 
+### Verify
+
 ### Invariants & gotchas
 
 ### Decisions
@@ -123,7 +126,19 @@ EOF
     actual_sections=$(awk '/^### / { print }' "$section_file")
     expected_sections=$(printf '%s\n' "${SECTIONS[@]}")
     if [ "$actual_sections" != "$expected_sections" ]; then
-      echo "FAIL $agents: Project map must contain exactly the four required ### subsections in contract order" >&2
+      echo "FAIL $agents: Project map must contain exactly these ### subsections in order: $(printf '%s; ' "${SECTIONS[@]}")" >&2
+      rc=1
+    fi
+
+    # Exact build/test/smoke commands save every agent a guess. A freshly
+    # initialised map (still carrying the empty marker) is exempt.
+    if ! grep -qF "$EMPTY_COMMENT" "$section_file" && ! awk '
+      $0 == "### Verify" { in_verify = 1; next }
+      in_verify && /^### / { exit }
+      in_verify && NF { found = 1 }
+      END { exit !found }
+    ' "$section_file"; then
+      echo "FAIL $agents: ### Verify is empty — list the exact commands that prove a change works (test, build, smoke), or state that none exist" >&2
       rc=1
     fi
 

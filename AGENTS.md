@@ -33,6 +33,15 @@ extension, or `managed-skills` is managed, and no `CLAUDE.md` alias is installed
 - `bin/project-map`: project instruction format checks. `shared/commands/wq.md`:
   wrap-up procedure. `scripts/warpfork/`: terminal session forking.
 
+### Verify
+
+- Python helpers and installer: `python3 -m pytest -q tests`.
+- Extensions and plugins: `bun test tests`. First link the OMP packages, since
+  the repo has no manifest: `mkdir -p node_modules && ln -sfn
+  ~/.bun/install/global/node_modules/@oh-my-pi node_modules/@oh-my-pi`.
+- Install state and every instruction lint: `bin/omp-install check`.
+- One repository map: `bin/project-map lint <repo>`.
+
 ### Invariants & gotchas
 
 - This repository is public. Use home-relative paths and environment variables;
@@ -52,8 +61,6 @@ extension, or `managed-skills` is managed, and no `CLAUDE.md` alias is installed
 - OMP's shared fuzzy matcher (`ui.select`, `/model`) cannot match cross-word
   abbreviations such as `op55` → `claude-opus-5-5`. Model pickers here filter
   with `omp/lib/model-match.ts` in a `ui.custom` component instead.
-- Tests that import `@oh-my-pi/*` values need `node_modules/@oh-my-pi` linked
-  to `~/.bun/install/global/node_modules/@oh-my-pi`; the repo has no manifest.
 
 ### Decisions
 
