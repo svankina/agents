@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext, MessageRenderer, ToolDefinition } from "@oh-my-pi/pi-coding-agent";
+import { Markdown, truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
 import {
 	PeerNetwork,
 	parsePeerId,
@@ -88,32 +89,46 @@ export default function peersExtension(pi: ExtensionAPI) {
 		return `${name || peer.localId} · ${peer.instanceId.slice(0, 8)}`;
 	}
 
-	function messageCard(message: PeerMessage, expanded: boolean, theme: Parameters<MessageRenderer>[2], outgoing = false) {
-		const card = new pi.pi.Container();
+	/**
+	 * Rounded card with the sender in the top rule, a Markdown body, and time/flags on the right.
+	 * Every row is padded to the full width so the background fill and right border line up.
+	 */
+	function messageCard(message: PeerMessage, expanded: boolean, theme: Parameters<MessageRenderer>[2], outgoing = false, timestamp?: number) {
 		const color = outgoing ? "success" : "accent";
-		const heading = `${theme.fg(color, outgoing ? "↗ TO" : "↙ FROM")}  ${theme.bold(peerLabel(outgoing ? message.to : message.from))}`;
-		const flags = [
+		const body = new Markdown(message.body.trim(), 1, 0, pi.pi.getMarkdownTheme());
+		const routing = outgoing ? [`to ${message.to}`] : [`from ${message.from}`, `to ${message.to}`];
+		if (message.replyTo) routing.push(`thread ${message.replyTo}`);
+		const meta = [
 			...(message.expectsReply ? ["reply requested"] : []),
 			...(message.wakeRelay ? ["wake relay"] : []),
-		];
-		card.addChild(new pi.pi.Text(`${heading}${flags.length ? theme.fg("dim", `  ·  ${flags.join(" · ")}`) : ""}\n`, 0, 0));
-		card.addChild(new pi.pi.Text(message.body, 0, 0));
-		if (expanded) {
-			const routing = outgoing ? [`To: ${message.to}`] : [`From: ${message.from}`, `To: ${message.to}`];
-			if (message.replyTo) routing.push(`Thread: ${message.replyTo}`);
-			card.addChild(new pi.pi.Text(theme.fg("dim", `\n${routing.join("\n")}`), 0, 0));
-		}
+			...(timestamp ? [new Date(timestamp).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })] : []),
+		].join(" · ");
 		return {
-			invalidate() { card.invalidate(); },
+			invalidate() { body.invalidate(); },
 			render(width: number) {
-				if (width < 5) return card.render(width);
 				const chars = theme.boxRound;
 				const border = (text: string) => theme.fg(color, text);
-				const rule = chars.horizontal.repeat(width - 2);
+				const inner = width - 2;
+				if (inner < 16) return body.render(Math.max(1, width));
+				const fill = (line: string) => {
+					const fitted = truncateToWidth(line, inner);
+					return border(chars.vertical) + theme.bg("customMessageBg", fitted + " ".repeat(Math.max(0, inner - visibleWidth(fitted)))) + border(chars.vertical);
+				};
+				const name = peerLabel(outgoing ? message.to : message.from);
+				const lead = `${border(chars.horizontal)} ${theme.fg(color, outgoing ? "→" : "←")} ${theme.fg("dim", outgoing ? "to" : "from")} `;
+				const withMeta = meta ? ` ${theme.fg("dim", meta)} ${border(chars.horizontal)}` : border(chars.horizontal);
+				// Time and flags yield first; the sender name is truncated only when it alone overflows.
+				const right = visibleWidth(lead) + visibleWidth(name) + visibleWidth(withMeta) + 2 <= inner ? withMeta : border(chars.horizontal);
+				const label = truncateToWidth(name, Math.max(1, inner - visibleWidth(lead) - visibleWidth(right) - 2));
+				const left = `${lead}${theme.bold(theme.fg(color, label))} `;
+				const rule = border(chars.horizontal.repeat(Math.max(0, inner - visibleWidth(left) - visibleWidth(right))));
+				const rows = ["", ...body.render(inner)];
+				if (expanded) rows.push("", ...routing.map(line => ` ${theme.fg("dim", line)}`));
+				rows.push("");
 				return [
-					border(chars.topLeft + rule + chars.topRight),
-					...card.render(width - 4).map(line => border(chars.vertical) + theme.bg("customMessageBg", ` ${line} `) + border(chars.vertical)),
-					border(chars.bottomLeft + rule + chars.bottomRight),
+					border(chars.topLeft) + left + rule + right + border(chars.topRight),
+					...rows.map(fill),
+					border(chars.bottomLeft + chars.horizontal.repeat(inner) + chars.bottomRight),
 				];
 			},
 		};
@@ -121,7 +136,7 @@ export default function peersExtension(pi: ExtensionAPI) {
 
 	pi.registerMessageRenderer<PeerMessage>("peer-message", (message, options, theme) => {
 		if (!message.details) return undefined;
-		return messageCard(message.details, options.expanded, theme);
+		return messageCard(message.details, options.expanded, theme, false, message.timestamp);
 	});
 
 	function descriptor(connection: Connection): PeerDescriptor {
