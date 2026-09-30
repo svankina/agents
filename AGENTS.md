@@ -28,8 +28,7 @@ extension, or `managed-skills` is managed, and no `CLAUDE.md` alias is installed
   `claude/commands/` are also preserved historical resources, not install targets.
 - `omp/AGENTS.md`: standing instructions and user facts. `home/AGENTS.md`:
   home project context. `shared/skills/`, `shared/commands/`, `shared/agents/`:
-  resources installed into OMP. `omp/extensions/` is configured separately;
-  `omp/dock-extensions/` is installed per docked-agent cwd, never machine-wide.
+  resources installed into OMP. `omp/extensions/` is configured separately.
 - `bin/project-map`: project instruction format checks. `shared/commands/wq.md`:
   wrap-up procedure. `scripts/warpfork/`: terminal session forking.
 
@@ -52,7 +51,5 @@ extension, or `managed-skills` is managed, and no `CLAUDE.md` alias is installed
 
 ### Decisions
 
-OMP policies and user facts have one direct source. Historical Pi and Claude
-resources remain available but are not installed. Detailed procedures stay
+OMP policies and user facts have one direct source. Detailed procedures stay
 outside automatically loaded context. Historical plans are not current contracts.
-Current behavior belongs in code and focused documentation, not catch-all notes.

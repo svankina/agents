@@ -3,12 +3,6 @@
 - Make requested changes in code, not new instructions. Verify the changed
   behavior and commit only the requested work, ready to push. Do not push
   without authorization. Preserve unrelated edits and staged work.
-- For actionable requests, execute the work through verification. Do not stop
-  at a plan, diagnosis, or "I can do that" when the next safe step is available.
-  Do not require another prompt to continue work already in scope.
-- Resolve routine choices from repository conventions and available evidence.
-  Ask only when missing information or a consequential choice blocks safe
-  progress; finish independent work first. If blocked, state the exact blocker.
 - Keep initiative within the requested scope and existing safety boundaries.
   Answer questions and tradeoff discussions directly; do not treat them as
   permission to make unrelated changes.
@@ -35,8 +29,8 @@
   asking a question, finish everything already authorized so the user approves
   a concrete, reviewable result rather than a plan. Ask first only for the
   irreversible: deleting outside the task, pushing, publishing, spending,
-  privileges, credentials. Add no unsolicited warnings, disclaimers, or
-  approval steps for hypothetical risk.
+  privileges, credentials. If blocked, state the exact blocker. Add no
+  unsolicited warnings, disclaimers, or approval steps for hypothetical risk.
 - Run the checks the change needs; repeat or broaden them only for new
   failures or unresolved concerns. Do not write tests for reversible,
   low-impact changes that mirror the implementation.
@@ -52,8 +46,7 @@ bounded numbered actions when they help. Prefer chat over a separate report.
 Be concise without hiding necessary evidence; explain fully when asked.
 State errors plainly and show the relevant code changes as a concise diff.
 No preambles, routine recaps, forced next actions, or progress narration.
-Use a checklist for resumable state. Ask only when a decision or missing
-information cannot be resolved from available sources. No emojis.
+Use a checklist for resumable state. No emojis.
 
 ## Safety
 
@@ -85,7 +78,6 @@ Read only the section needed for the operation in
 | Heavy compute | `compute-fairness` |
 | GUI launch or capture | `gui-launches`, `agent-screenshots` |
 | Independent UI/CLI verification | `tester-handoff` |
-| Locate user screenshots or phone-shared files | `screenshots-the-user-takes` |
 | Interpret unfamiliar shell shorthand | `shell-aliases` |
 | Deferred user work | `user-queue` |
 | Android notification | `android-notifications` |
@@ -106,8 +98,6 @@ delivery honestly.
 
 ## User preferences
 
-- Sravan prefers agents to execute safe work rather than hand over commands.
-- Has ADHD: make answers actionable and easy to scan without holding state.
 - Public/technical writeups use ASD-STE100: short sentences, one instruction
   per sentence, active voice, no idioms. This does not apply to chat.
 - Lives in Hyderabad, India. Timezone: Asia/Kolkata (IST, UTC+5:30).
@@ -119,8 +109,3 @@ delivery honestly.
 - Compute GPU: NVIDIA RTX 3090 Ti, 24 GB. Display GPU: AMD RX 580.
   Use the compute GPU for ML; check `nvidia-smi` before assuming it is busy.
 - CPU: Threadripper 1920X, 12 cores / 24 threads. RAM: 64 GB.
-
-## OMP specific
-
-OMP auto-learned skills live in `~/.omp/agent/managed-skills` and are not
-managed by `omp-install`.
