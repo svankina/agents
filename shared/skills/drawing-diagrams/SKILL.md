@@ -1,7 +1,7 @@
 ---
 name: drawing-diagrams
-description: Draw architecture, flow, sequence, state, before/after, or timeline diagrams for served HTML reports with D2 and the house style. Read before drawing any report diagram; charts of data are out of scope.
-compatibility: Requires draw-diagram (bin/ of ~/src/agents), d2 on PATH or ~/go/bin/d2, and google-chrome or chromium.
+description: Draw architecture, flow, sequence, state, before/after, or timeline diagrams for served HTML reports with D2 and the house style, and realistic to-scale hardware wiring pictures (boards, pins, wires) with draw-wiring. Read before drawing any report diagram; charts of data are out of scope.
+compatibility: Requires draw-diagram and draw-wiring (bin/ of ~/src/agents), d2 on PATH or ~/go/bin/d2, PyYAML for draw-wiring, OpenCV for photo preparation, and google-chrome or chromium.
 ---
 
 # Drawing diagrams
@@ -115,6 +115,32 @@ after: After {
 - State machine: one node per state, edge labels are events.
 - Icons: `icon: https://icons.terrastruct.com/...` or a local path. Rendering
   downloads remote icons once and embeds them.
+
+## Hardware wiring pictures
+
+For "which hole does this wire go in", do not use D2 boxes. Use `draw-wiring`
+(see `--help`), which composes to-scale parts from a YAML spec. The spec is the
+only source for wires, pins, and callouts.
+
+1. **One part file per board.** It holds a straight top-down image and the pin
+   positions in mm. Take the pin geometry from the datasheet or dimension drawing,
+   and the pin names from the official pinout.
+   - **Image source:** prefer the user's own photo. Straighten it with OpenCV,
+     using a homography on four known features such as mounting holes. Use the
+     vendor's top-down render only when the user has no usable photo.
+   - **Photo edits:** edit the image to match the real state, for example jumper
+     positions. Remove stray wires, then state what you changed in the part
+     file's `source`.
+2. **Check the alignment.** Render with `--debug` and zoom into the preview.
+   Every magenta pin dot must sit on its hole or header pin.
+3. **Wires.** Draw each wire in the colour of the real wire. Give it `via`
+   points so that parallel wires stay apart. Callout titles come from the part
+   file (`Pin 34 · GP28`). Add the position in words, for example "right column,
+   7th from top", and the destination.
+4. **Review.** Apply the review checklist to the preview. Callout boxes must not
+   cover wires. A leader may cross a wire, because it has a white outline.
+5. **Storage.** Keep vendor artwork and user photos with the project, not in
+   this public repository.
 
 ## Gotchas
 

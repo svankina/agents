@@ -1,0 +1,385 @@
+#!/usr/bin/env python3
+"""Render a to-scale, realistic hardware wiring picture from a YAML spec."""
+
+import argparse
+import base64
+import html
+import math
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+try:
+    import yaml
+except ImportError:  # pragma: no cover - depends on the machine
+    sys.exit("draw-wiring: PyYAML is required (python3 -m pip install pyyaml)")
+
+WIRE_COLORS = {
+    "black": "#1d1d1f", "brown": "#7a4a2b", "red": "#d3302b", "orange": "#ec7a1c",
+    "yellow": "#f3c623", "green": "#2e9e4a", "blue": "#1f5fc4", "purple": "#7b3fb8",
+    "grey": "#8c8c8c", "white": "#f2f2f2",
+}
+BAND_COLORS = ["#111111", "#7a4a2b", "#d3302b", "#ec7a1c", "#f3c623",
+               "#2e9e4a", "#1f5fc4", "#7b3fb8", "#8c8c8c", "#f5f5f5"]
+
+EPILOG = """\
+Spec (all lengths in mm, y grows downward):
+  title: text            canvas: [x, y, width, height]
+  parts:                 # photo parts: a part file with image, image_box, pins
+    pico: {part: parts/pico2w.yaml, at: [58, 4], rotate: 0}
+    r1: {kind: resistor, value: 4.7k, from: [95, 17.5], to: [95, 30]}
+    probe: {kind: ds18b20, at: [118, 21], cable: 22, tube: 30}
+  wires:
+    - {from: adapter.TX, to: pico.1, color: brown, via: [[40, 5]], ends: [dupont, solder]}
+  callouts:
+    - {pin: pico.1, at: [36, -10], text: "to adapter TX · brown wire"}
+  labels:                # plain text beside a part: at is the text baseline start
+    - {at: [120, 28], text: DS18B20 probe}
+  notes: [text, ...]
+
+Part file: name, image (beside the part file), image_box [x, y, w, h] in part mm,
+pins {id: {at: [x, y], name: GP0}}. Callouts print "Pin <id> · <name>" from the
+part file, so pin names are never retyped in the spec.
+Built-in kinds: resistor (pins a, b; 5-band colours from value), ds18b20
+(pins black, red, yellow at the jacket end; the cable runs toward +x).
+
+Outputs OUTPUT.svg (images embedded) and OUTPUT.png (headless-Chrome preview).
+--debug marks every pin with its id to check the photo alignment.
+Exit status: 0 rendered, 1 spec or preview error, 2 usage.
+"""
+
+
+class SpecError(Exception):
+    pass
+
+
+def fmt(value):
+    return f"{value:.3f}".rstrip("0").rstrip(".")
+
+
+def esc(text):
+    return html.escape(str(text), quote=True)
+
+
+def rotate_point(point, degrees):
+    angle = math.radians(degrees)
+    x, y = point
+    return (x * math.cos(angle) - y * math.sin(angle), x * math.sin(angle) + y * math.cos(angle))
+
+
+def resistor_bands(value):
+    """5-band code (3 digits, multiplier, 1% tolerance) for values like 4.7k, 220, 1M."""
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)([kKmM]?)", str(value).strip())
+    if not match:
+        raise SpecError(f"resistor value {value!r}: use a number with optional k or M")
+    ohms = float(match.group(1)) * {"": 1, "k": 1e3, "K": 1e3, "m": 1e6, "M": 1e6}[match.group(2)]
+    exponent = math.floor(math.log10(ohms)) - 2
+    digits = round(ohms / 10 ** exponent)
+    if digits >= 1000:
+        digits //= 10
+        exponent += 1
+    if not -2 <= exponent <= 9:
+        raise SpecError(f"resistor value {value!r} is out of range")
+    colours = [BAND_COLORS[int(d)] for d in f"{digits:03d}"]
+    multiplier = {-2: "#c0c0c0", -1: "#c9a227"}.get(exponent) or BAND_COLORS[exponent]
+    return colours + [multiplier, BAND_COLORS[1]]
+
+
+class Drawing:
+    def __init__(self, spec, base):
+        self.spec = spec
+        self.base = base
+        self.pins = {}      # "part.pin" -> (x, y) canvas mm
+        self.names = {}     # "part.pin" -> name
+        self.defs = []
+        self.layers = {"parts": [], "wires": [], "top": [], "labels": []}
+
+    # ----- parts -----------------------------------------------------------------
+    def place(self, part_id, local, at, rotate):
+        x, y = rotate_point(local, rotate)
+        return (at[0] + x, at[1] + y)
+
+    def add_part(self, part_id, entry):
+        kind = entry.get("kind", "photo")
+        if kind == "photo":
+            self.photo_part(part_id, entry)
+        elif kind == "resistor":
+            self.resistor(part_id, entry)
+        elif kind == "ds18b20":
+            self.probe(part_id, entry)
+        else:
+            raise SpecError(f"part {part_id}: unknown kind {kind!r}")
+
+    def photo_part(self, part_id, entry):
+        if "part" not in entry:
+            raise SpecError(f"part {part_id}: needs 'part: <file.yaml>'")
+        part_file = (self.base / entry["part"]).resolve()
+        if not part_file.is_file():
+            raise SpecError(f"part {part_id}: {part_file} not found")
+        part = yaml.safe_load(part_file.read_text(encoding="utf-8"))
+        at = entry.get("at", [0, 0])
+        rotate = entry.get("rotate", 0)
+        image = part_file.parent / part["image"]
+        mime = {".webp": "image/webp", ".png": "image/png", ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg"}.get(image.suffix.lower())
+        if mime is None or not image.is_file():
+            raise SpecError(f"part {part_id}: image {image} missing or not webp/png/jpeg")
+        data = base64.b64encode(image.read_bytes()).decode("ascii")
+        x, y, w, h = part["image_box"]
+        self.layers["parts"].append(
+            f'<g transform="translate({fmt(at[0])} {fmt(at[1])}) rotate({fmt(rotate)})" '
+            f'filter="url(#shadow)"><image href="data:{mime};base64,{data}" x="{fmt(x)}" '
+            f'y="{fmt(y)}" width="{fmt(w)}" height="{fmt(h)}" preserveAspectRatio="none"/></g>')
+        for pin_id, pin in part["pins"].items():
+            key = f"{part_id}.{pin_id}"
+            self.pins[key] = self.place(part_id, pin["at"], at, rotate)
+            self.names[key] = pin.get("name", str(pin_id))
+
+    def point(self, ref, what):
+        if isinstance(ref, (list, tuple)) and len(ref) == 2:
+            return tuple(float(v) for v in ref)
+        if isinstance(ref, str) and ref in self.pins:
+            return self.pins[ref]
+        part = str(ref).split(".")[0]
+        known = sorted(k for k in self.pins if k.startswith(part + "."))
+        hint = f"; {part} has {', '.join(known[:12])}{'…' if len(known) > 12 else ''}" if known else ""
+        raise SpecError(f"{what}: unknown pin {ref!r}{hint}")
+
+    def resistor(self, part_id, entry):
+        a = self.point(entry["from"], f"part {part_id} from")
+        b = self.point(entry["to"], f"part {part_id} to")
+        self.pins[f"{part_id}.a"], self.pins[f"{part_id}.b"] = a, b
+        self.names[f"{part_id}.a"] = self.names[f"{part_id}.b"] = f"{entry.get('value', '')} Ω"
+        length = math.dist(a, b)
+        body = min(6.3, length * 0.62)
+        angle = math.degrees(math.atan2(b[1] - a[1], b[0] - a[0]))
+        mid = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
+        bands = resistor_bands(entry.get("value", "4.7k"))
+        stripes = "".join(
+            f'<rect x="{fmt(-body / 2 + body * p)}" y="-1.15" width="{fmt(body * 0.075)}" '
+            f'height="2.3" fill="{c}"/>'
+            for p, c in zip((0.16, 0.30, 0.44, 0.58, 0.80), bands))
+        self.layers["top"].append(
+            f'<g><line x1="{fmt(a[0])}" y1="{fmt(a[1])}" x2="{fmt(b[0])}" y2="{fmt(b[1])}" '
+            f'stroke="#9d9d9d" stroke-width="0.42" stroke-linecap="round"/>'
+            f'<line x1="{fmt(a[0])}" y1="{fmt(a[1])}" x2="{fmt(b[0])}" y2="{fmt(b[1])}" '
+            f'stroke="#e6e6e6" stroke-width="0.14" stroke-linecap="round"/>'
+            f'<g filter="url(#shadow)"><g transform="translate({fmt(mid[0])} {fmt(mid[1])}) rotate({fmt(angle)})">'
+            f'<rect x="{fmt(-body / 2)}" y="-1.15" width="{fmt(body)}" height="2.3" rx="1.05" '
+            f'fill="{entry.get("body", "#3d7fd6")}"/>{stripes}'
+            f'<rect x="{fmt(-body / 2)}" y="-1.15" width="{fmt(body)}" height="2.3" rx="1.05" '
+            f'fill="url(#cylinder)"/></g></g>'
+            f'{self.solder(a)}{self.solder(b)}</g>')
+
+    def probe(self, part_id, entry):
+        at = entry.get("at", [0, 0])
+        rotate = entry.get("rotate", 0)
+        cable, tube = entry.get("cable", 20), entry.get("tube", 30)
+        for pin_id, dy in (("black", -1.1), ("red", 0.0), ("yellow", 1.1)):
+            key = f"{part_id}.{pin_id}"
+            self.pins[key] = self.place(part_id, (0, dy), at, rotate)
+            self.names[key] = f"{pin_id} lead"
+        break_x = cable * 0.62
+        self.layers["parts"].append(
+            f'<g transform="translate({fmt(at[0])} {fmt(at[1])}) rotate({fmt(rotate)})" filter="url(#shadow)">'
+            f'<rect x="0" y="-2" width="{fmt(cable + 1)}" height="4" rx="1.6" fill="#1f1f22"/>'
+            f'<rect x="0" y="-2" width="{fmt(cable + 1)}" height="4" rx="1.6" fill="url(#cylinder)"/>'
+            f'<path d="M{fmt(break_x - 0.6)} -2.8 l1.2 5.6 M{fmt(break_x + 0.6)} -2.8 l1.2 5.6" '
+            f'stroke="#ffffff" stroke-width="0.7"/>'
+            f'<rect x="{fmt(cable - 3)}" y="-2.6" width="6" height="5.2" rx="0.8" fill="#26262a"/>'
+            f'<rect x="{fmt(cable + 2)}" y="-3" width="{fmt(tube)}" height="6" rx="2.6" fill="#b9bdc2"/>'
+            f'<rect x="{fmt(cable + 2)}" y="-3" width="{fmt(tube)}" height="6" rx="2.6" fill="url(#steel)"/>'
+            f'</g>')
+
+    # ----- wires -------------------------------------------------------------------
+    @staticmethod
+    def smooth(points):
+        """Catmull-Rom through every point, as cubic Bézier segments."""
+        if len(points) == 2:
+            (x0, y0), (x1, y1) = points
+            return f"M{fmt(x0)} {fmt(y0)} L{fmt(x1)} {fmt(y1)}"
+        path = [f"M{fmt(points[0][0])} {fmt(points[0][1])}"]
+        padded = [points[0], *points, points[-1]]
+        for i in range(1, len(padded) - 2):
+            p0, p1, p2, p3 = padded[i - 1], padded[i], padded[i + 1], padded[i + 2]
+            c1 = (p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6)
+            c2 = (p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6)
+            path.append(f"C{fmt(c1[0])} {fmt(c1[1])} {fmt(c2[0])} {fmt(c2[1])} {fmt(p2[0])} {fmt(p2[1])}")
+        return " ".join(path)
+
+    @staticmethod
+    def solder(point):
+        return (f'<circle cx="{fmt(point[0])}" cy="{fmt(point[1])}" r="0.95" fill="url(#solder)" '
+                f'stroke="#5d5d5d" stroke-width="0.1"/>')
+
+    @staticmethod
+    def dupont(point):
+        x, y = point
+        return (f'<g filter="url(#shadow)"><rect x="{fmt(x - 1.25)}" y="{fmt(y - 1.25)}" width="2.5" '
+                f'height="2.5" rx="0.25" fill="#161618"/><rect x="{fmt(x - 0.95)}" y="{fmt(y - 0.95)}" '
+                f'width="1.9" height="1.9" rx="0.2" fill="none" stroke="#3a3a3e" stroke-width="0.2"/></g>')
+
+    def add_wire(self, index, wire):
+        what = f"wire {index + 1}"
+        start = self.point(wire["from"], f"{what} from")
+        end = self.point(wire["to"], f"{what} to")
+        via = [self.point(p, f"{what} via") for p in wire.get("via", [])]
+        colour = WIRE_COLORS.get(wire.get("color", "black"), wire.get("color", "#1d1d1f"))
+        width = wire.get("width", 1.1)
+        d = self.smooth([start, *via, end])
+        self.layers["wires"].append(
+            f'<g fill="none" stroke-linecap="round" stroke-linejoin="round">'
+            f'<path d="{d}" stroke="#000" stroke-opacity="0.22" stroke-width="{fmt(width + 0.5)}" '
+            f'transform="translate(0.35 0.45)"/>'
+            f'<path d="{d}" stroke="#000" stroke-opacity="0.55" stroke-width="{fmt(width + 0.28)}"/>'
+            f'<path d="{d}" stroke="{colour}" stroke-width="{fmt(width)}"/>'
+            f'<path d="{d}" stroke="#fff" stroke-opacity="0.32" stroke-width="{fmt(width * 0.28)}" '
+            f'transform="translate(-0.12 -0.16)"/></g>')
+        ends = wire.get("ends", ["solder", "solder"])
+        for point, style in zip((start, end), ends):
+            if style == "solder":
+                self.layers["top"].append(self.solder(point))
+            elif style == "dupont":
+                self.layers["top"].append(self.dupont(point))
+            elif style != "none":
+                raise SpecError(f"{what}: end style {style!r} is not solder, dupont or none")
+
+    # ----- labels ------------------------------------------------------------------
+    def add_callout(self, index, callout):
+        target = self.point(callout["pin"], f"callout {index + 1}")
+        key = callout["pin"]
+        pin_id = str(key).split(".", 1)[1] if isinstance(key, str) else ""
+        title = callout.get("title") or f"Pin {pin_id} · {self.names.get(key, '')}"
+        lines = callout.get("text", [])
+        lines = [lines] if isinstance(lines, str) else lines
+        colour = WIRE_COLORS.get(callout.get("color", "black"), callout.get("color", "#1d1d1f"))
+        x, y = callout["at"]
+        big, small = 2.3, 1.85
+        width = max([len(title) * big * 0.56] + [len(t) * small * 0.53 for t in lines]) + 4.2
+        height = 1.9 + big + len(lines) * (small + 0.75) + 0.6
+        if callout.get("side", "left") == "right":
+            x -= width
+        edge_x = x + width if target[0] > x + width else x if target[0] < x else target[0]
+        edge_y = y + height / 2 if y <= target[1] <= y + height else (y + height if target[1] > y else y)
+        texts = [f'<text x="{fmt(x + 2.6)}" y="{fmt(y + 1.2 + big)}" font-size="{big}" '
+                 f'font-weight="700" fill="#0f172a">{esc(title)}</text>']
+        for i, line in enumerate(lines):
+            texts.append(f'<text x="{fmt(x + 2.6)}" y="{fmt(y + 1.4 + big + (i + 1) * (small + 0.75))}" '
+                         f'font-size="{small}" fill="#334155">{esc(line)}</text>')
+        self.layers["labels"].append(
+            f'<g><line x1="{fmt(edge_x)}" y1="{fmt(edge_y)}" x2="{fmt(target[0])}" y2="{fmt(target[1])}" '
+            f'stroke="#fff" stroke-width="0.8" stroke-linecap="round"/>'
+            f'<line x1="{fmt(edge_x)}" y1="{fmt(edge_y)}" x2="{fmt(target[0])}" y2="{fmt(target[1])}" '
+            f'stroke="#0f172a" stroke-width="0.3" stroke-linecap="round"/>'
+            f'<circle cx="{fmt(target[0])}" cy="{fmt(target[1])}" r="1.2" fill="none" stroke="#fff" '
+            f'stroke-width="0.6"/><circle cx="{fmt(target[0])}" cy="{fmt(target[1])}" r="1.2" '
+            f'fill="none" stroke="#0f172a" stroke-width="0.3"/>'
+            f'<rect x="{fmt(x)}" y="{fmt(y)}" width="{fmt(width)}" height="{fmt(height)}" rx="0.9" '
+            f'fill="#ffffff" stroke="#cbd5e1" stroke-width="0.22" filter="url(#shadow)"/>'
+            f'<rect x="{fmt(x)}" y="{fmt(y)}" width="1.3" height="{fmt(height)}" rx="0.6" fill="{colour}"/>'
+            f'{"".join(texts)}</g>')
+
+    def debug_pins(self):
+        for key, (x, y) in self.pins.items():
+            self.layers["labels"].append(
+                f'<circle cx="{fmt(x)}" cy="{fmt(y)}" r="0.45" fill="#ff00ff"/>'
+                f'<text x="{fmt(x + 0.7)}" y="{fmt(y - 0.5)}" font-size="1.1" fill="#ff00ff">'
+                f'{esc(key.split(".", 1)[1])}</text>')
+
+    # ----- output ------------------------------------------------------------------
+    def svg(self, px_per_mm):
+        cx, cy, cw, ch = self.spec.get("canvas", [0, 0, 160, 90])
+        body = []
+        title = self.spec.get("title")
+        if title:
+            body.append(f'<text x="{fmt(cx + 3)}" y="{fmt(cy + 5.5)}" font-size="3.4" font-weight="700" '
+                        f'fill="#0f172a">{esc(title)}</text>')
+        for i, note in enumerate(self.spec.get("notes", [])):
+            body.append(f'<text x="{fmt(cx + 3)}" y="{fmt(cy + ch - 3 - (len(self.spec["notes"]) - 1 - i) * 3.1)}" '
+                        f'font-size="2.1" fill="#475569">{esc(note)}</text>')
+        for label in self.spec.get("labels", []):
+            lx, ly = label["at"]
+            body.append(f'<text x="{fmt(lx)}" y="{fmt(ly)}" font-size="{fmt(label.get("size", 2.2))}" '
+                        f'font-weight="600" fill="#334155">{esc(label["text"])}</text>')
+        return (
+            f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{fmt(cx)} {fmt(cy)} {fmt(cw)} {fmt(ch)}" '
+            f'width="{round(cw * px_per_mm)}" height="{round(ch * px_per_mm)}" '
+            f'font-family="Inter, \'Segoe UI\', system-ui, sans-serif">'
+            f'<defs><filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">'
+            f'<feDropShadow dx="0.35" dy="0.6" stdDeviation="0.55" flood-color="#0f172a" flood-opacity="0.28"/>'
+            f'</filter>'
+            f'<radialGradient id="solder" cx="38%" cy="35%" r="70%"><stop offset="0" stop-color="#ffffff"/>'
+            f'<stop offset="0.45" stop-color="#c9ccd1"/><stop offset="1" stop-color="#7b7f86"/></radialGradient>'
+            f'<linearGradient id="cylinder" x1="0" y1="0" x2="0" y2="1">'
+            f'<stop offset="0" stop-color="#fff" stop-opacity="0.35"/><stop offset="0.35" stop-color="#fff" '
+            f'stop-opacity="0.05"/><stop offset="1" stop-color="#000" stop-opacity="0.35"/></linearGradient>'
+            f'<linearGradient id="steel" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" '
+            f'stop-opacity="0.7"/><stop offset="0.3" stop-color="#fff" stop-opacity="0.1"/>'
+            f'<stop offset="0.55" stop-color="#000" stop-opacity="0.12"/><stop offset="1" stop-color="#000" '
+            f'stop-opacity="0.4"/></linearGradient></defs>'
+            f'<rect x="{fmt(cx)}" y="{fmt(cy)}" width="{fmt(cw)}" height="{fmt(ch)}" fill="#f8fafc"/>'
+            + "".join(self.layers["parts"] + self.layers["wires"] + self.layers["top"]
+                      + self.layers["labels"] + body)
+            + "</svg>")
+
+
+def preview(svg_path, png_path, width, height):
+    chrome = next((shutil.which(n) for n in ("google-chrome", "chromium", "chromium-browser")
+                   if shutil.which(n)), None)
+    if chrome is None:
+        raise SpecError("google-chrome or chromium is required for the preview (or pass --no-preview)")
+    with tempfile.TemporaryDirectory(prefix="draw-wiring-chrome-") as profile:
+        result = subprocess.run(
+            [chrome, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run",
+             f"--user-data-dir={profile}", "--force-device-scale-factor=1",
+             f"--window-size={width},{height}", f"--screenshot={png_path}", svg_path.resolve().as_uri()],
+            capture_output=True, text=True, timeout=120)
+    if result.returncode != 0 or not png_path.is_file():
+        raise SpecError(f"preview failed:\n{result.stderr.strip()}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="draw-wiring", description="Render a realistic, to-scale wiring picture from SPEC.yaml.",
+        epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("spec", type=Path, metavar="SPEC.yaml")
+    parser.add_argument("-o", "--output", type=Path, metavar="OUTPUT.svg",
+                        help="default: SPEC with .svg suffix")
+    parser.add_argument("--px-per-mm", type=float, default=8.0, help="output scale (default 8)")
+    parser.add_argument("--debug", action="store_true", help="mark every pin with its id")
+    parser.add_argument("--no-preview", action="store_true", help="skip the PNG preview")
+    args = parser.parse_args()
+    if not args.spec.is_file():
+        parser.error(f"spec not found: {args.spec}")
+    output = args.output or args.spec.with_suffix(".svg")
+    if output.suffix.lower() != ".svg":
+        parser.error("--output must end in .svg")
+
+    try:
+        spec = yaml.safe_load(args.spec.read_text(encoding="utf-8")) or {}
+        drawing = Drawing(spec, args.spec.resolve().parent)
+        for part_id, entry in (spec.get("parts") or {}).items():
+            drawing.add_part(part_id, entry)
+        for i, wire in enumerate(spec.get("wires") or []):
+            drawing.add_wire(i, wire)
+        for i, callout in enumerate(spec.get("callouts") or []):
+            drawing.add_callout(i, callout)
+        if args.debug:
+            drawing.debug_pins()
+        output.write_text(drawing.svg(args.px_per_mm), encoding="utf-8")
+        _, _, cw, ch = spec.get("canvas", [0, 0, 160, 90])
+        size = (round(cw * args.px_per_mm), round(ch * args.px_per_mm))
+        print(f"svg: {output} ({size[0]}x{size[1]} px)")
+        if not args.no_preview:
+            png = output.with_suffix(".png")
+            preview(output, png, *size)
+            print(f"preview: {png}")
+    except (SpecError, KeyError, TypeError, ValueError, yaml.YAMLError) as exc:
+        sys.exit(f"draw-wiring: {exc}")
+
+
+if __name__ == "__main__":
+    main()
