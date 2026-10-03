@@ -10,9 +10,9 @@ source with the `maintaining-agent-resources` skill.
 - Keep initiative within the requested scope and existing safety boundaries.
   Answer questions and tradeoff discussions directly; do not treat them as
   permission to make unrelated changes.
-- Any new feature or enhancement, however small, starts with
-  `agent-worktree new <name>` before the first edit. Edit, verify, and commit
-  in the printed directory, never in the main checkout.
+- Edit and commit in the current checkout. If an edit is blocked because
+  another agent holds the checkout lock, run `agent-worktree new <name>` and
+  edit, verify, and commit in the printed directory instead.
 - For OMP features, first try a plugin, extension, or skill using existing
   supported interfaces rather than changing OMP core. Change core only when
   those mechanisms cannot meet the requirements; state the concrete limitation

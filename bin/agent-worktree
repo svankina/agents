@@ -13,6 +13,10 @@
 # unpublished feature worktree, runs the supplied verification command there,
 # and fast-forwards the target. It never pushes. Push remains a separate,
 # deliberate operation.
+#
+# where prints the checkout, its branch, and its agent checkout lock. The OMP
+# checkout-lock extension gives a checkout to one agent while that agent has
+# uncommitted edits there; other agents use a worktree from new.
 
 set -euo pipefail
 
@@ -246,7 +250,18 @@ case "$cmd" in
     ;;
   where)
     here="${repo_arg:-$PWD}"; top="$(git -C "$here" rev-parse --show-toplevel)"; br="$(git -C "$here" rev-parse --abbrev-ref HEAD)"
-    if [[ "$top" == "$root" ]]; then printf 'main checkout %s on branch %s\nfeature work belongs in a worktree: agent-worktree new <name>\n' "$top" "$br"; else printf 'worktree %s on branch %s\n' "$top" "$br"; fi
+    if [[ "$top" == "$root" ]]; then printf 'main checkout %s on branch %s\n' "$top" "$br"; else printf 'worktree %s on branch %s\n' "$top" "$br"; fi
+    lock="$(git -C "$here" rev-parse --absolute-git-dir)/agent-checkout.lock"
+    if [[ ! -f "$lock" ]]; then printf 'checkout lock: free\n'; exit 0; fi
+    field() { sed -n "s/^$1=//p" "$lock"; }
+    pid="$(field pid)"; started="$(awk '{sub(/.*\) /, ""); print $20}' "/proc/$pid/stat" 2>/dev/null || true)"
+    if [[ -z "$started" || "$started" != "$(field start)" ]]; then
+        printf 'checkout lock: stale (pid %s exited); the next edit takes it over\n' "$pid"
+    elif [[ "$pid" == "${AGENT_RESOURCE_PID:-}" ]]; then
+        printf 'checkout lock: held by this agent since %s\n' "$(field since)"
+    else
+        printf 'checkout lock: held by OMP session %s (pid %s) since %s; use agent-worktree new <name>\n' "$(field session)" "$pid" "$(field since)"
+    fi
     ;;
   help|--help|-h) usage ;;
   *) die "unknown subcommand '$cmd' (try: new, path, list, integrate, rm, where, help)" ;;
