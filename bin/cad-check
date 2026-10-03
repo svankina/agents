@@ -134,7 +134,9 @@ def check_step(spec, base, report):
                 if not _boxes_touch(solids[i].bounding_box(), solids[j].bounding_box()):
                     continue
                 common = solids[i].intersect(solids[j])
-                overlap = common.volume if common is not None else 0.0
+                # Disjoint overlap regions come back as a ShapeList, not one shape.
+                pieces = [] if common is None else common if isinstance(common, list) else [common]
+                overlap = sum(p.volume for p in pieces)
                 if overlap > limit:
                     overlaps.append(f"{i}-{j} {overlap:.4f} mm3")
         report.check(not overlaps, "interference",
