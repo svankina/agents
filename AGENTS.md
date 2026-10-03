@@ -8,7 +8,7 @@ Remote: `github.com/svankina/agents`. It is not an installable package.
 
 ### Architecture
 
-`bin/omp-install` links the direct `omp/AGENTS.md` into `~/.omp/agent/AGENTS.md`.
+`bin/omp-install` links `omp/AGENTS.md` and `omp/PERSONALITY.md` into `~/.omp/agent/`.
 It links shared skills, commands, and agent definitions into OMP, and
 executable helpers into `~/.local/bin`.
 It also links `omp/dock-extensions/*.ts` into each Herd-docked agent's working

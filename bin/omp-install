@@ -58,7 +58,8 @@ def instruction_problems(repo: Path, home: Path) -> list:
 
 def desired_links(repo: Path, home: Path, docks: Path) -> tuple[list, list]:
     omp = home / ".omp" / "agent"
-    links = [(omp / "AGENTS.md", repo / "omp" / "AGENTS.md")]
+    links = [(omp / "AGENTS.md", repo / "omp" / "AGENTS.md"),
+             (omp / "PERSONALITY.md", repo / "omp" / "PERSONALITY.md")]
     for _link, source in links:
         if not source.is_file():
             raise FileNotFoundError(f"Required instruction file missing: {source}")

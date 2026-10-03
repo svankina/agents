@@ -50,6 +50,7 @@ def run(repo, home, *args, expected=0):
 def workspace(tmp_path):
     repo, home = tmp_path / "repo", tmp_path / "home"
     put(repo / "omp" / "AGENTS.md", "OMP instructions\n")
+    put(repo / "omp" / "PERSONALITY.md", "OMP personality\n")
     home.mkdir()
     return repo, home
 
@@ -92,7 +93,10 @@ def test_dock_extensions_install_only_in_docked_agent_directories(workspace, tmp
 def test_instruction_edits_reach_sources_and_reinstall_keeps_links(workspace):
     repo, home = workspace
     run(repo, home)  # No subcommand means install.
-    installed = {home / ".omp/agent/AGENTS.md": repo / "omp/AGENTS.md"}
+    installed = {
+        home / ".omp/agent/AGENTS.md": repo / "omp/AGENTS.md",
+        home / ".omp/agent/PERSONALITY.md": repo / "omp/PERSONALITY.md",
+    }
     for destination, source in installed.items():
         assert destination.is_symlink()
         assert destination.resolve() == source
@@ -143,7 +147,7 @@ def test_new_resources_install_without_touching_other_harnesses(workspace):
     current = snapshot(home)
     assert {path: current[path] for path in protected} == protected
     assert set(current) - set(protected) == {
-        ".omp/agent/AGENTS.md", ".omp/agent/skills",
+        ".omp/agent/AGENTS.md", ".omp/agent/PERSONALITY.md", ".omp/agent/skills",
         ".omp/agent/commands", ".omp/agent/agents", ".local", ".local/bin",
         *resources,
     }

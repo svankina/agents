@@ -5,6 +5,7 @@ This repository installs OMP instructions and resources. It also preserves histo
 ## Repository layout
 
 - `omp/AGENTS.md` — direct OMP standing instructions and user facts.
+- `omp/PERSONALITY.md` — replaces the main session's built-in OMP personality preset.
 - `shared/skills/`, `shared/commands/`, `shared/agents/` — resources installed into OMP.
 - `bin/` — executable helpers installed into `~/.local/bin`.
 - `pi/extensions/` — historical Pi coding-agent extensions. See [`pi/extensions/README.md`](pi/extensions/README.md).
@@ -34,6 +35,7 @@ The repository defaults to the executable's resolved location; use
 | Source | Installed link |
 | --- | --- |
 | `omp/AGENTS.md` | `~/.omp/agent/AGENTS.md` |
+| `omp/PERSONALITY.md` | `~/.omp/agent/PERSONALITY.md` |
 | `shared/skills/` child directories | `~/.omp/agent/skills/` children |
 | `shared/commands/*.md` | `~/.omp/agent/commands/` children |
 | `shared/agents/*.md` | `~/.omp/agent/agents/` children |

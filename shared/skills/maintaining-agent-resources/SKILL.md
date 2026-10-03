@@ -17,6 +17,9 @@ Put guidance at the narrowest level that still reaches the agents that need it:
 
 - Global `omp/AGENTS.md`: only rules that change behavior in most sessions and
   that the harness prompt does not already state. One source per rule.
+- `omp/PERSONALITY.md`: voice and tone for main sessions, linked to
+  `~/.omp/agent/PERSONALITY.md`. It replaces OMP's built-in personality preset;
+  subagents never receive it.
 - A skill in `shared/skills/`: a procedure used in some sessions. Its
   `description` is always loaded, so state the triggering situation precisely.
 - A helper's `--help`: command usage. The global file names the helper once.
