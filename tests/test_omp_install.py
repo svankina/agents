@@ -252,8 +252,8 @@ def test_missing_required_instructions_block_without_broken_links(workspace):
 def test_check_fails_when_global_instructions_exceed_budget(workspace):
     repo, home = workspace
     run(repo, home)
-    put(repo / "omp/AGENTS.md", "rule\n" * 80)
+    put(repo / "omp/AGENTS.md", "rule\n" * 90)
     run(repo, home, "check")
-    put(repo / "omp/AGENTS.md", "rule\n" * 81)
+    put(repo / "omp/AGENTS.md", "rule\n" * 91)
     result = run(repo, home, "check", expected=1)
     assert "[budget]" in result.stdout

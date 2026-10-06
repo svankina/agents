@@ -14,7 +14,7 @@ import subprocess
 import sys
 
 # Every OMP session loads the global instructions; keep them to rules most sessions need.
-GLOBAL_LINE_BUDGET = 80
+GLOBAL_LINE_BUDGET = 90
 
 
 def link_target(path: Path) -> Path:

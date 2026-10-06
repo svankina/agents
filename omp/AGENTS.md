@@ -54,15 +54,20 @@ or progress narration. Use a checklist for resumable state. No emojis.
   cores; never allocate more than about 75%. Apply the same limits to workers.
 - Do not steal focus or capture the user's desktop. Use `agent-gui` for visible
   apps, `agent-gui --headless` for agent inspection, and identity-targeted
-  `agent-shot` captures. Use the browser tool for web pages. Never access
-  Firefox (processes, windows, profiles, data); it is reserved for the user.
+  `agent-shot` captures. Use the browser tool for web pages.
+- Never access Firefox: its processes, windows, profiles, or data. It is
+  reserved for the user. Agent commands cannot run `xdg-open`, `firefox`, or
+  browser launchers (`agent-open-guard` refuses them). Run cage, Xvfb, and
+  apps under test inside `agent-nested-desktop` so they cannot reach the
+  user's session either.
 - Agent shell `rm` deletes permanently; the user's interactive `rm` uses trash.
   Confirm destructive operations unless the user has explicitly authorized them.
 
 ## Helpers and locations
 
 - Read a helper's `--help` before first use: `agent-worktree`, `fair-run`,
-  `psudo`, `agent-gui`, `agent-shot`, `user-queue`, `homer-notify`.
+  `psudo`, `agent-gui`, `agent-shot`, `agent-nested-desktop`, `user-queue`,
+  `homer-notify`.
 - `user-queue add` only for work the user explicitly defers; preserve the
   wording and report the ID. `homer-notify` only for important events or
   required user action; report failed delivery.
@@ -77,4 +82,5 @@ or progress narration. Use a checklist for resumable state. No emojis.
 - Public/technical writeups use ASD-STE100: short sentences, one instruction
   per sentence, active voice, no idioms. This does not apply to chat.
 - Linux, i3, tmux, zsh. Threadripper 1920X (24 threads), 64 GB RAM.
-  ML runs on the RTX 3090 Ti (24 GB; `nvidia-smi`); the RX 580 drives display.
+  ML runs on the RTX 3090 Ti (24 GB; check `nvidia-smi`); the RX 580 drives
+  the display.

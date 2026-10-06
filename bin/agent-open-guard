@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# agent-open-guard — refuse desktop "open"/browser launches from agent commands.
+#
+# Installed under the names of the commands it guards (xdg-open, gio,
+# sensible-browser, x-www-browser, www-browser, gnome-www-browser, firefox),
+# ahead of /usr/bin on PATH. From the user's own shells and desktop it execs
+# the real command unchanged. From an agent it refuses and logs: OMP marks
+# every agent tool command with OMPCODE=1 (CLAUDECODE=1 for Claude Code), and
+# agent-nested-desktop sets AGENT_OPEN_GUARD=1. A refused open would otherwise
+# reach the user's running Firefox, which is reserved for the user.
+#
+# `gio` is refused only for `open` and `launch`; other subcommands pass.
+# Run as `agent-open-guard ARGS`, it always refuses: nested desktops use it as
+# their default handler. Refusals are appended to
+# ${XDG_STATE_HOME:-~/.local/state}/agent-open-guard.log.
+# Exit code: 3 when refused; otherwise the real command's status.
+set -u
+
+name=${0##*/}
+if [ "$name" = agent-open-guard ] && case ${1:-} in -h | --help) ;; *) false ;; esac; then
+	sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+	exit 0
+fi
+
+agent=${OMPCODE:-}${CLAUDECODE:-}${AGENT_OPEN_GUARD:-}
+guarded=1
+[ "$name" = gio ] && case ${1:-} in open | launch) ;; *) guarded= ;; esac
+
+if [ -n "$agent" ] && [ -n "$guarded" ] || [ "$name" = agent-open-guard ]; then
+	state=${XDG_STATE_HOME:-$HOME/.local/state}
+	mkdir -p "$state"
+	chain= pid=$PPID
+	while [ "${pid:-0}" -gt 1 ] && [ -r "/proc/$pid/cmdline" ]; do
+		chain+=" <- $pid:$(tr '\0' ' ' <"/proc/$pid/cmdline" | cut -c1-120)"
+		pid=$(awk '{print $4}' "/proc/$pid/stat" 2>/dev/null)
+	done
+	printf '%s pane=%s cwd=%s cmd=%s %s chain=%s\n' "$(date -Is)" "${HERD_PANE:--}" \
+		"$PWD" "$name" "$*" "$chain" >>"$state/agent-open-guard.log"
+	echo "agent-open-guard: refused '$name $*': agents must not open the desktop browser or" \
+		"default apps (Firefox is reserved for the user). Use the browser tool;" \
+		"logged to $state/agent-open-guard.log" >&2
+	exit 3
+fi
+
+self=$(readlink -f "$0")
+IFS=: read -ra dirs <<<"$PATH"
+for dir in "${dirs[@]}"; do
+	candidate=$dir/$name
+	[ -x "$candidate" ] && [ ! -d "$candidate" ] || continue
+	[ "$(readlink -f "$candidate")" = "$self" ] && continue
+	exec "$candidate" "$@"
+done
+echo "agent-open-guard: no real '$name' on PATH" >&2
+exit 127

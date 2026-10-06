@@ -47,7 +47,10 @@ Installed resources:
   `--docks PATH` selects another dock state root.
 
 Shared helpers include `agent-worktree`, `agent-gui`, `agent-shot`,
-`agent-display`, and `fair-run`. Prefer implementing a recurring procedure
+`agent-display`, `agent-nested-desktop`, and `fair-run`. `agent-open-guard`
+is linked into `bin/` as `xdg-open`, `gio`, `firefox`, and the browser
+alternatives; it passes through for the user and refuses agent commands
+(`OMPCODE`/`CLAUDECODE` set). Prefer implementing a recurring procedure
 in a command over adding more etiquette here: add an executable to `bin/`
 with a `--help` and run `omp-install`.
 

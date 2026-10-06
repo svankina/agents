@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# agent-nested-desktop — run a nested display or test app cut off from the
+# user's desktop session.
+#
+# Usage: agent-nested-desktop [--] <command> [args...]
+# Example: agent-nested-desktop -- env WLR_BACKENDS=headless cage -- tern ...
+#
+# Use it for every agent-started cage, Xvfb, headless compositor, or app under
+# test that can open files, links, or editors. The command gets:
+#   - a private D-Bus session (dbus-run-session), so portals and Firefox's
+#     remote handoff cannot reach the user's running apps;
+#   - no DISPLAY, WAYLAND_DISPLAY, or I3SOCK from the user's session;
+#   - temporary XDG_CONFIG_HOME/XDG_DATA_HOME/XDG_CACHE_HOME/XDG_STATE_HOME
+#     whose mimeapps.list sends web, text, and file types to agent-open-guard;
+#   - BROWSER=agent-open-guard and AGENT_OPEN_GUARD=1, so the guarded
+#     xdg-open, firefox, and browser names refuse even outside OMP.
+# Refused opens are logged in the temporary state dir and reported on exit.
+# The temporary directory is removed on exit. Exit code: the command's status.
+set -u
+
+case ${1:-} in
+-h | --help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+--) shift ;;
+esac
+[ $# -gt 0 ] || { echo "agent-nested-desktop: no command (see --help)" >&2; exit 2; }
+
+guard=$(command -v agent-open-guard || echo "$(dirname "$(readlink -f "$0")")/agent-open-guard")
+root=$(mktemp -d "${TMPDIR:-/tmp}/agent-nested-desktop.XXXXXX")
+trap 'log=$root/state/agent-open-guard.log; [ -s "$log" ] && { echo "agent-nested-desktop: refused opens:" >&2; cat "$log" >&2; }; rm -rf "$root"' EXIT
+mkdir -p "$root/config" "$root/data/applications" "$root/cache" "$root/state"
+
+cat >"$root/data/applications/agent-open-guard.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Agent open guard
+Exec=$guard %U
+NoDisplay=true
+EOF
+types="x-scheme-handler/http x-scheme-handler/https x-scheme-handler/about
+x-scheme-handler/unknown x-scheme-handler/mailto x-scheme-handler/file text/html
+application/xhtml+xml text/plain text/markdown text/x-log text/csv
+application/json application/pdf application/octet-stream inode/directory
+image/png image/jpeg image/svg+xml"
+{
+	echo "[Default Applications]"
+	for t in $types; do echo "$t=agent-open-guard.desktop"; done
+} >"$root/config/mimeapps.list"
+
+unset DISPLAY WAYLAND_DISPLAY I3SOCK DBUS_SESSION_BUS_ADDRESS XAUTHORITY
+export XDG_CONFIG_HOME=$root/config XDG_DATA_HOME=$root/data XDG_CACHE_HOME=$root/cache \
+	XDG_STATE_HOME=$root/state XDG_CURRENT_DESKTOP=agent BROWSER=$guard AGENT_OPEN_GUARD=1
+dbus-run-session -- "$@"
