@@ -54,7 +54,8 @@ or progress narration. Use a checklist for resumable state. No emojis.
   cores; never allocate more than about 75%. Apply the same limits to workers.
 - Do not steal focus or capture the user's desktop. Use `agent-gui` for visible
   apps, `agent-gui --headless` for agent inspection, and identity-targeted
-  `agent-shot` captures. Use the browser tool for web pages.
+  `agent-shot` captures. Use the browser tool for web pages. Never access
+  Firefox (processes, windows, profiles, data); it is reserved for the user.
 - Agent shell `rm` deletes permanently; the user's interactive `rm` uses trash.
   Confirm destructive operations unless the user has explicitly authorized them.
 
@@ -76,5 +77,4 @@ or progress narration. Use a checklist for resumable state. No emojis.
 - Public/technical writeups use ASD-STE100: short sentences, one instruction
   per sentence, active voice, no idioms. This does not apply to chat.
 - Linux, i3, tmux, zsh. Threadripper 1920X (24 threads), 64 GB RAM.
-  ML runs on the RTX 3090 Ti (24 GB; check `nvidia-smi`); the RX 580 drives
-  the display.
+  ML runs on the RTX 3090 Ti (24 GB; `nvidia-smi`); the RX 580 drives display.
