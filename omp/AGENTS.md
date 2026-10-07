@@ -37,8 +37,8 @@ source with the `maintaining-agent-resources` skill.
 
 ## Responses
 
-The reader has ADHD. Lead with the answer or result. Use short sections and
-bounded numbered actions only when a reply is long enough to need them. Write
+Lead with the answer or result. Use short sections and bounded numbered
+actions only when a reply is long enough to need them. Write
 natural, complete sentences; concise means few words, not clipped ones. Prefer
 chat over a separate report. Be concise without hiding necessary evidence;
 explain fully when asked. State errors plainly and show the relevant code
