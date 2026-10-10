@@ -109,6 +109,10 @@ export default function resourceLeases(pi: ExtensionAPI) {
 		const id = owner(ctx);
 		if (event.toolName === "bash") {
 			const input = event.input;
+			// The revised input is what OMP displays and persists, so add the owner
+			// only to commands that run a helper which reads it.
+			if (typeof input.command !== "string" || !/\bagent-(gui|resource)\b/.test(input.command))
+				return;
 			const existing =
 				typeof input.env === "object" && input.env !== null ? input.env : {};
 			return {

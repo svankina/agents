@@ -10,8 +10,11 @@ The `resources` tool acquires processes or dedicated headless browsers and
 lists/releases session-owned leases. Browser acquisition returns `cdpUrl`;
 attach with Eval `browser.open({app:{cdp_url:cdpUrl}})`. Close managed tab
 handles, then call `resources` cleanup before completion. The plugin guards
-successful quit/yield and the main-session stop hook. Bash receives owner
-environment variables for `agent-gui`; no process-global owner variable is set.
+successful quit/yield and the main-session stop hook. Bash commands that name
+`agent-gui` or `agent-resource` receive owner environment variables. OMP shows
+that injected `env` on the call, so other commands get none; scripts that run
+those helpers indirectly must be given the owner explicitly. No process-global
+owner variable is set.
 Raw Bash/Eval subprocesses and browsers opened without broker acquisition are
 not intercepted. Subagent stop hooks are not available; explicit release,
 terminal yield interception, shutdown and owner-process death provide cleanup.
