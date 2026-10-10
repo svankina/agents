@@ -31,6 +31,11 @@
  *   shadow real completion, the ghost (and thus the Tab steal) is suppressed
  *   whenever the buffer contains `/` or `@`, the two triggers for slash-command
  *   and file/@-mention completion.
+ * - In Tern, omp draws the composer natively and, since omp 18.8.0, fills the
+ *   empty composer with the session title as a placeholder. A placeholder
+ *   suppresses the inline hint, so the prediction would be invisible while Tab
+ *   still accepts it. In Tern the prediction is therefore also shown as a
+ *   one-line widget above the composer for as long as it is pending.
  *
  * Escape clears the prediction (without consuming the key, so Escape keeps its
  * normal meaning). A new turn, a submitted message, or a session switch
@@ -64,6 +69,9 @@ const PREDICTION_CHARS = 110;
 const DEBOUNCE_MS = 300;
 /** Sentinel the model returns when the conversation genuinely has no next step to guess. */
 const DECLINE = "NONE";
+/** omp's native Tern composer hides the inline hint behind its placeholder. */
+const IN_TERN = process.env.TERM_PROGRAM?.toLowerCase() === "tern";
+const WIDGET_KEY = "predictive-input";
 
 const SYSTEM_PROMPT = [
 	"You predict the next message a developer will type to their coding agent.",
@@ -118,6 +126,7 @@ export default function (pi: ExtensionAPI): void {
 		inflight = null;
 		if (prediction !== null) {
 			prediction = null;
+			if (IN_TERN) ctx?.ui.setWidget(WIDGET_KEY, undefined);
 			requestRepaint(ctx);
 		}
 	}
@@ -231,6 +240,7 @@ export default function (pi: ExtensionAPI): void {
 			const text = normalize(response.content.map(block => (block.type === "text" ? block.text : "")).join(""));
 			if (!text) return;
 			prediction = text;
+			if (IN_TERN) ctx.ui.setWidget(WIDGET_KEY, [ctx.ui.theme.fg("dim", `⇥ ${text}`)], { placement: "aboveEditor" });
 			requestRepaint(ctx);
 		} catch {
 			// A failed or aborted prediction is a non-event: no ghost, no message.
