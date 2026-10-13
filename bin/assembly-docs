@@ -11,7 +11,7 @@ The spec is the single source for the manual, the animation, and the check.
 Relative paths resolve against the spec's directory. Lengths are mm, CAD Z up.
 
   {
-    "title": "Spool holder", "subtitle": "Assembly manual", "revision": "A",
+    "title": "Spool holder",
     "model": "out/assembly.glb",   build123d export_gltf(..., unit=Unit.M)
     "step": "out/assembly.step",   same compound, used by `check`
     "out": "out/assembly-docs",    default; site in OUT/site, certificate OUT/clearance.json
@@ -228,11 +228,10 @@ def load_spec(path):
     for s_i, section in enumerate(spec["sections"]):
         if "title" not in section or not section.get("steps"):
             raise SpecError(f"sections[{s_i}] needs a title and steps")
-        if set(section) - {"title", "steps", "view"}:
-            raise SpecError(f"sections[{s_i}]: unknown keys {sorted(set(section) - {'title', 'steps', 'view'})}")
-        sec = {"title": section["title"], "steps": [],
-               "view": view_of(section.get("view"), view, f"sections[{s_i}].view")}
-        step_view = sec["view"]
+        if set(section) - {"title", "steps"}:
+            raise SpecError(f"sections[{s_i}]: unknown keys {sorted(set(section) - {'title', 'steps'})}")
+        sec = {"title": section["title"], "steps": []}
+        step_view = view
         for p_i, raw in enumerate(section["steps"]):
             where = f"sections[{s_i}].steps[{p_i}] ({raw.get('title', '?')})"
             if "title" not in raw:
@@ -571,8 +570,6 @@ def stage_fonts(site):
 
 PILL = {"font": "400 12.5px Lato, 'Open Sans', sans-serif", "padX": 14, "height": 26}
 FIG_STEP = (700, 600)
-FIG_COVER = (620, 460)
-FIG_SECTION = (840, 520)
 FIG_PART = (150, 120)
 
 
@@ -644,11 +641,7 @@ def build(norm, draft, pdf=True):
     tl = timeline_json(norm, clearance)
     (site / "timeline.json").write_text(json.dumps(tl))
 
-    jobs = [("cover", {"kind": "state", "index": len(norm["steps"]) - 1, "view": norm["view"],
-                       "width": FIG_COVER[0], "height": FIG_COVER[1], "fill": 0.9})]
-    for s_i, sec in enumerate(norm["sections"]):
-        jobs.append((f"section-{s_i + 1}", {"kind": "state", "index": sec["steps"][-1], "view": sec["view"],
-                                            "width": FIG_SECTION[0], "height": FIG_SECTION[1]}))
+    jobs = []
     for i, step in enumerate(norm["steps"]):
         jobs.append((f"step-{i + 1:02d}", {"kind": "step", "index": i, "width": FIG_STEP[0],
                                            "height": FIG_STEP[1], "pill": PILL,
@@ -738,100 +731,13 @@ def manual_html(norm, figures, clearance):
     spec = norm["spec"]
     title = spec["title"]
     header_right = spec.get("header", title).upper()
-    revision = spec.get("revision", "")
-    date = datetime.now().strftime("%Y-%m-%d")
+    if clearance["status"] != "verified":
+        header_right = f"DRAFT · {header_right}"
     pages = []
-    n_steps = len(norm["steps"])
 
-    # Fixed front matter: cover, contents, how to read, parts (paginated).
-    types = list(norm["types"].items())
-    groups = [(k, [(t, i) for t, i in types if i["kind"] == k]) for k in KINDS]
-    bom_items = [(k, t, i) for k, items in groups for t, i in items]
-    per_bom_page = 18
-    bom_pages = max(1, math.ceil(len(bom_items) / per_bom_page))
-    first_section_page = 4 + bom_pages
-    section_pages = []
-    num = first_section_page
+    # Straight into the steps; the parts list follows as a reference.
+    num = 1
     for sec in norm["sections"]:
-        section_pages.append(num)
-        num += 1 + len(sec["steps"])
-
-    meta = " · ".join(x for x in (f"Revision {revision}" if revision else "", date) if x)
-    pages.append(page(f'''
-      <div class="cover-stripes"><i></i><i></i><i></i></div>
-      <div class="cover-text">
-        <div class="kicker">{esc(header_right)}</div>
-        <h1>{esc(title)}</h1>
-        <div class="subtitle">{esc(spec.get("subtitle", "Assembly manual"))}</div>
-        <div class="cover-rule"></div>
-        <div class="meta">{esc(meta)}</div>
-      </div>
-      <div class="cover-figure">{figure_html("cover", FIG_COVER)}</div>
-      <a class="cover-link screen" href="animation.html">Open the assembly animation →</a>
-    ''', 0, cls="cover"))
-
-    toc = "\n".join(
-        f'<li><span>{esc(sec["title"])}</span><span class="dots"></span><span>{section_pages[i]}</span></li>'
-        for i, sec in enumerate(norm["sections"]))
-    pages.append(page(f'''
-      <h2 class="page-title">Table of contents</h2>
-      <ol class="toc">
-        <li><span>Introduction</span><span class="dots"></span><span>3</span></li>
-        <li><span>Parts</span><span class="dots"></span><span>4</span></li>
-        {toc}
-      </ol>''', 2, "Contents", header_right))
-
-    pages.append(page(f'''
-      <h2 class="page-title">Introduction</h2>
-      <div class="intro">
-        <div class="intro-col">
-          <h3>Reading the steps</h3>
-          <p>Each step shows parts already fitted in white. Parts added in the step are blue.
-             Thin blue lines show the path each new part follows to its seat.</p>
-          <p>A label names each new part. A number after the name gives the quantity in the step.</p>
-          <h3>Animation</h3>
-          <p>The assembly animation plays every step in order. You can pause it, scrub it,
-             and orbit, pan or zoom the model at any time.</p>
-          <p class="screen"><a href="animation.html">Open the assembly animation →</a></p>
-          <h3>Clearance</h3>
-          <p class="{"draft" if clearance["status"] != "verified" else ""}">{esc(clearance["text"])}.
-             The check uses nominal CAD geometry. It does not prove fit, strength or print accuracy.</p>
-        </div>
-        <div class="intro-col">
-          <h3>Part key</h3>
-          <ul class="key">
-            <li><span class="swatch" style="background:{norm["colors"]["primary"]}"></span>Printed part, primary color</li>
-            <li><span class="swatch" style="background:{norm["colors"]["accent"]}"></span>Printed part, accent color</li>
-            <li><span class="swatch" style="background:{norm["colors"]["hardware"]}"></span>Hardware</li>
-            <li><span class="swatch" style="background:{norm["colors"]["purchased"]}"></span>Purchased part</li>
-            <li><span class="swatch hl"></span>Added in this step</li>
-          </ul>
-          <h3>Contents</h3>
-          <p>{len(norm["sections"])} sections, {n_steps} steps, {len(norm["names"])} parts in total.</p>
-        </div>
-      </div>''', 3, "Introduction", header_right))
-
-    for b in range(bom_pages):
-        chunk = bom_items[b * per_bom_page:(b + 1) * per_bom_page]
-        cards = []
-        for kind, t, info in chunk:
-            desc = f'<div class="desc">{esc(info["description"])}</div>' if info["description"] else ""
-            cards.append(f'''<div class="card"><img src="img/part-{esc(t)}.png" alt="">
-              <div><div class="cname">{esc(info["name"])}</div>
-              <div class="ckind"><span class="swatch" style="background:{info["color"]}"></span>{esc(kind_label(info))}</div>
-              {desc}</div><div class="cqty">×{info["count"]}</div></div>''')
-        pages.append(page(f'''<h2 class="page-title">Parts{" (continued)" if b else ""}</h2>
-          <div class="cards">{"".join(cards)}</div>''', 4 + b, "Parts", header_right))
-
-    num = first_section_page
-    for s_i, sec in enumerate(norm["sections"]):
-        pages.append(page(f'''
-          <div class="section-head"><div class="kicker">Section {s_i + 1}</div><h2>{esc(sec["title"])}</h2></div>
-          <div class="section-figure">{figure_html(f"section-{s_i + 1}", FIG_SECTION)}</div>
-          <div class="section-parts"><h3>Parts in this section</h3>
-            <ul>{part_rows(norm, counts_for(norm, sec["steps"]))}</ul></div>''',
-                          num, sec["title"], header_right, cls="section-page"))
-        num += 1
         for i in sec["steps"]:
             step = norm["steps"][i]
             key = f"step-{i + 1:02d}"
@@ -848,6 +754,22 @@ def manual_html(norm, figures, clearance):
                 <a class="screen watch" href="animation.html#step={i + 1}">Watch this step →</a>
               </aside>''', num, f"{sec['title']} · {step['title']}", header_right, cls="step-page"))
             num += 1
+
+    bom_items = [(t, i) for k in KINDS for t, i in norm["types"].items() if i["kind"] == k]
+    per_bom_page = 15
+    for b in range(math.ceil(len(bom_items) / per_bom_page)):
+        cards = []
+        for t, info in bom_items[b * per_bom_page:(b + 1) * per_bom_page]:
+            desc = f'<div class="desc">{esc(info["description"])}</div>' if info["description"] else ""
+            cards.append(f'''<div class="card"><img src="img/part-{esc(t)}.png" alt="">
+              <div><div class="cname">{esc(info["name"])}</div>
+              <div class="ckind"><span class="swatch" style="background:{info["color"]}"></span>{esc(kind_label(info))}</div>
+              {desc}</div><div class="cqty">×{info["count"]}</div></div>''')
+        pages.append(page(f'''<h2 class="page-title">Parts{" (continued)" if b else ""}</h2>
+          <div class="cards">{"".join(cards)}</div>
+          <p class="clearance">{esc(clearance["text"])}. The check uses nominal CAD geometry;
+             it does not prove fit, strength or print accuracy.</p>''', num, "Parts", header_right))
+        num += 1
 
     draft = '<div class="draft-banner">DRAFT: assembly paths not clearance-checked</div>' \
         if clearance["status"] != "verified" else ""

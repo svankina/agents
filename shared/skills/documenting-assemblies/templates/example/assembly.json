@@ -1,7 +1,5 @@
 {
   "title": "Hand-cranked shaft support",
-  "subtitle": "Assembly manual",
-  "revision": "A",
   "model": "out/assembly.glb",
   "step": "out/assembly.step",
   "view": {"az": 35, "el": 28},

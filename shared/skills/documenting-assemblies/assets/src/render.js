@@ -3,7 +3,7 @@
 // a PNG data URL plus pill label placements in CSS pixels of the figure.
 
 import { AssemblyView } from './scene.js';
-import { prepare, explodedStep, completedThrough } from './timeline.js';
+import { prepare, explodedStep } from './timeline.js';
 
 const ISO = { az: 35, el: 28 };
 
@@ -136,9 +136,6 @@ export async function startRenderer() {
         style = 'line';
         highlight = step.parts;
         moves = step.moves;
-      } else if (req.kind === 'state') {
-        offsets = completedThrough(tl, req.index);
-        v = req.view || tl.view;
       } else if (req.kind === 'part') {
         offsets = new Map([[req.name, [0, 0, 0]]]);
         v = ISO;

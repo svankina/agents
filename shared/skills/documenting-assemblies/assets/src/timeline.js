@@ -81,9 +81,3 @@ export function explodedStep(tl, si) {
   }
   return offsets;
 }
-
-export function completedThrough(tl, si) {
-  const offsets = new Map();
-  for (const [name, it] of tl.intro) if (it.si <= si) offsets.set(name, ZERO);
-  return offsets;
-}

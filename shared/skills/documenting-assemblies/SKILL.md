@@ -65,8 +65,8 @@ Extending) so the next mechanism gets the improvement.
   covers the whole path. It uses nominal geometry; it does not prove fit,
   tolerance stack-up, strength, or print accuracy.
 - **build** renders the figures in headless Chromium with Playwright. The
-  manual uses US Letter landscape pages: cover, contents, introduction,
-  parts list, a section opener per section, and one page per step. Step
+  manual uses US Letter landscape pages and starts straight at step 1, one
+  page per step, with a parts list at the end. No cover or front matter. Step
   figures are white line art. Parts added in the step are blue, with guide
   lines along their paths and labelled pills. The animation uses the same
   timeline, so the two never disagree.
