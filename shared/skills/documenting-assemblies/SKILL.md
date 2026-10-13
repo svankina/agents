@@ -7,7 +7,7 @@ description: Use when you build a mechanism or any multi-part assembly the user 
 
 A mechanism is not delivered until it has three things, all from one spec:
 
-- a Voron-style assembly manual (HTML and PDF),
+- an assembly manual webpage with Voron-style step drawings,
 - an interactive assembly animation that the user can pause, scrub, orbit,
   pan, and zoom,
 - a clearance certificate for every assembly motion.
@@ -44,16 +44,16 @@ Extending) so the next mechanism gets the improvement.
    on a move means the sequence or path is wrong: change it. A FAIL in the
    assembled state is a design defect: fix the model.
 4. **Publish.** Run `assembly-docs publish assembly.json`. It prints one URL:
-   the manual at `/`, `/manual.pdf`, and `/animation.html`. Give the user the
+   the manual at `/` and the animation at `/animation.html`. Give the user the
    URL. Also deliver the model through `serving-cad-files` when the model
    itself is the subject.
-5. **Inspect.** Rasterize the PDF (`pdftoppm -r 60 -png`) and look at every
-   page. Confirm that each label points at the right part and that new parts
-   are visible. Open the animation in the browser tool; play, pause, scrub,
-   and pan it. Report what you inspected.
+5. **Inspect.** Open the manual in the browser tool at desktop and phone
+   widths and look at every step. Confirm that each label points at the right
+   part and that new parts are visible. Open the animation; play, pause,
+   scrub, and pan it. Report what you inspected.
 
 `build` and `publish` refuse a missing, failed, or stale certificate. Use
-`--draft` only for work in progress; draft output says so on every page.
+`--draft` only for work in progress; draft output says so in the manual header.
 
 ## What the library does
 
@@ -65,11 +65,11 @@ Extending) so the next mechanism gets the improvement.
   covers the whole path. It uses nominal geometry; it does not prove fit,
   tolerance stack-up, strength, or print accuracy.
 - **build** renders the figures in headless Chromium with Playwright. The
-  manual uses US Letter landscape pages and starts straight at step 1, one
-  page per step, with a parts list at the end. No cover or front matter. Step
-  figures are white line art. Parts added in the step are blue, with guide
-  lines along their paths and labelled pills. The animation uses the same
-  timeline, so the two never disagree.
+  manual is a responsive webpage with no cover or front matter: a step list
+  beside large step figures on wide screens, stacked on phones, and a parts
+  list at the end. Step figures are white line art. Parts added in the step
+  are blue, with guide lines along their paths and labelled pills. The
+  animation uses the same timeline, so the two never disagree.
 - The animation supports play/pause (Space), step navigation (arrow keys),
   scrubbing, speed, loop, shaded or line-art style, path guides, and orbit,
   pan (right-drag or Shift-drag), and zoom at any time.

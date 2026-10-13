@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Build a Voron-style assembly manual and an interactive assembly animation
-from one assembly spec, and certify that every assembly motion is collision-free.
+"""Build an assembly manual webpage (Voron-style step drawings) and an
+interactive assembly animation from one assembly spec, and certify that every
+assembly motion is collision-free.
 
 usage:
   assembly-docs check   ASSEMBLY.json                     clearance check (build123d)
-  assembly-docs build   ASSEMBLY.json [--draft] [--no-pdf]  write OUT/site
+  assembly-docs build   ASSEMBLY.json [--draft]           write OUT/site
   assembly-docs publish ASSEMBLY.json [--draft] [--name NAME]  build, serve, print URL
 
 The spec is the single source for the manual, the animation, and the check.
@@ -568,8 +569,8 @@ def stage_fonts(site):
     (fonts / "fonts.css").write_text("\n".join(faces) + "\n")
 
 
-PILL = {"font": "400 12.5px Lato, 'Open Sans', sans-serif", "padX": 14, "height": 26}
-FIG_STEP = (700, 600)
+PILL = {"font": "400 15px Lato, 'Open Sans', sans-serif", "padX": 16, "height": 30}
+FIG_STEP = (1000, 720)
 FIG_PART = (150, 120)
 
 
@@ -615,19 +616,7 @@ def render_figures(site, jobs):
     return results
 
 
-def write_pdf(site):
-    from playwright.sync_api import sync_playwright
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        page = browser.new_page()
-        page.goto((site / "index.html").as_uri())
-        page.wait_for_load_state("networkidle")
-        page.evaluate("async () => { await document.fonts.ready; return true; }")
-        page.pdf(path=str(site / "manual.pdf"), prefer_css_page_size=True, print_background=True)
-        browser.close()
-
-
-def build(norm, draft, pdf=True):
+def build(norm, draft):
     clearance = clearance_status(norm, draft)
     site = norm["out"] / "site"
     if site.exists():
@@ -652,8 +641,6 @@ def build(norm, draft, pdf=True):
     figures = render_figures(site, jobs)
     (site / "render.html").unlink()
     (site / "index.html").write_text(manual_html(norm, figures, clearance))
-    if pdf:
-        write_pdf(site)
     return site
 
 
@@ -699,87 +686,83 @@ def counts_for(norm, step_indices):
     return counts
 
 
-def page(content, number, left="", right="", cls=""):
-    head = (f'<header><span class="left">{esc(left)}</span><span class="right">{esc(right)}</span></header>'
-            if left or right else "")
-    foot = f'<footer><span class="num">{number}</span><span class="rule"></span></footer>' if number else ""
-    return f'<section class="page {cls}">{head}{content}{foot}</section>'
-
-
-def figure_html(key, size, res=None):
+def figure_svg(key, size, res=None):
+    """Step figure: one SVG for image and leaders, so they scale together, and
+    HTML pills over it, so label text stays readable on small screens."""
     w, h = size
-    labels = []
-    lines = []
+    parts = [f'<image href="img/{key}.png" width="{w}" height="{h}"/>']
+    pills = []
     for lab in (res or {}).get("labels", []):
         if lab.get("anchor") is None:
             continue
         ax, ay = lab["anchor"]
-        x, y, lw, lh = lab["x"], lab["y"], lab["w"], lab["h"]
-        px = min(max(ax, x), x + lw)
-        py = min(max(ay, y), y + lh)
-        lines.append(f'<line x1="{ax:.1f}" y1="{ay:.1f}" x2="{px:.1f}" y2="{py:.1f}"/>'
-                     f'<circle cx="{ax:.1f}" cy="{ay:.1f}" r="2.4"/>')
-        labels.append(f'<div class="pill" style="left:{x:.1f}px;top:{y:.1f}px;width:{lw}px;height:{lh}px;'
-                      f'line-height:{lh}px">{esc(lab["text"])}</div>')
-    svg = (f'<svg class="leaders" viewBox="0 0 {w} {h}" width="{w}" height="{h}">{"".join(lines)}</svg>'
-           if lines else "")
-    return (f'<div class="figure" style="width:{w}px;height:{h}px"><img src="img/{key}.png" '
-            f'width="{w}" height="{h}" alt="">{svg}{"".join(labels)}</div>')
+        cx, cy = lab["x"] + lab["w"] / 2, lab["y"] + lab["h"] / 2
+        parts.append(f'<line class="leader" x1="{ax:.1f}" y1="{ay:.1f}" x2="{cx:.1f}" y2="{cy:.1f}"/>'
+                     f'<circle class="leader" cx="{ax:.1f}" cy="{ay:.1f}" r="2.6"/>')
+        pills.append(f'<span class="pill" style="left:{100 * cx / w:.2f}%;top:{100 * cy / h:.2f}%">'
+                     f'{esc(lab["text"])}</span>')
+    return (f'<div class="figure"><svg viewBox="0 0 {w} {h}" role="img">{"".join(parts)}</svg>'
+            f'{"".join(pills)}</div>')
 
 
 def manual_html(norm, figures, clearance):
-    spec = norm["spec"]
-    title = spec["title"]
-    header_right = spec.get("header", title).upper()
-    if clearance["status"] != "verified":
-        header_right = f"DRAFT · {header_right}"
-    pages = []
-
-    # Straight into the steps; the parts list follows as a reference.
-    num = 1
+    title = norm["spec"]["title"]
+    draft = clearance["status"] != "verified"
+    nav, body = [], []
     for sec in norm["sections"]:
+        nav.append(f'<div class="nav-section">{esc(sec["title"])}</div>')
         for i in sec["steps"]:
             step = norm["steps"][i]
             key = f"step-{i + 1:02d}"
+            nav.append(f'<a href="#step-{i + 1}"><span class="n">{i + 1}</span>{esc(step["title"])}</a>')
             notes = "".join(f'<div class="note {n["kind"]}"><h4>{esc(n["title"])}</h4><p>{esc(n["text"])}</p></div>'
                             for n in step["notes"])
-            pages.append(page(f'''
-              <div class="step-figure">{figure_html(key, FIG_STEP, figures.get(key))}</div>
-              <aside class="step-side">
-                <div class="step-num">{i + 1:02d}</div>
-                <h2>{esc(step["title"])}</h2>
-                <div class="notes">{notes}</div>
-                <h3>This step</h3>
-                <ul>{part_rows(norm, counts_for(norm, [i]), icons=True)}</ul>
-                <a class="screen watch" href="animation.html#step={i + 1}">Watch this step →</a>
-              </aside>''', num, f"{sec['title']} · {step['title']}", header_right, cls="step-page"))
-            num += 1
+            body.append(f'''<section class="step" id="step-{i + 1}">
+  <div class="figure-wrap">{figure_svg(key, FIG_STEP, figures.get(key))}</div>
+  <aside>
+    <div class="kicker">{esc(sec["title"])} · Step {i + 1} of {len(norm["steps"])}</div>
+    <h2>{esc(step["title"])}</h2>
+    {notes}
+    <h3>This step</h3>
+    <ul>{part_rows(norm, counts_for(norm, [i]), icons=True)}</ul>
+    <a class="watch" href="animation.html#step={i + 1}">Watch this step →</a>
+  </aside>
+</section>''')
+    nav.append('<div class="nav-section">Reference</div><a href="#parts">Parts</a>')
 
-    bom_items = [(t, i) for k in KINDS for t, i in norm["types"].items() if i["kind"] == k]
-    per_bom_page = 15
-    for b in range(math.ceil(len(bom_items) / per_bom_page)):
-        cards = []
-        for t, info in bom_items[b * per_bom_page:(b + 1) * per_bom_page]:
+    cards = []
+    for kind in KINDS:
+        for t, info in norm["types"].items():
+            if info["kind"] != kind:
+                continue
             desc = f'<div class="desc">{esc(info["description"])}</div>' if info["description"] else ""
             cards.append(f'''<div class="card"><img src="img/part-{esc(t)}.png" alt="">
-              <div><div class="cname">{esc(info["name"])}</div>
-              <div class="ckind"><span class="swatch" style="background:{info["color"]}"></span>{esc(kind_label(info))}</div>
-              {desc}</div><div class="cqty">×{info["count"]}</div></div>''')
-        pages.append(page(f'''<h2 class="page-title">Parts{" (continued)" if b else ""}</h2>
-          <div class="cards">{"".join(cards)}</div>
-          <p class="clearance">{esc(clearance["text"])}. The check uses nominal CAD geometry;
-             it does not prove fit, strength or print accuracy.</p>''', num, "Parts", header_right))
-        num += 1
+  <div><div class="cname">{esc(info["name"])}</div>
+  <div class="ckind"><span class="swatch" style="background:{info["color"]}"></span>{esc(kind_label(info))}</div>
+  {desc}</div><div class="cqty">×{info["count"]}</div></div>''')
+    body.append(f'''<section class="parts" id="parts"><h2>Parts</h2><div class="cards">{"".join(cards)}</div>
+  <p class="clearance{" draft" if draft else ""}">{esc(clearance["text"])}. The check uses nominal CAD
+  geometry; it does not prove fit, strength or print accuracy.</p></section>''')
 
-    draft = '<div class="draft-banner">DRAFT: assembly paths not clearance-checked</div>' \
-        if clearance["status"] != "verified" else ""
     return f'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{esc(title)} — assembly manual</title>
 <link rel="stylesheet" href="fonts/fonts.css"><link rel="stylesheet" href="manual.css"></head>
-<body>{draft}
-<nav class="screen toolbar"><span>{esc(title)}</span><a href="animation.html">Animation</a><a href="manual.pdf">PDF</a></nav>
-{"".join(pages)}
+<body>
+<header class="top"><h1>{esc(title)}</h1>
+  <span class="status{" draft" if draft else ""}">{esc(clearance["text"])}</span>
+  <a class="animation" href="animation.html">Assembly animation →</a></header>
+<div class="layout"><nav class="steps">{"".join(nav)}</nav><main>{"".join(body)}</main></div>
+<script>
+const links = new Map([...document.querySelectorAll('nav.steps a')].map((a) => [a.hash.slice(1), a]));
+const observer = new IntersectionObserver((entries) => {{
+  for (const e of entries) if (e.isIntersecting) {{
+    links.forEach((a) => a.classList.remove('current'));
+    links.get(e.target.id)?.classList.add('current');
+  }}
+}}, {{ rootMargin: '-45% 0px -50% 0px' }});
+document.querySelectorAll('main > section').forEach((s) => observer.observe(s));
+</script>
 </body></html>
 '''
 
@@ -811,13 +794,13 @@ def main(argv):
     cmd, rest = argv[0], argv[1:]
     if cmd not in ("check", "build", "publish"):
         die(f"unknown command {cmd!r}; see --help")
-    flags = {"--draft": False, "--no-pdf": False}
+    draft = False
     name = None
     args = []
     it = iter(rest)
     for a in it:
-        if a in flags and cmd != "check":
-            flags[a] = True
+        if a == "--draft" and cmd != "check":
+            draft = True
         elif a == "--name" and cmd == "publish":
             name = next(it, None) or die("--name needs a value")
         elif a.startswith("-"):
@@ -838,7 +821,7 @@ def main(argv):
         norm = load_spec(args[0])
         if cmd == "check":
             return run_check(norm)
-        site = build(norm, flags["--draft"], pdf=not flags["--no-pdf"])
+        site = build(norm, draft)
         if cmd == "build":
             print(site)
         else:
