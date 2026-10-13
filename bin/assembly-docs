@@ -1,0 +1,931 @@
+#!/usr/bin/env python3
+"""Build a Voron-style assembly manual and an interactive assembly animation
+from one assembly spec, and certify that every assembly motion is collision-free.
+
+usage:
+  assembly-docs check   ASSEMBLY.json                     clearance check (build123d)
+  assembly-docs build   ASSEMBLY.json [--draft] [--no-pdf]  write OUT/site
+  assembly-docs publish ASSEMBLY.json [--draft] [--name NAME]  build, serve, print URL
+
+The spec is the single source for the manual, the animation, and the check.
+Relative paths resolve against the spec's directory. Lengths are mm, CAD Z up.
+
+  {
+    "title": "Spool holder", "subtitle": "Assembly manual", "revision": "A",
+    "model": "out/assembly.glb",   build123d export_gltf(..., unit=Unit.M)
+    "step": "out/assembly.step",   same compound, used by `check`
+    "out": "out/assembly-docs",    default; site in OUT/site, certificate OUT/clearance.json
+    "view": {"az": 35, "el": 28},  default camera: az 0 = front (from -Y), 90 = right
+    "colors": {"primary": "#3a3d42", "accent": "#d42a30"},
+    "parts": {                     keyed by part type (instance name minus _N suffix)
+      "base": {"name": "Base", "kind": "printed", "color": "accent"},
+      "m3x8_shcs": {"name": "M3x8 SHCS", "kind": "hardware",
+                    "description": "ISO 4762 socket head cap screw"}
+    },
+    "sections": [{"title": "Frame", "steps": [
+      {"title": "Lay out the base", "place": ["base"]},
+      {"title": "Fit the screws", "view": {"az": 20, "el": 40}, "focus": ["base", "m3x8_*"],
+       "moves": [{"parts": ["m3x8_shcs_*"], "from": [0, 0, 30]},
+                 {"parts": ["lid"], "path": [[0, 60, 40], [0, 0, 40]]}],
+       "notes": [{"title": "Seat fully", "text": "...", "kind": "tip"}]}
+    ]}],
+    "clearance": {"tolerance_mm": 0.05, "max_mm3": 0.001,
+                  "allowed": [{"a": "insert_*", "b": "base", "reason": "heat-set interference"}]},
+    "animation": {"speed_mm_s": 60}
+  }
+
+Instances are the labelled solids of the exported compound; every instance is
+introduced exactly once, by "place" (appears installed) or by a move. A move's
+parts travel together along "path" (offsets from the installed pose, visited
+in order, ending at the installed pose); "from" is a one-point path. Moves in
+a step play in order. Patterns use shell globs over instance names. Part kinds:
+printed (color primary|accent|#hex), hardware, purchased.
+
+check certifies every move against all parts installed before it: it samples
+the exact BREP distance and advances by at least the current clearance, so no
+pose between samples penetrates deeper than tolerance_mm. It also checks the
+assembled state pairwise. Only translations exist, so the sweep check is
+complete. Exit 0 pass, 1 failure, 2 spec or load error. build refuses a stale
+or missing certificate unless --draft, which marks the output DRAFT.
+"""
+
+import base64
+import fnmatch
+import hashlib
+import html
+import json
+import math
+import os
+import re
+import shutil
+import struct
+import subprocess
+import sys
+import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
+
+ASSETS = Path(__file__).resolve().parent.parent / "shared/skills/documenting-assemblies/assets"
+KINDS = ("printed", "hardware", "purchased")
+NOTE_KINDS = ("note", "tip", "warning")
+DEFAULT_COLORS = {"primary": "#3a3d42", "accent": "#d42a30", "hardware": "#a9aeb5", "purchased": "#55595f"}
+DEFAULT_VIEW = {"az": 35.0, "el": 28.0}
+AUTO_NODE = re.compile(r"^(=>\[?[\d:]*\]?|mesh_\d+(_\d+)?)?$")
+COUNTER = re.compile(r"(?:[_-]\d+)+$")
+HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+class SpecError(Exception):
+    pass
+
+
+def die(msg, code=2):
+    print(f"assembly-docs: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def sha256(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+# --- spec normalisation (stdlib only) -----------------------------------------
+
+def glb_instances(path):
+    """(name, node index) for every glTF node with a mesh, in node order."""
+    data = Path(path).read_bytes()
+    if data[:4] != b"glTF":
+        raise SpecError(f"{path}: not a binary glTF (.glb)")
+    length, kind = struct.unpack("<II", data[12:20])
+    if kind != 0x4E4F534A:
+        raise SpecError(f"{path}: first GLB chunk is not JSON")
+    doc = json.loads(data[20:20 + length])
+    meshes = doc.get("meshes", [])
+    out = []
+    for index, node in enumerate(doc.get("nodes", [])):
+        if node.get("mesh") is None:
+            continue
+        name = node.get("name") or ""
+        if AUTO_NODE.match(name):
+            name = meshes[node["mesh"]].get("name") or ""
+        out.append((name, index))
+    return out
+
+
+def check_names(names, where):
+    bad = sorted({n for n in names if not n or n.upper() == "SOLID"})
+    if bad:
+        raise SpecError(f"{where}: unlabelled solids; set solid.label on every exported "
+                        f"build123d Solid (labels on a Part or Compound are lost)")
+    seen = {}
+    for n in names:
+        seen[n] = seen.get(n, 0) + 1
+    dup = sorted(n for n, c in seen.items() if c > 1)
+    if dup:
+        raise SpecError(f"{where}: duplicate instance labels {dup}; give every instance a "
+                        f"unique label and build repeated parts with copy.deepcopy(), because "
+                        f"shared geometry keeps only one label")
+
+
+def type_of(name):
+    return COUNTER.sub("", name) or name
+
+
+def vec3(value, where):
+    if (not isinstance(value, list) or len(value) != 3
+            or not all(isinstance(x, (int, float)) and math.isfinite(x) for x in value)):
+        raise SpecError(f"{where}: expected [x, y, z] in mm, got {value!r}")
+    return [float(x) for x in value]
+
+
+def view_of(value, inherited, where):
+    if value is None:
+        return dict(inherited)
+    if not isinstance(value, dict) or not set(value) <= {"az", "el"}:
+        raise SpecError(f"{where}: view must be {{\"az\": deg, \"el\": deg}}")
+    out = dict(inherited)
+    for k, v in value.items():
+        if not isinstance(v, (int, float)) or not math.isfinite(v):
+            raise SpecError(f"{where}: view.{k} must be a number")
+        out[k] = float(v)
+    return out
+
+
+def expand(patterns, names, where):
+    if isinstance(patterns, str) or not isinstance(patterns, list) or not patterns:
+        raise SpecError(f"{where}: expected a non-empty list of instance names or globs")
+    out = []
+    for pat in patterns:
+        hits = [n for n in names if fnmatch.fnmatchcase(n, pat)]
+        if not hits:
+            raise SpecError(f"{where}: {pat!r} matches no instance")
+        out.extend(h for h in hits if h not in out)
+    return out
+
+
+def color_of(meta, kind, colors, where):
+    value = meta.get("color", "primary" if kind == "printed" else kind)
+    if value in colors:
+        return colors[value]
+    if isinstance(value, str) and HEX.match(value):
+        return value
+    raise SpecError(f"{where}: color must be primary, accent, hardware, purchased or #rrggbb")
+
+
+def load_spec(path):
+    path = Path(path).resolve()
+    try:
+        spec = json.loads(path.read_text())
+    except (OSError, ValueError) as e:
+        raise SpecError(f"{path}: {e}")
+    base = path.parent
+    for key in ("title", "model", "step", "sections"):
+        if key not in spec:
+            raise SpecError(f"spec needs {key!r}")
+    model, step_file = base / spec["model"], base / spec["step"]
+    for f in (model, step_file):
+        if not f.is_file():
+            raise SpecError(f"missing file {f}")
+    found = glb_instances(model)
+    names = [n for n, _ in found]
+    check_names(names, model.name)
+    node_of = dict(found)
+
+    colors = dict(DEFAULT_COLORS)
+    for k, v in (spec.get("colors") or {}).items():
+        if k not in DEFAULT_COLORS or not isinstance(v, str) or not HEX.match(v):
+            raise SpecError(f"colors.{k}: expected one of {sorted(DEFAULT_COLORS)} as #rrggbb")
+        colors[k] = v
+
+    types = {}
+    for n in names:
+        types.setdefault(type_of(n), []).append(n)
+    parts_meta = spec.get("parts") or {}
+    unknown = sorted(set(parts_meta) - set(types))
+    if unknown:
+        raise SpecError(f"parts: {unknown} match no instance type; types are {sorted(types)}")
+    type_info = {}
+    for t, inst in types.items():
+        meta = parts_meta.get(t, {})
+        kind = meta.get("kind", "printed")
+        if kind not in KINDS:
+            raise SpecError(f"parts.{t}.kind must be one of {KINDS}")
+        type_info[t] = {
+            "name": meta.get("name", t.replace("_", " ")), "kind": kind,
+            "color": color_of(meta, kind, colors, f"parts.{t}"),
+            "accent": meta.get("color") == "accent",
+            "description": meta.get("description", ""), "count": len(inst), "instances": inst,
+        }
+
+    speed = float((spec.get("animation") or {}).get("speed_mm_s", 60))
+    if not speed > 0:
+        raise SpecError("animation.speed_mm_s must be positive")
+    view = view_of(spec.get("view"), DEFAULT_VIEW, "view")
+    introduced = {}
+    sections, steps = [], []
+    t = 0.0
+    if not isinstance(spec["sections"], list) or not spec["sections"]:
+        raise SpecError("sections must be a non-empty list")
+    for s_i, section in enumerate(spec["sections"]):
+        if "title" not in section or not section.get("steps"):
+            raise SpecError(f"sections[{s_i}] needs a title and steps")
+        if set(section) - {"title", "steps", "view"}:
+            raise SpecError(f"sections[{s_i}]: unknown keys {sorted(set(section) - {'title', 'steps', 'view'})}")
+        sec = {"title": section["title"], "steps": [],
+               "view": view_of(section.get("view"), view, f"sections[{s_i}].view")}
+        step_view = sec["view"]
+        for p_i, raw in enumerate(section["steps"]):
+            where = f"sections[{s_i}].steps[{p_i}] ({raw.get('title', '?')})"
+            if "title" not in raw:
+                raise SpecError(f"{where}: needs a title")
+            extra = set(raw) - {"title", "place", "moves", "notes", "view", "focus"}
+            if extra:
+                raise SpecError(f"{where}: unknown keys {sorted(extra)}")
+            step_view = view_of(raw.get("view"), step_view, where)
+            step = {"title": raw["title"], "section": s_i, "view": step_view, "t0": t,
+                    "place": None, "moves": [], "parts": [], "notes": []}
+
+            def introduce(found_names, label):
+                for n in found_names:
+                    if n in introduced:
+                        raise SpecError(f"{label}: {n} was already introduced in {introduced[n]}")
+                    introduced[n] = label
+                    step["parts"].append(n)
+
+            if raw.get("place"):
+                placed = expand(raw["place"], names, f"{where}.place")
+                introduce(placed, where)
+                step["place"] = {"parts": placed, "t0": t}
+                t += 0.8
+            for m_i, move in enumerate(raw.get("moves") or []):
+                mw = f"{where}.moves[{m_i}]"
+                extra = set(move) - {"parts", "path", "from"}
+                if extra or ("path" in move) == ("from" in move):
+                    raise SpecError(f"{mw}: needs parts and exactly one of path or from")
+                moved = expand(move.get("parts"), names, f"{mw}.parts")
+                introduce(moved, where)
+                raw_path = move["path"] if "path" in move else [move["from"]]
+                if not isinstance(raw_path, list) or not raw_path:
+                    raise SpecError(f"{mw}.path: expected a list of [x, y, z]")
+                pts = [vec3(p, f"{mw}.path") for p in raw_path]
+                if pts[-1] != [0.0, 0.0, 0.0]:
+                    pts.append([0.0, 0.0, 0.0])
+                if len(pts) < 2:
+                    raise SpecError(f"{mw}: path has no travel; use place instead")
+                travel = sum(math.dist(a, b) for a, b in zip(pts, pts[1:]))
+                duration = min(4.0, max(0.8, travel / speed))
+                m = {"parts": moved, "path": pts, "t0": t, "tm": t + 0.4, "t1": t + 0.4 + duration}
+                step["moves"].append(m)
+                t = m["t1"] + 0.2
+            if not step["parts"]:
+                raise SpecError(f"{where}: introduces no parts; use place or moves")
+            for n_i, note in enumerate(raw.get("notes") or []):
+                if isinstance(note, str):
+                    note = {"title": "Note", "text": note}
+                kind = note.get("kind", "note")
+                if kind not in NOTE_KINDS or "text" not in note:
+                    raise SpecError(f"{where}.notes[{n_i}]: needs text; kind is one of {NOTE_KINDS}")
+                step["notes"].append({"title": note.get("title", kind.title()), "text": note["text"], "kind": kind})
+            step["focus"] = expand(raw["focus"], names, f"{where}.focus") if "focus" in raw else None
+            t += 0.6
+            step["t1"] = t
+            sec["steps"].append(len(steps))
+            steps.append(step)
+        sections.append(sec)
+    missing = [n for n in names if n not in introduced]
+    if missing:
+        raise SpecError(f"instances never introduced by any step: {missing}")
+
+    clearance = spec.get("clearance") or {}
+    tol = float(clearance.get("tolerance_mm", 0.05))
+    max_mm3 = float(clearance.get("max_mm3", 0.001))
+    if not tol > 0 or not max_mm3 >= 0:
+        raise SpecError("clearance.tolerance_mm must be > 0 and max_mm3 >= 0")
+    allowed = []
+    for a_i, rule in enumerate(clearance.get("allowed") or []):
+        if not rule.get("reason") or "a" not in rule or "b" not in rule:
+            raise SpecError(f"clearance.allowed[{a_i}]: needs a, b and a physical reason")
+        for side in ("a", "b"):
+            if not any(fnmatch.fnmatchcase(n, rule[side]) for n in names):
+                raise SpecError(f"clearance.allowed[{a_i}].{side}: {rule[side]!r} matches no instance")
+        allowed.append({"a": rule["a"], "b": rule["b"], "reason": rule["reason"]})
+
+    motion = json.dumps({
+        "steps": [{"place": s["place"]["parts"] if s["place"] else [],
+                   "moves": [[m["parts"], m["path"]] for m in s["moves"]]} for s in steps],
+        "tol": tol, "max_mm3": max_mm3, "allowed": allowed}, sort_keys=True)
+    return {
+        "path": path, "base": base, "spec": spec, "model": model, "step_file": step_file,
+        "out": base / spec.get("out", "out/assembly-docs"),
+        "names": names, "node_of": node_of, "types": type_info, "colors": colors,
+        "sections": sections, "steps": steps, "duration": t, "view": view,
+        "tolerance": tol, "max_mm3": max_mm3, "allowed": allowed,
+        "motion_sha256": hashlib.sha256(motion.encode()).hexdigest(),
+    }
+
+
+def is_allowed(norm, a, b):
+    for rule in norm["allowed"]:
+        if ((fnmatch.fnmatchcase(a, rule["a"]) and fnmatch.fnmatchcase(b, rule["b"]))
+                or (fnmatch.fnmatchcase(b, rule["a"]) and fnmatch.fnmatchcase(a, rule["b"]))):
+            return rule
+    return None
+
+
+# --- clearance check (build123d) ----------------------------------------------
+
+def step_solids(path):
+    from build123d import Solid, import_step
+
+    found = []
+
+    def walk(shape, inherited):
+        label = shape.label if shape.label and shape.label.upper() != "SOLID" else inherited
+        if isinstance(shape, Solid):
+            found.append((label or "", shape))
+        for child in getattr(shape, "children", ()) or ():
+            walk(child, label)
+
+    root = import_step(str(path))
+    walk(root, "")
+    if not found:
+        found = [(s.label or "", s) for s in root.solids()]
+    return found
+
+
+_SOLIDS = {}
+
+
+def _box_gap(a, b):
+    return math.sqrt(sum(max(0.0, a[0][i] - b[1][i], b[0][i] - a[1][i]) ** 2 for i in range(3)))
+
+
+def _distance(a, b):
+    from OCP.BRepExtrema import BRepExtrema_DistShapeShape
+    from OCP.Extrema import Extrema_ExtFlag_MIN
+
+    d = BRepExtrema_DistShapeShape(a.wrapped, b.wrapped, Extrema_ExtFlag_MIN)
+    if not d.IsDone():
+        raise RuntimeError("BRep distance computation failed")
+    return 0.0 if d.InnerSolution() else d.Value()
+
+
+def _overlap(a, b):
+    common = a.intersect(b)
+    return common.volume if common is not None else 0.0
+
+
+def _sweep(job):
+    """Advance one solid along one straight segment past one installed solid.
+
+    A sample with clearance g permits a step of g with no contact, so steps of
+    max(g, tol) bound any unseen penetration by tol. Bounding-box separation is
+    a cheaper lower bound on g and is used when it exceeds tol."""
+    from build123d import Location
+
+    key, mover, other, a, b, tol, max_mm3 = job
+    solid, target = _SOLIDS[mover], _SOLIDS[other]
+    box, tbox = _SOLIDS[(mover, "box")], _SOLIDS[(other, "box")]
+    length = math.dist(a, b)
+    s, samples, closest, failure = 0.0, 0, math.inf, None
+    while True:
+        f = s / length if length else 1.0
+        pos = [a[i] + (b[i] - a[i]) * f for i in range(3)]
+        moved_box = ([box[0][i] + pos[i] for i in range(3)], [box[1][i] + pos[i] for i in range(3)])
+        gap = _box_gap(moved_box, tbox)
+        if gap <= tol:
+            placed = solid.moved(Location(tuple(pos)))
+            gap = _distance(placed, target)
+            samples += 1
+            if gap <= 1e-6:
+                vol = _overlap(placed, target)
+                if vol > max_mm3:
+                    failure = (pos, vol)
+                    break
+        closest = min(closest, gap)
+        if s >= length:
+            break
+        s = min(length, s + max(gap, tol))
+    return key, mover, other, samples, closest, failure
+
+
+def _assembled(job):
+    a, b = job
+    return a, b, _overlap(_SOLIDS[a], _SOLIDS[b])
+
+
+def run_check(norm):
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+
+    solids = step_solids(norm["step_file"])
+    labels = [n for n, _ in solids]
+    check_names(labels, norm["step_file"].name)
+    if set(labels) != set(norm["names"]):
+        only_step = sorted(set(labels) - set(norm["names"]))
+        only_glb = sorted(set(norm["names"]) - set(labels))
+        raise SpecError(f"STEP and GLB instances differ: only in STEP {only_step}, only in GLB {only_glb}; "
+                        f"export both from the same compound")
+    tol, max_mm3 = norm["tolerance"], norm["max_mm3"]
+    for n, s in solids:
+        bb = s.bounding_box()
+        _SOLIDS[n] = s
+        _SOLIDS[(n, "box")] = ([bb.min.X, bb.min.Y, bb.min.Z], [bb.max.X, bb.max.Y, bb.max.Z])
+    box = lambda n: _SOLIDS[(n, "box")]  # noqa: E731
+
+    sweeps, moves, installed = [], [], []
+    for s_i, step in enumerate(norm["steps"]):
+        if step["place"]:
+            installed.extend(step["place"]["parts"])
+        for m_i, move in enumerate(step["moves"]):
+            key = len(moves)
+            moves.append({"label": f"step {s_i + 1} ({step['title']}) move {m_i + 1}", "parts": move["parts"],
+                          "samples": 0, "closest": math.inf, "pair": None})
+            for mover in move["parts"]:
+                for other in installed:
+                    if is_allowed(norm, mover, other):
+                        continue
+                    for a, b in zip(move["path"], move["path"][1:]):
+                        lo = [min(a[i], b[i]) for i in range(3)]
+                        hi = [max(a[i], b[i]) for i in range(3)]
+                        swept = ([box(mover)[0][i] + lo[i] for i in range(3)],
+                                 [box(mover)[1][i] + hi[i] for i in range(3)])
+                        if _box_gap(swept, box(other)) > tol:
+                            continue
+                        # Pieces of at most 10 mm run in parallel; each starts with an exact sample.
+                        pieces = max(1, math.ceil(math.dist(a, b) / 10))
+                        for k in range(pieces):
+                            p0 = [a[i] + (b[i] - a[i]) * k / pieces for i in range(3)]
+                            p1 = [a[i] + (b[i] - a[i]) * (k + 1) / pieces for i in range(3)]
+                            sweeps.append((key, mover, other, p0, p1, tol, max_mm3))
+            installed.extend(move["parts"])
+    # Assembled state, every pair: also covers parts placed or moved together.
+    pairs = [(a, b) for i, a in enumerate(norm["names"]) for b in norm["names"][i + 1:]
+             if _box_gap(box(a), box(b)) == 0]
+
+    workers = max(1, min(8, len(os.sched_getaffinity(0)) // 2))
+    failures, allowed = [], {}
+    with ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context("fork")) as pool:
+        for key, mover, other, samples, closest, failure in pool.map(_sweep, sweeps):
+            m = moves[key]
+            m["samples"] += samples
+            if closest < m["closest"]:
+                m["closest"], m["pair"] = closest, (mover, other)
+            if failure:
+                pos, vol = failure
+                failures.append(f"FAIL {m['label']}: {mover} hits {other} at offset "
+                                f"[{pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f}] (overlap {vol:.4g} mm3)")
+        for a, b, vol in pool.map(_assembled, pairs):
+            if vol <= max_mm3:
+                continue
+            rule = is_allowed(norm, a, b)
+            if rule:
+                allowed[(a, b)] = (rule["reason"], vol)
+            else:
+                failures.append(f"FAIL assembled: {a} overlaps {b} ({vol:.4g} mm3)")
+
+    for m in moves:
+        shown = ", ".join(m["parts"][:3]) + (f" +{len(m['parts']) - 3}" if len(m["parts"]) > 3 else "")
+        if m["pair"]:
+            print(f"move  {m['label']} [{shown}]: {m['samples']} exact samples, closest sampled approach "
+                  f"{m['closest']:.3f} mm ({m['pair'][0]} / {m['pair'][1]})")
+        else:
+            print(f"move  {m['label']} [{shown}]: clear of installed parts by bounding boxes")
+    for (a, b), (reason, vol) in sorted(allowed.items()):
+        print(f"allow {a} / {b}: {vol:.4g} mm3 overlap installed; {reason}")
+    for f in failures:
+        print(f)
+    status = "fail" if failures else "pass"
+    norm["out"].mkdir(parents=True, exist_ok=True)
+    cert = norm["out"] / "clearance.json"
+    cert.write_text(json.dumps({
+        "status": status, "motion_sha256": norm["motion_sha256"],
+        "model_sha256": sha256(norm["model"]), "step_sha256": sha256(norm["step_file"]),
+        "tolerance_mm": tol, "max_mm3": max_mm3, "failures": failures,
+        "allowed": [{"a": a, "b": b, "overlap_mm3": v, "reason": r} for (a, b), (r, v) in sorted(allowed.items())],
+        "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }, indent=1))
+    print(f"{'PASS' if not failures else 'FAIL'}: {len(moves)} moves, {len(norm['names'])} instances, "
+          f"tolerance {tol} mm; certificate {cert}")
+    return 0 if not failures else 1
+
+
+# --- site build -----------------------------------------------------------------
+
+def clearance_status(norm, draft):
+    cert = norm["out"] / "clearance.json"
+    problem = None
+    if not cert.is_file():
+        problem = "no clearance certificate; run `assembly-docs check` first"
+    else:
+        c = json.loads(cert.read_text())
+        if c.get("status") != "pass":
+            problem = "the last clearance check failed"
+        elif (c.get("motion_sha256") != norm["motion_sha256"] or c.get("model_sha256") != sha256(norm["model"])
+              or c.get("step_sha256") != sha256(norm["step_file"])):
+            problem = "the model or motion changed since the clearance check; rerun `assembly-docs check`"
+    if problem is None:
+        return {"status": "verified",
+                "text": f"Clearance checked: no part penetrates another by more than "
+                        f"{norm['tolerance']:g} mm along any assembly path"}
+    if not draft:
+        die(problem, 1)
+    print(f"assembly-docs: DRAFT: {problem}", file=sys.stderr)
+    return {"status": "draft", "text": "DRAFT: assembly paths not clearance-checked"}
+
+
+def timeline_json(norm, clearance):
+    spec = norm["spec"]
+    return {
+        "title": spec["title"], "model": "assembly.glb", "view": norm["view"], "duration": norm["duration"],
+        "style": {k: norm["colors"][k] for k in ("primary", "accent", "hardware", "purchased")},
+        "instances": [{"name": n, "node": norm["node_of"][n], "type": type_of(n),
+                       "kind": norm["types"][type_of(n)]["kind"], "color": norm["types"][type_of(n)]["color"]}
+                      for n in norm["names"]],
+        "sections": norm["sections"],
+        "steps": [{k: s[k] for k in ("title", "section", "view", "t0", "t1", "place", "moves", "parts", "notes", "focus")}
+                  for s in norm["steps"]],
+        "clearance": clearance,
+    }
+
+
+def stage_fonts(site):
+    fonts = site / "fonts"
+    fonts.mkdir()
+    faces = []
+    for weight, style in ((300, "Light"), (400, "Regular"), (700, "Bold")):
+        try:
+            found = subprocess.run(["fc-match", "-f", "%{file}", f"Lato:{style.lower()}"],
+                                   capture_output=True, text=True, timeout=10).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            found = ""
+        if not found or "Lato" not in Path(found).name:
+            continue
+        shutil.copyfile(found, fonts / Path(found).name)
+        faces.append(f"@font-face {{ font-family: Lato; font-weight: {weight}; "
+                     f"src: url('./{Path(found).name}'); }}")
+        license_file = Path("/usr/share/doc/fonts-lato/copyright")
+        if license_file.is_file() and not (fonts / "LICENSE").exists():
+            shutil.copyfile(license_file, fonts / "LICENSE")
+    (fonts / "fonts.css").write_text("\n".join(faces) + "\n")
+
+
+PILL = {"font": "400 12.5px Lato, 'Open Sans', sans-serif", "padX": 14, "height": 26}
+FIG_STEP = (700, 600)
+FIG_COVER = (620, 460)
+FIG_SECTION = (840, 520)
+FIG_PART = (150, 120)
+
+
+def render_figures(site, jobs):
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        die("needs Playwright for Python with Chromium: pip install --user playwright && "
+            "playwright install chromium-headless-shell")
+    mime = {".html": "text/html", ".js": "text/javascript", ".json": "application/json",
+            ".glb": "model/gltf-binary", ".css": "text/css", ".ttf": "font/ttf", ".png": "image/png"}
+
+    def serve(route):
+        rel = route.request.url.split("assembly-docs.local/", 1)[1].split("?")[0].split("#")[0]
+        f = (site / rel).resolve()
+        if site.resolve() not in f.parents or not f.is_file():
+            return route.fulfill(status=404, body="not found")
+        route.fulfill(status=200, body=f.read_bytes(), content_type=mime.get(f.suffix, "application/octet-stream"))
+
+    results = {}
+    errors = []
+    with sync_playwright() as p:
+        browser = p.chromium.launch(args=["--use-angle=swiftshader", "--enable-unsafe-swiftshader",
+                                          "--ignore-gpu-blocklist"])
+        page = browser.new_page(viewport={"width": 1800, "height": 1400})
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.on("console", lambda m: m.type == "error" and errors.append(m.text))
+        page.route("http://assembly-docs.local/**", serve)
+        page.goto("http://assembly-docs.local/render.html")
+        page.wait_for_function("window.assemblyRender && window.assemblyRender.ready", timeout=60000)
+        if not page.evaluate("async () => await window.assemblyRender.ready"):
+            die(f"renderer failed: {page.evaluate('window.assemblyRender.error')} {errors}")
+        for key, req in jobs:
+            res = page.evaluate("req => window.assemblyRender.figure(req)", req)
+            png = base64.b64decode(res["png"].split(",", 1)[1])
+            (site / "img" / f"{key}.png").write_bytes(png)
+            results[key] = res
+            for w in res["warnings"]:
+                print(f"assembly-docs: warning: {key}: {w}", file=sys.stderr)
+        browser.close()
+    if errors:
+        die("renderer errors: " + "; ".join(errors))
+    return results
+
+
+def write_pdf(site):
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.goto((site / "index.html").as_uri())
+        page.wait_for_load_state("networkidle")
+        page.evaluate("async () => { await document.fonts.ready; return true; }")
+        page.pdf(path=str(site / "manual.pdf"), prefer_css_page_size=True, print_background=True)
+        browser.close()
+
+
+def build(norm, draft, pdf=True):
+    clearance = clearance_status(norm, draft)
+    site = norm["out"] / "site"
+    if site.exists():
+        shutil.rmtree(site)
+    (site / "img").mkdir(parents=True)
+    web = ASSETS / "web"
+    for name in ("animation.html", "render.html", "app.js", "manual.css"):
+        shutil.copyfile(web / name, site / name)
+    shutil.copyfile(norm["model"], site / "assembly.glb")
+    stage_fonts(site)
+    tl = timeline_json(norm, clearance)
+    (site / "timeline.json").write_text(json.dumps(tl))
+
+    jobs = [("cover", {"kind": "state", "index": len(norm["steps"]) - 1, "view": norm["view"],
+                       "width": FIG_COVER[0], "height": FIG_COVER[1], "fill": 0.9})]
+    for s_i, sec in enumerate(norm["sections"]):
+        jobs.append((f"section-{s_i + 1}", {"kind": "state", "index": sec["steps"][-1], "view": sec["view"],
+                                            "width": FIG_SECTION[0], "height": FIG_SECTION[1]}))
+    for i, step in enumerate(norm["steps"]):
+        jobs.append((f"step-{i + 1:02d}", {"kind": "step", "index": i, "width": FIG_STEP[0],
+                                           "height": FIG_STEP[1], "pill": PILL,
+                                           "labels": step_labels(norm, step)}))
+    for t, info in norm["types"].items():
+        jobs.append((f"part-{t}", {"kind": "part", "name": info["instances"][0],
+                                   "width": FIG_PART[0], "height": FIG_PART[1], "fill": 0.8}))
+    figures = render_figures(site, jobs)
+    (site / "render.html").unlink()
+    (site / "index.html").write_text(manual_html(norm, figures, clearance))
+    if pdf:
+        write_pdf(site)
+    return site
+
+
+# --- manual HTML ----------------------------------------------------------------
+
+def step_labels(norm, step):
+    counts = {}
+    for n in step["parts"]:
+        counts.setdefault(type_of(n), []).append(n)
+    out = []
+    for t, inst in counts.items():
+        name = norm["types"][t]["name"]
+        out.append({"text": f"{name} ×{len(inst)}" if len(inst) > 1 else name, "names": inst, "type": t})
+    return out
+
+
+def esc(s):
+    return html.escape(str(s), quote=True)
+
+
+def kind_label(info):
+    if info["kind"] == "printed":
+        return "Printed · accent" if info["accent"] else "Printed · primary"
+    return info["kind"].title()
+
+
+def part_rows(norm, counts, icons=False):
+    rows = []
+    for t, qty in counts.items():
+        info = norm["types"][t]
+        icon = f'<img src="img/part-{esc(t)}.png" alt="">' if icons else ""
+        swatch = f'<span class="swatch" style="background:{info["color"]}"></span>'
+        rows.append(f'<li class="part">{icon}<span class="qty">{qty}×</span>'
+                    f'<span class="pname">{swatch}{esc(info["name"])}</span></li>')
+    return "\n".join(rows)
+
+
+def counts_for(norm, step_indices):
+    counts = {}
+    for i in step_indices:
+        for n in norm["steps"][i]["parts"]:
+            counts[type_of(n)] = counts.get(type_of(n), 0) + 1
+    return counts
+
+
+def page(content, number, left="", right="", cls=""):
+    head = (f'<header><span class="left">{esc(left)}</span><span class="right">{esc(right)}</span></header>'
+            if left or right else "")
+    foot = f'<footer><span class="num">{number}</span><span class="rule"></span></footer>' if number else ""
+    return f'<section class="page {cls}">{head}{content}{foot}</section>'
+
+
+def figure_html(key, size, res=None):
+    w, h = size
+    labels = []
+    lines = []
+    for lab in (res or {}).get("labels", []):
+        if lab.get("anchor") is None:
+            continue
+        ax, ay = lab["anchor"]
+        x, y, lw, lh = lab["x"], lab["y"], lab["w"], lab["h"]
+        px = min(max(ax, x), x + lw)
+        py = min(max(ay, y), y + lh)
+        lines.append(f'<line x1="{ax:.1f}" y1="{ay:.1f}" x2="{px:.1f}" y2="{py:.1f}"/>'
+                     f'<circle cx="{ax:.1f}" cy="{ay:.1f}" r="2.4"/>')
+        labels.append(f'<div class="pill" style="left:{x:.1f}px;top:{y:.1f}px;width:{lw}px;height:{lh}px;'
+                      f'line-height:{lh}px">{esc(lab["text"])}</div>')
+    svg = (f'<svg class="leaders" viewBox="0 0 {w} {h}" width="{w}" height="{h}">{"".join(lines)}</svg>'
+           if lines else "")
+    return (f'<div class="figure" style="width:{w}px;height:{h}px"><img src="img/{key}.png" '
+            f'width="{w}" height="{h}" alt="">{svg}{"".join(labels)}</div>')
+
+
+def manual_html(norm, figures, clearance):
+    spec = norm["spec"]
+    title = spec["title"]
+    header_right = spec.get("header", title).upper()
+    revision = spec.get("revision", "")
+    date = datetime.now().strftime("%Y-%m-%d")
+    pages = []
+    n_steps = len(norm["steps"])
+
+    # Fixed front matter: cover, contents, how to read, parts (paginated).
+    types = list(norm["types"].items())
+    groups = [(k, [(t, i) for t, i in types if i["kind"] == k]) for k in KINDS]
+    bom_items = [(k, t, i) for k, items in groups for t, i in items]
+    per_bom_page = 18
+    bom_pages = max(1, math.ceil(len(bom_items) / per_bom_page))
+    first_section_page = 4 + bom_pages
+    section_pages = []
+    num = first_section_page
+    for sec in norm["sections"]:
+        section_pages.append(num)
+        num += 1 + len(sec["steps"])
+
+    meta = " · ".join(x for x in (f"Revision {revision}" if revision else "", date) if x)
+    pages.append(page(f'''
+      <div class="cover-stripes"><i></i><i></i><i></i></div>
+      <div class="cover-text">
+        <div class="kicker">{esc(header_right)}</div>
+        <h1>{esc(title)}</h1>
+        <div class="subtitle">{esc(spec.get("subtitle", "Assembly manual"))}</div>
+        <div class="cover-rule"></div>
+        <div class="meta">{esc(meta)}</div>
+      </div>
+      <div class="cover-figure">{figure_html("cover", FIG_COVER)}</div>
+      <a class="cover-link screen" href="animation.html">Open the assembly animation →</a>
+    ''', 0, cls="cover"))
+
+    toc = "\n".join(
+        f'<li><span>{esc(sec["title"])}</span><span class="dots"></span><span>{section_pages[i]}</span></li>'
+        for i, sec in enumerate(norm["sections"]))
+    pages.append(page(f'''
+      <h2 class="page-title">Table of contents</h2>
+      <ol class="toc">
+        <li><span>Introduction</span><span class="dots"></span><span>3</span></li>
+        <li><span>Parts</span><span class="dots"></span><span>4</span></li>
+        {toc}
+      </ol>''', 2, "Contents", header_right))
+
+    pages.append(page(f'''
+      <h2 class="page-title">Introduction</h2>
+      <div class="intro">
+        <div class="intro-col">
+          <h3>Reading the steps</h3>
+          <p>Each step shows parts already fitted in white. Parts added in the step are blue.
+             Thin blue lines show the path each new part follows to its seat.</p>
+          <p>A label names each new part. A number after the name gives the quantity in the step.</p>
+          <h3>Animation</h3>
+          <p>The assembly animation plays every step in order. You can pause it, scrub it,
+             and orbit, pan or zoom the model at any time.</p>
+          <p class="screen"><a href="animation.html">Open the assembly animation →</a></p>
+          <h3>Clearance</h3>
+          <p class="{"draft" if clearance["status"] != "verified" else ""}">{esc(clearance["text"])}.
+             The check uses nominal CAD geometry. It does not prove fit, strength or print accuracy.</p>
+        </div>
+        <div class="intro-col">
+          <h3>Part key</h3>
+          <ul class="key">
+            <li><span class="swatch" style="background:{norm["colors"]["primary"]}"></span>Printed part, primary color</li>
+            <li><span class="swatch" style="background:{norm["colors"]["accent"]}"></span>Printed part, accent color</li>
+            <li><span class="swatch" style="background:{norm["colors"]["hardware"]}"></span>Hardware</li>
+            <li><span class="swatch" style="background:{norm["colors"]["purchased"]}"></span>Purchased part</li>
+            <li><span class="swatch hl"></span>Added in this step</li>
+          </ul>
+          <h3>Contents</h3>
+          <p>{len(norm["sections"])} sections, {n_steps} steps, {len(norm["names"])} parts in total.</p>
+        </div>
+      </div>''', 3, "Introduction", header_right))
+
+    for b in range(bom_pages):
+        chunk = bom_items[b * per_bom_page:(b + 1) * per_bom_page]
+        cards = []
+        for kind, t, info in chunk:
+            desc = f'<div class="desc">{esc(info["description"])}</div>' if info["description"] else ""
+            cards.append(f'''<div class="card"><img src="img/part-{esc(t)}.png" alt="">
+              <div><div class="cname">{esc(info["name"])}</div>
+              <div class="ckind"><span class="swatch" style="background:{info["color"]}"></span>{esc(kind_label(info))}</div>
+              {desc}</div><div class="cqty">×{info["count"]}</div></div>''')
+        pages.append(page(f'''<h2 class="page-title">Parts{" (continued)" if b else ""}</h2>
+          <div class="cards">{"".join(cards)}</div>''', 4 + b, "Parts", header_right))
+
+    num = first_section_page
+    for s_i, sec in enumerate(norm["sections"]):
+        pages.append(page(f'''
+          <div class="section-head"><div class="kicker">Section {s_i + 1}</div><h2>{esc(sec["title"])}</h2></div>
+          <div class="section-figure">{figure_html(f"section-{s_i + 1}", FIG_SECTION)}</div>
+          <div class="section-parts"><h3>Parts in this section</h3>
+            <ul>{part_rows(norm, counts_for(norm, sec["steps"]))}</ul></div>''',
+                          num, sec["title"], header_right, cls="section-page"))
+        num += 1
+        for i in sec["steps"]:
+            step = norm["steps"][i]
+            key = f"step-{i + 1:02d}"
+            notes = "".join(f'<div class="note {n["kind"]}"><h4>{esc(n["title"])}</h4><p>{esc(n["text"])}</p></div>'
+                            for n in step["notes"])
+            pages.append(page(f'''
+              <div class="step-figure">{figure_html(key, FIG_STEP, figures.get(key))}</div>
+              <aside class="step-side">
+                <div class="step-num">{i + 1:02d}</div>
+                <h2>{esc(step["title"])}</h2>
+                <div class="notes">{notes}</div>
+                <h3>This step</h3>
+                <ul>{part_rows(norm, counts_for(norm, [i]), icons=True)}</ul>
+                <a class="screen watch" href="animation.html#step={i + 1}">Watch this step →</a>
+              </aside>''', num, f"{sec['title']} · {step['title']}", header_right, cls="step-page"))
+            num += 1
+
+    draft = '<div class="draft-banner">DRAFT: assembly paths not clearance-checked</div>' \
+        if clearance["status"] != "verified" else ""
+    return f'''<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{esc(title)} — assembly manual</title>
+<link rel="stylesheet" href="fonts/fonts.css"><link rel="stylesheet" href="manual.css"></head>
+<body>{draft}
+<nav class="screen toolbar"><span>{esc(title)}</span><a href="animation.html">Animation</a><a href="manual.pdf">PDF</a></nav>
+{"".join(pages)}
+</body></html>
+'''
+
+
+# --- commands -------------------------------------------------------------------
+
+def publish(site, name):
+    if not shutil.which("serve-report"):
+        die("serve-report not on PATH (see skill://serving-reports)")
+    res = subprocess.run(["serve-report", str(site), "--name", name, "--copy"], capture_output=True, text=True)
+    if res.returncode != 0:
+        die(f"serve-report failed: {res.stderr.strip()}")
+    url = res.stdout.strip()
+    for page_name, marker in (("", "assembly manual"), ("animation.html", "assembly-docs player")):
+        try:
+            with urllib.request.urlopen(url.rstrip("/") + "/" + page_name, timeout=8) as r:
+                body = r.read().decode("utf-8", "replace")
+        except OSError as e:
+            die(f"published, but {url}{page_name} is not reachable: {e}")
+        if marker not in body:
+            die(f"published, but {url}{page_name} does not serve the expected page")
+    return url
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return 0
+    cmd, rest = argv[0], argv[1:]
+    if cmd not in ("check", "build", "publish"):
+        die(f"unknown command {cmd!r}; see --help")
+    flags = {"--draft": False, "--no-pdf": False}
+    name = None
+    args = []
+    it = iter(rest)
+    for a in it:
+        if a in flags and cmd != "check":
+            flags[a] = True
+        elif a == "--name" and cmd == "publish":
+            name = next(it, None) or die("--name needs a value")
+        elif a.startswith("-"):
+            die(f"unknown flag {a} for {cmd}")
+        else:
+            args.append(a)
+    if len(args) != 1:
+        die(f"{cmd} needs exactly one ASSEMBLY.json")
+    if cmd == "check":
+        try:
+            import build123d  # noqa: F401
+        except ImportError:
+            if os.environ.get("ASSEMBLY_DOCS_REEXEC") or not shutil.which("cad-workbench"):
+                die("check needs build123d or cad-workbench on PATH")
+            os.environ["ASSEMBLY_DOCS_REEXEC"] = "1"
+            os.execvp("cad-workbench", ["cad-workbench", "python", __file__, *argv])
+    try:
+        norm = load_spec(args[0])
+        if cmd == "check":
+            return run_check(norm)
+        site = build(norm, flags["--draft"], pdf=not flags["--no-pdf"])
+        if cmd == "build":
+            print(site)
+        else:
+            stem = re.sub(r"[^a-z0-9]+", "-", (name or norm["spec"]["title"]).lower()).strip("-") or "assembly"
+            print(publish(site, f"{stem}-assembly"))
+        return 0
+    except SpecError as e:
+        die(str(e))
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,7 @@
+{
+  "name": "assembly-docs-bundle",
+  "private": true,
+  "dependencies": {
+    "three": "^0.166.0"
+  }
+}

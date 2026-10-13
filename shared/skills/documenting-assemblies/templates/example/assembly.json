@@ -1,0 +1,50 @@
+{
+  "title": "Hand-cranked shaft support",
+  "subtitle": "Assembly manual",
+  "revision": "A",
+  "model": "out/assembly.glb",
+  "step": "out/assembly.step",
+  "view": {"az": 35, "el": 28},
+  "parts": {
+    "base": {"name": "Base plate", "kind": "printed", "color": "primary"},
+    "lower_block": {"name": "Lower block", "kind": "printed", "color": "primary"},
+    "cap": {"name": "Bearing cap", "kind": "printed", "color": "accent"},
+    "hand_wheel": {"name": "Hand wheel", "kind": "printed", "color": "accent"},
+    "bearing_608zz": {"name": "608ZZ bearing", "kind": "purchased", "description": "8 x 22 x 7 mm deep-groove ball bearing"},
+    "shaft": {"name": "8 mm shaft", "kind": "purchased", "description": "Ground steel rod, 122 mm long"},
+    "m3x12_shcs": {"name": "M3x12 SHCS", "kind": "hardware", "description": "ISO 4762 socket head cap screw"},
+    "m3x20_shcs": {"name": "M3x20 SHCS", "kind": "hardware", "description": "ISO 4762 socket head cap screw"}
+  },
+  "sections": [
+    {"title": "Frame", "steps": [
+      {"title": "Lay out the base plate", "place": ["base"],
+       "notes": [{"title": "Orientation", "text": "Place the plate with the counterbores facing down."}]},
+      {"title": "Set the lower blocks", "moves": [{"parts": ["lower_block_*"], "from": [0, 0, 40]}],
+       "notes": [{"title": "Seat orientation", "text": "The bearing seats face up and line up along the shaft axis."}]},
+      {"title": "Fasten the lower blocks", "view": {"az": 30, "el": -30},
+       "moves": [{"parts": ["m3x12_shcs_*"], "from": [0, 0, -30]}],
+       "notes": [{"title": "Self-tapping", "kind": "tip", "text": "The screws cut their own thread in the 2.5 mm pilot holes. Drive them slowly and stop when the heads seat."}]}
+    ]},
+    {"title": "Shaft", "steps": [
+      {"title": "Drop in the bearings", "view": {"az": 35, "el": 28},
+       "moves": [{"parts": ["bearing_608zz_*"], "from": [0, 0, 35]}]},
+      {"title": "Slide in the shaft", "view": {"az": 20, "el": 22},
+       "moves": [{"parts": ["shaft"], "path": [[110, 0, 0]]}],
+       "notes": [{"title": "Alignment", "kind": "warning", "text": "Do not force the shaft. If it binds, loosen the lower block screws, align the blocks, then tighten again."}]}
+    ]},
+    {"title": "Closing", "steps": [
+      {"title": "Fit the bearing caps", "moves": [{"parts": ["cap_*"], "from": [0, 0, 35]}]},
+      {"title": "Fasten the caps", "moves": [{"parts": ["m3x20_shcs_*"], "from": [0, 0, 30]}]},
+      {"title": "Fit the hand wheel", "view": {"az": 55, "el": 22},
+       "moves": [{"parts": ["hand_wheel"], "path": [[45, 0, 0]]}],
+       "notes": [{"title": "Fit", "text": "The wheel bore is a slip fit. Fix it with a drop of retaining compound if it turns on the shaft."}]}
+    ]}
+  ],
+  "clearance": {
+    "tolerance_mm": 0.05,
+    "allowed": [
+      {"a": "m3x12_shcs_*", "b": "lower_block_*", "reason": "M3 thread formed in the 2.5 mm pilot hole (nominal engagement)"},
+      {"a": "m3x20_shcs_*", "b": "lower_block_*", "reason": "M3 thread formed in the 2.5 mm pilot hole (nominal engagement)"}
+    ]
+  }
+}

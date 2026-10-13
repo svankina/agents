@@ -10,8 +10,9 @@ Read on demand:
 
 - `skill://modelling-cad/measurement-requests.md` before asking the user to
   measure hardware.
-- `skill://modelling-cad/exploded-views.md` before building an exploded view or
-  assembly animation.
+- `skill://modelling-cad/exploded-views.md` before building an exploded view.
+- `skill://documenting-assemblies` when you build a mechanism or a multi-part
+  assembly: it ships with an assembly manual and an assembly animation.
 - `skill://modelling-cad/templates/part.py` and `templates/spec.json`: starter
   part and acceptance spec for a new build123d project.
 
@@ -114,3 +115,6 @@ a crash is not a failed assertion. `cad-check --help` shows the spec format.
 - Report the `cad-check` output, other measured results, and remaining
   uncertainty. Distinguish proxy geometry from physical behavior. Deliver the
   model through `serving-cad-files` with its editable source.
+- A mechanism or multi-part assembly also ships a Voron-style assembly manual
+  and an interactive assembly animation, built with `assembly-docs`
+  (`skill://documenting-assemblies`).

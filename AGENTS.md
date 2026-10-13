@@ -32,6 +32,9 @@ extension, or `managed-skills` is managed, and no `CLAUDE.md` alias is installed
   into OMP. `omp/extensions/` is configured separately.
 - `bin/project-map`: project instruction format checks. `shared/commands/wq.md`:
   wrap-up procedure. `scripts/warpfork/`: terminal session forking.
+- `bin/assembly-docs` with `shared/skills/documenting-assemblies/`: assembly
+  manuals, animations, and clearance checks; its three.js bundle is committed
+  and rebuilt by `assets/src/build.sh`.
 
 ### Verify
 

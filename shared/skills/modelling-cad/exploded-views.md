@@ -1,5 +1,10 @@
 # Create exploded views without collisions
 
+An assembly animation is the same motion in build order. Build it with
+`assembly-docs` (`skill://documenting-assemblies`), which applies these rules
+to its paths and certifies them. Use the reference below only for a standalone
+exploded viewer.
+
 - Treat an exploded animation as a staged extraction, not a radial scatter.
   Clear covers first. Withdraw internal parts through their actual openings.
   Move parts sideways only after they clear the enclosure.
