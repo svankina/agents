@@ -3,7 +3,7 @@
 
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { AssemblyView } from './scene.js';
-import { prepare, poseAt, stepAt, activeMoves } from './timeline.js';
+import { prepare, poseAt, stepAt, activeMoves, wiresAt, stepHighlights } from './timeline.js';
 
 const $ = (id) => document.getElementById(id);
 const fmtTime = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
@@ -44,6 +44,7 @@ export async function startPlayer() {
         for (const name of step.place ? step.place.parts : []) boxes.push(view.boxAt(name, [0, 0, 0]));
         for (const m of step.moves) for (const name of m.parts) for (const p of m.path) boxes.push(view.boxAt(name, p));
       }
+      boxes.push(...view.wireBoxes(Object.values(tl.wires || {})));
       return boxes;
     };
     const fitView = (v = tl.view) => {
@@ -102,6 +103,18 @@ export async function startPlayer() {
         div.append(h, p);
         notes.appendChild(div);
       }
+      for (const id of step.wires || []) {
+        const w = tl.wires[id];
+        const div = document.createElement('div');
+        div.className = 'wire';
+        const sw = document.createElement('span');
+        sw.className = 'wswatch';
+        sw.style.background = w.hex;
+        const p = document.createElement('p');
+        p.textContent = `${id}: ${w.from} → ${w.to}${w.gauge ? ` · ${w.gauge}` : ''} · ${w.color}`;
+        div.append(sw, p);
+        notes.appendChild(div);
+      }
       history.replaceState(null, '', `#step=${si + 1}`);
     };
 
@@ -109,8 +122,9 @@ export async function startPlayer() {
       view.setPoses(poseAt(tl, time));
       const si = stepAt(tl, time);
       const step = tl.steps[si];
-      view.setHighlight(style === 'line' ? step.parts : []);
+      view.setHighlight(style === 'line' ? stepHighlights(tl, si) : []);
       view.setGuides(guides ? activeMoves(tl, time) : []);
+      view.setWires(wiresAt(tl, time));
       showStep(si);
       scrub.value = String(time);
       $('time').textContent = `${fmtTime(time)} / ${fmtTime(tl.duration)}`;

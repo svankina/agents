@@ -81,3 +81,26 @@ export function explodedStep(tl, si) {
   }
   return offsets;
 }
+
+// Wires with a route, drawn up to `frac` of their length at time t.
+export function wiresAt(tl, t) {
+  const out = [];
+  for (const w of Object.values(tl.wires || {})) {
+    if (!w.route.length || w.t0 === undefined || t < w.t0) continue;
+    const frac = w.t1 > w.t0 ? ease(clamp01((t - w.t0) / (w.t1 - w.t0))) : 1;
+    out.push({ ...w, frac });
+  }
+  return out;
+}
+
+// Manual: every routed wire connected in steps up to and including si.
+export function wiresThrough(tl, si) {
+  const ids = new Set(tl.steps.slice(0, si + 1).flatMap((s) => s.wires || []));
+  return Object.values(tl.wires || {}).filter((w) => ids.has(w.id) && w.route.length).map((w) => ({ ...w, frac: 1 }));
+}
+
+// Instances a step adds or connects: highlighted in the line-art figures.
+export function stepHighlights(tl, si) {
+  const step = tl.steps[si];
+  return [...step.parts, ...(step.wires || []).flatMap((id) => tl.wires[id].endpoints)];
+}

@@ -11,7 +11,9 @@
     "bearing_608zz": {"name": "608ZZ bearing", "kind": "purchased", "description": "8 x 22 x 7 mm deep-groove ball bearing"},
     "shaft": {"name": "8 mm shaft", "kind": "purchased", "description": "Ground steel rod, 122 mm long"},
     "m3x12_shcs": {"name": "M3x12 SHCS", "kind": "hardware", "description": "ISO 4762 socket head cap screw"},
-    "m3x20_shcs": {"name": "M3x20 SHCS", "kind": "hardware", "description": "ISO 4762 socket head cap screw"}
+    "m3x20_shcs": {"name": "M3x20 SHCS", "kind": "hardware", "description": "ISO 4762 socket head cap screw"},
+    "microswitch": {"name": "Endstop microswitch", "kind": "electrical", "pins": ["COM", "NO", "NC"],
+                    "description": "KW12-style lever microswitch, solder tabs"}
   },
   "sections": [
     {"title": "Frame", "steps": [
@@ -36,8 +38,27 @@
       {"title": "Fit the hand wheel", "view": {"az": 55, "el": 22},
        "moves": [{"parts": ["hand_wheel"], "path": [[45, 0, 0]]}],
        "notes": [{"title": "Fit", "text": "The wheel bore is a slip fit. Fix it with a drop of retaining compound if it turns on the shaft."}]}
+    ]},
+    {"title": "Electrics", "steps": [
+      {"title": "Fit the endstop switch", "view": {"az": -25, "el": 30},
+       "moves": [{"parts": ["microswitch_1"], "from": [0, 0, 25]}],
+       "notes": [{"title": "Fixing", "text": "Fix the switch to the plate with double-sided foam tape. The terminals face the front edge."}]},
+      {"title": "Wire the endstop", "view": {"az": -30, "el": 25}, "wires": ["W*"],
+       "notes": [{"title": "Strain relief", "kind": "tip", "text": "Leave a small loop at the switch. Tie the wires to the plate edge before they leave the base."}]}
     ]}
   ],
+  "external": {
+    "controller": {"name": "Controller", "pins": ["GND", "IN"]}
+  },
+  "wires": {
+    "W1": {"from": "microswitch_1.COM", "to": "controller.GND", "color": "black", "gauge": "24 AWG",
+           "length_mm": 300, "ends": ["solder", "JST-XH 2-pin, pin 1"],
+           "route": [[-7, -21.7, 10], [-7, -30, 10], [-7, -30, -4], [-75, -30, -4]]},
+    "W2": {"from": "microswitch_1.NO", "to": "controller.IN", "color": "yellow", "gauge": "24 AWG",
+           "length_mm": 300, "ends": ["solder", "JST-XH 2-pin, pin 2"],
+           "route": [[0, -21.7, 10], [0, -33, 10], [0, -33, -7], [-75, -33, -7]],
+           "note": "Normally open: the input reads closed while the lever is pressed."}
+  },
   "clearance": {
     "tolerance_mm": 0.05,
     "allowed": [

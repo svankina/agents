@@ -78,6 +78,22 @@ void main() {
   #include <colorspace_fragment>
 }`;
 
+// First `frac` of a polyline, by length.
+function partialRoute(route, frac) {
+  if (frac >= 1) return route;
+  const lens = route.slice(1).map((b, i) => Math.hypot(b[0] - route[i][0], b[1] - route[i][1], b[2] - route[i][2]));
+  let left = frac * lens.reduce((a, b) => a + b, 0);
+  const out = [route[0]];
+  for (let i = 0; i < lens.length; i++) {
+    if (left >= lens[i]) { out.push(route[i + 1]); left -= lens[i]; continue; }
+    const f = lens[i] ? left / lens[i] : 0;
+    const [a, b] = [route[i], route[i + 1]];
+    out.push([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f]);
+    break;
+  }
+  return out;
+}
+
 export const DEFAULT_STYLE = {
   primary: '#3a3d42', accent: '#d42a30', hardware: '#a9aeb5', purchased: '#55595f',
   fill: '#ffffff', highlight: '#c9d8f4', line: '#232323', highlightLine: '#3d5c9e', guide: '#7d9cd6',
@@ -109,7 +125,8 @@ export class AssemblyView {
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 1000);
     this.camera.layers.enable(GUIDE_LAYER);
     this.guides = new THREE.Group();
-    this.scene.add(this.guides);
+    this.wireGroup = new THREE.Group();
+    this.scene.add(this.guides, this.wireGroup);
     this.style = 'shaded';
     this.instances = new Map();
     this.pickUniform = { value: 0 };
@@ -224,6 +241,29 @@ export class AssemblyView {
     return inst.restBox.clone().translate(cadToWorld(offset || [0, 0, 0]));
   }
 
+  // Wires along their routes (assembled CAD mm), drawn to `frac` of their
+  // length, with a dark outline so white and black wires both read.
+  setWires(wires, widthPx = 3.2) {
+    for (const g of [...this.wireGroup.children]) { g.geometry.dispose(); g.material.dispose(); this.wireGroup.remove(g); }
+    for (const w of wires || []) {
+      const pts = partialRoute(w.route, w.frac).map(cadToWorld);
+      if (pts.length < 2) continue;
+      const flat = pts.flatMap((p) => p.toArray());
+      [[this.colors.line, widthPx + 2, 0], [w.hex, widthPx, 1]].forEach(([color, width, order]) => {
+        const geom = new LineGeometry();
+        geom.setPositions(flat);
+        const line = new Line2(geom, new LineMaterial({ color, linewidth: width, worldUnits: false }));
+        line.layers.set(GUIDE_LAYER);
+        line.renderOrder = 10 + order;
+        this.wireGroup.add(line);
+      });
+    }
+  }
+
+  wireBoxes(wires) {
+    return (wires || []).flatMap((w) => w.route.map((p) => new THREE.Box3().setFromPoints([cadToWorld(p)])));
+  }
+
   boxesFor(offsets, names) {
     const list = names ? names.filter((n) => offsets.has(n)) : [...offsets.keys()];
     return list.map((n) => this.boxAt(n, offsets.get(n)));
@@ -306,7 +346,7 @@ export class AssemblyView {
     const size = r.getDrawingBufferSize(new THREE.Vector2());
     const t = this._ensureTargets(size.x, size.y);
     const cam = this.camera;
-    for (const g of this.guides.children) g.material.resolution.set(size.x, size.y);
+    for (const g of [...this.guides.children, ...this.wireGroup.children]) g.material.resolution.set(size.x, size.y);
     this._aimLights();
 
     const line = this.style === 'line';

@@ -2,8 +2,9 @@
 // window.assemblyRender.figure(request) renders one manual figure and returns
 // a PNG data URL plus pill label placements in CSS pixels of the figure.
 
-import { AssemblyView } from './scene.js';
-import { prepare, explodedStep } from './timeline.js';
+import * as THREE from 'three';
+import { AssemblyView, cadToWorld } from './scene.js';
+import { prepare, explodedStep, wiresThrough, stepHighlights } from './timeline.js';
 
 const ISO = { az: 35, el: 28 };
 
@@ -41,7 +42,7 @@ function anchorOf(pick, id, s) {
   return best;
 }
 
-function layoutLabels(pick, scale, view, labels, pill) {
+function layoutLabels(pick, scale, view, labels, pill, wires = []) {
   const W = pick.width / scale, H = pick.height / scale;
   const cell = 6;
   const gw = Math.ceil(W / cell), gh = Math.ceil(H / cell);
@@ -49,6 +50,24 @@ function layoutLabels(pick, scale, view, labels, pill) {
   for (let y = 0; y < pick.height; y++) {
     for (let x = 0; x < pick.width; x++) {
       if (pick.ids[y * pick.width + x]) occ[Math.floor(y / scale / cell) * gw + Math.floor(x / scale / cell)] = 1;
+    }
+  }
+  // Wires are not in the pick buffer: mark their projected segments occupied.
+  const p = new THREE.Vector3();
+  const toCss = (pt) => {
+    p.copy(cadToWorld(pt)).project(view.camera);
+    return [(p.x + 1) / 2 * W, (1 - p.y) / 2 * H];
+  };
+  for (const w of wires) {
+    const pts = w.route.map(toCss);
+    for (let i = 1; i < pts.length; i++) {
+      const [a, b] = [pts[i - 1], pts[i]];
+      const n = Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / (cell / 2)) + 1;
+      for (let k = 0; k <= n; k++) {
+        const gx = Math.floor((a[0] + (b[0] - a[0]) * k / n) / cell);
+        const gy = Math.floor((a[1] + (b[1] - a[1]) * k / n) / cell);
+        if (gx >= 0 && gy >= 0 && gx < gw && gy < gh) occ[gy * gw + gx] = 1;
+      }
     }
   }
   const { stats, centroid } = pixelStats(pick);
@@ -127,15 +146,17 @@ export async function startRenderer() {
       canvas.style.height = `${height}px`;
       view.renderer.setPixelRatio(scale);
       view.setSize(width, height);
-      let offsets, names = null, v = tl.view, style = 'shaded', highlight = [], moves = [];
+      let offsets, names = null, v = tl.view, style = 'shaded', highlight = [], moves = [], wires = [], fitWires = [];
       if (req.kind === 'step') {
         const step = tl.steps[req.index];
         offsets = explodedStep(tl, req.index);
         names = step.focus;
         v = step.view;
         style = 'line';
-        highlight = step.parts;
+        highlight = stepHighlights(tl, req.index);
         moves = step.moves;
+        wires = wiresThrough(tl, req.index);
+        fitWires = wires.filter((w) => step.wires.includes(w.id));
       } else if (req.kind === 'part') {
         offsets = new Map([[req.name, [0, 0, 0]]]);
         v = ISO;
@@ -147,14 +168,16 @@ export async function startRenderer() {
       view.setStyle(style);
       view.setHighlight(highlight);
       view.setGuides(moves, 1.4);
+      view.setWires(wires);
       const boxes = view.boxesFor(offsets, names);
       for (const m of moves) for (const name of m.parts) for (const p of m.path) boxes.push(view.boxAt(name, p));
+      boxes.push(...view.wireBoxes(fitWires));
       view.fit(boxes, { az: v.az, el: v.el, fill: req.fill || 0.82, aspect: width / height });
       view.render();
       const png = canvas.toDataURL('image/png');
       let labels = [], warnings = [];
       if (req.labels && req.labels.length) {
-        ({ labels, warnings } = layoutLabels(view.pick(), scale, view, req.labels, req.pill));
+        ({ labels, warnings } = layoutLabels(view.pick(), scale, view, req.labels, req.pill, wires));
       }
       return { png, labels, warnings };
     };

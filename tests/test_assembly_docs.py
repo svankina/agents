@@ -104,6 +104,32 @@ class AssemblyDocs(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("duplicate instance labels", result.stderr)
 
+    def wired_spec(self, wire_step):
+        data = spec()
+        data["parts"] = {"peg": {"kind": "electrical", "pins": ["+", "-"]}}
+        data["external"] = {"psu": {"name": "Supply", "pins": ["V+", "GND"]}}
+        data["wires"] = {"W1": {"from": "peg_1.+", "to": "psu.V+", "color": "red"}}
+        data["sections"][0]["steps"].insert(wire_step, {"title": "Wire", "wires": ["W1"]})
+        return data
+
+    def test_electrical_parts_must_be_wired_after_they_are_installed(self):
+        data = spec()
+        data["parts"] = {"peg": {"kind": "electrical"}}
+        result = self.run_cli("check", data)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("electrical parts with no wire: ['peg_1']", result.stderr)
+        # Wiring the peg before the step that installs it is rejected.
+        result = self.run_cli("check", self.wired_spec(1))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("before peg_1 is installed", result.stderr)
+        data = self.wired_spec(2)
+        data["wires"]["W1"]["to"] = "psu.V-"
+        result = self.run_cli("check", data)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("Supply has no pin 'V-'", result.stderr)
+        result = self.run_cli("check", self.wired_spec(2))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

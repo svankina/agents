@@ -26,9 +26,12 @@ WHEEL_D, WHEEL_T, WHEEL_X = 38.0, 10.0, 55.0   # rim clears the plate top by 1 m
 CLEAR_D, PILOT_D = 3.4, 2.5        # M3 clearance and tapping pilot
 HEAD_D, HEAD_H, CBORE_D = 5.5, 3.0, 6.5
 BASE_SCREW_Y, CAP_SCREW_Y = 12.0, 15.0
+SWITCH_BODY, SWITCH_Y = (20.0, 6.4, 10.0), -16.0   # KW12-style microswitch: X, Y, Z
+SWITCH_PINS = {"COM": -7.0, "NO": 0.0, "NC": 7.0}  # terminal x positions; tips at y = -21.7
 
 PRIMARY, ACCENT = Color(0.23, 0.24, 0.26), Color(0.83, 0.16, 0.19)
 STEEL, BLACK = Color(0.66, 0.68, 0.71), Color(0.33, 0.35, 0.37)
+BLUE = Color(0.18, 0.44, 0.56)
 OUT = Path(__file__).with_name("out")
 
 
@@ -86,6 +89,15 @@ def wheel():
     return w + knob
 
 
+def microswitch():
+    """Endstop microswitch body on the plate, terminals facing -Y at SWITCH_PINS."""
+    w, d, h = SWITCH_BODY
+    body = Pos(0, SWITCH_Y, BASE[2]) * Box(w, d, h, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    for x in SWITCH_PINS.values():
+        body += Pos(x, SWITCH_Y - d / 2, BASE[2] + 2) * Box(0.8, 2.5, 4, align=(Align.CENTER, Align.MAX, Align.MIN))
+    return body
+
+
 def screw(length):
     """M3 SHCS, head down to the origin, shank along +Z."""
     head = Cylinder(HEAD_D / 2, HEAD_H, align=(Align.CENTER, Align.CENTER, Align.MIN))
@@ -120,6 +132,7 @@ def build():
             parts.append(labelled(m3x20.moved(placed), f"m3x20_shcs_{m}", STEEL))
     parts.append(labelled(shaft(), "shaft", STEEL))
     parts.append(labelled(wheel(), "hand_wheel", ACCENT))
+    parts.append(labelled(microswitch(), "microswitch_1", BLUE))
     return Compound(label="shaft_support", children=parts)
 
 

@@ -60,9 +60,20 @@ ul { list-style: none; padding: 0; margin: 0; }
 li.part { display: flex; align-items: center; gap: 8px; font-size: 14px; padding: 4px 0; }
 li.part img { width: 54px; height: 43px; object-fit: contain; }
 li.part .qty { color: var(--red); min-width: 2.2em; text-align: right; }
+ul.wires li.wire { display: flex; gap: 10px; align-items: flex-start; padding: 7px 0; border-top: 1px solid var(--rule); font-size: 14px; }
+.wswatch { flex: 0 0 auto; width: 26px; height: 7px; margin-top: 6px; border-radius: 4px; border: 1px solid #232323; }
+.wid { color: var(--red); font-size: 12.5px; }
+.wid a { margin-left: 6px; font-size: 12px; }
+.wends b { font-weight: 700; }
+.wdetail, .wnote { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+.wnote { color: var(--soft); }
+.figure-wrap { flex-direction: column; align-items: center; }
+figure.diagram { margin: 18px 0 0; width: 100%; padding: 12px; background: var(--card); border: 1px solid var(--rule); border-radius: 8px; }
+figure.diagram img { display: block; width: 100%; height: auto; }
 
-section.parts { padding: 26px 0; }
-section.parts h2 { font-weight: 300; font-size: 26px; margin: 0 0 16px; }
+section.parts, section.wiring { padding: 26px 0; }
+section.parts h2, section.wiring h2 { font-weight: 300; font-size: 26px; margin: 0 0 16px; }
+section.wiring ul.wires { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 0 24px; border-bottom: 1px solid var(--rule); }
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px 24px; margin-bottom: 20px; }
 .card { display: grid; grid-template-columns: 96px 1fr auto; gap: 12px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--rule); }
 .card img { width: 96px; height: 77px; object-fit: contain; }

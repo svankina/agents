@@ -40,7 +40,23 @@ introduced exactly once, by "place" (appears installed) or by a move. A move's
 parts travel together along "path" (offsets from the installed pose, visited
 in order, ending at the installed pose); "from" is a one-point path. Moves in
 a step play in order. Patterns use shell globs over instance names. Part kinds:
-printed (color primary|accent|#hex), hardware, purchased.
+printed (color primary|accent|#hex), hardware, purchased, electrical.
+
+Wiring. Electrical parts list their "pins"; off-model ends (controller, supply)
+go in "external". Each wire is connected by exactly one step ("wires": [ids or
+globs]) after both of its parts are installed, and every electrical instance
+needs at least one wire. "route" (assembled CAD mm) draws the wire in the
+figures and the animation; "diagram" adds a pin-level draw-wiring picture.
+
+    "parts": {"endstop": {"kind": "electrical", "pins": ["COM", "NO", "NC"]}},
+    "external": {"mcu": {"name": "Controller", "pins": ["GND", "IN"]}},
+    "wires": {"W1": {"from": "endstop_1.COM", "to": "mcu.GND", "color": "black",
+                     "gauge": "24 AWG", "length_mm": 300, "ends": ["solder", "JST-XH"],
+                     "route": [[-7, -22, 10], [-7, -30, 10], [-75, -30, -4]], "note": "..."}},
+    step: {"title": "Wire the endstop", "wires": ["W*"], "diagram": "wiring/endstop.yaml"}
+
+Wire colors: black red white yellow green blue brown orange violet grey pink
+green/yellow, or #rrggbb. Wires are not clearance-checked.
 
 check certifies every move against all parts installed before it: it samples
 the exact BREP distance and advances by at least the current clearance, so no
@@ -67,9 +83,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ASSETS = Path(__file__).resolve().parent.parent / "shared/skills/documenting-assemblies/assets"
-KINDS = ("printed", "hardware", "purchased")
+KINDS = ("printed", "hardware", "purchased", "electrical")
 NOTE_KINDS = ("note", "tip", "warning")
-DEFAULT_COLORS = {"primary": "#3a3d42", "accent": "#d42a30", "hardware": "#a9aeb5", "purchased": "#55595f"}
+DEFAULT_COLORS = {"primary": "#3a3d42", "accent": "#d42a30", "hardware": "#a9aeb5", "purchased": "#55595f",
+                  "electrical": "#2f6f8f"}
+WIRE_COLORS = {"black": "#1c1c1c", "red": "#d22b2b", "white": "#f4f4f4", "yellow": "#e8c51c",
+               "green": "#2e9a46", "blue": "#2f62c9", "brown": "#7a4a22", "orange": "#ef7d1a",
+               "violet": "#8048c0", "purple": "#8048c0", "grey": "#8c8c8c", "gray": "#8c8c8c",
+               "pink": "#f08cb4", "green/yellow": "#6fae2c"}
 DEFAULT_VIEW = {"az": 35.0, "el": 28.0}
 AUTO_NODE = re.compile(r"^(=>\[?[\d:]*\]?|mesh_\d+(_\d+)?)?$")
 COUNTER = re.compile(r"(?:[_-]\d+)+$")
@@ -172,6 +193,58 @@ def color_of(meta, kind, colors, where):
     raise SpecError(f"{where}: color must be primary, accent, hardware, purchased or #rrggbb")
 
 
+def load_wires(spec, names, type_info):
+    """Wires keyed by id. Endpoints are "<instance>.<pin>" or "<external>.<pin>";
+    "route" is an optional polyline in assembled CAD mm for the 3D figures."""
+    external = spec.get("external") or {}
+    for key, ext in external.items():
+        if key in names or not isinstance(ext, dict) or "name" not in ext:
+            raise SpecError(f"external.{key}: needs a name and must not reuse an instance name")
+    raw_wires = spec.get("wires") or {}
+    if not isinstance(raw_wires, dict):
+        raise SpecError("wires must be an object keyed by wire id")
+
+    def endpoint(ref, where):
+        if not isinstance(ref, str) or "." not in ref:
+            raise SpecError(f"{where}: expected <part>.<pin>, got {ref!r}")
+        owner, pin = ref.rsplit(".", 1)
+        if owner in names:
+            pins, label = type_info[type_of(owner)]["pins"], type_info[type_of(owner)]["name"]
+            instance = owner
+        elif owner in external:
+            pins, label, instance = external[owner].get("pins"), external[owner]["name"], None
+        else:
+            raise SpecError(f"{where}: {owner!r} is neither an instance nor an external entry")
+        if pins is not None and pin not in pins:
+            raise SpecError(f"{where}: {label} has no pin {pin!r}; pins are {pins}")
+        if instance and len(type_info[type_of(owner)]["instances"]) > 1:
+            label = f"{label} {owner.rsplit('_', 1)[-1]}"
+        return {"ref": ref, "instance": instance, "pin": pin, "label": label}
+
+    wires = {}
+    for w_id, raw in raw_wires.items():
+        where = f"wires.{w_id}"
+        extra = set(raw) - {"from", "to", "color", "gauge", "ends", "route", "length_mm", "note"}
+        if extra or "from" not in raw or "to" not in raw or "color" not in raw:
+            raise SpecError(f"{where}: needs from, to and color; unknown keys {sorted(extra)}")
+        color = raw["color"]
+        hexcolor = WIRE_COLORS.get(color.lower()) if isinstance(color, str) else None
+        if hexcolor is None and not (isinstance(color, str) and HEX.match(color)):
+            raise SpecError(f"{where}.color: one of {sorted(WIRE_COLORS)} or #rrggbb")
+        ends = raw.get("ends", ["", ""])
+        if not isinstance(ends, list) or len(ends) != 2:
+            raise SpecError(f"{where}.ends: [from-end termination, to-end termination]")
+        route = [vec3(p, f"{where}.route") for p in raw.get("route", [])]
+        if len(route) == 1:
+            raise SpecError(f"{where}.route: needs at least two points")
+        wires[w_id] = {
+            "id": w_id, "from": endpoint(raw["from"], f"{where}.from"), "to": endpoint(raw["to"], f"{where}.to"),
+            "color": color, "hex": hexcolor or color, "gauge": raw.get("gauge", ""), "ends": ends,
+            "length_mm": raw.get("length_mm"), "note": raw.get("note", ""), "route": route,
+        }
+    return wires
+
+
 def load_spec(path):
     path = Path(path).resolve()
     try:
@@ -210,18 +283,23 @@ def load_spec(path):
         kind = meta.get("kind", "printed")
         if kind not in KINDS:
             raise SpecError(f"parts.{t}.kind must be one of {KINDS}")
+        pins = meta.get("pins")
+        if pins is not None and (not isinstance(pins, list) or not all(isinstance(p, str) for p in pins)):
+            raise SpecError(f"parts.{t}.pins must be a list of pin names")
         type_info[t] = {
             "name": meta.get("name", t.replace("_", " ")), "kind": kind,
             "color": color_of(meta, kind, colors, f"parts.{t}"),
             "accent": meta.get("color") == "accent",
             "description": meta.get("description", ""), "count": len(inst), "instances": inst,
+            "pins": pins,
         }
 
     speed = float((spec.get("animation") or {}).get("speed_mm_s", 60))
     if not speed > 0:
         raise SpecError("animation.speed_mm_s must be positive")
     view = view_of(spec.get("view"), DEFAULT_VIEW, "view")
-    introduced = {}
+    wires = load_wires(spec, names, type_info)
+    introduced, wired = {}, {}
     sections, steps = [], []
     t = 0.0
     if not isinstance(spec["sections"], list) or not spec["sections"]:
@@ -237,12 +315,12 @@ def load_spec(path):
             where = f"sections[{s_i}].steps[{p_i}] ({raw.get('title', '?')})"
             if "title" not in raw:
                 raise SpecError(f"{where}: needs a title")
-            extra = set(raw) - {"title", "place", "moves", "notes", "view", "focus"}
+            extra = set(raw) - {"title", "place", "moves", "notes", "view", "focus", "wires", "diagram"}
             if extra:
                 raise SpecError(f"{where}: unknown keys {sorted(extra)}")
             step_view = view_of(raw.get("view"), step_view, where)
             step = {"title": raw["title"], "section": s_i, "view": step_view, "t0": t,
-                    "place": None, "moves": [], "parts": [], "notes": []}
+                    "place": None, "moves": [], "parts": [], "notes": [], "wires": [], "diagram": None}
 
             def introduce(found_names, label):
                 for n in found_names:
@@ -276,8 +354,30 @@ def load_spec(path):
                 m = {"parts": moved, "path": pts, "t0": t, "tm": t + 0.4, "t1": t + 0.4 + duration}
                 step["moves"].append(m)
                 t = m["t1"] + 0.2
-            if not step["parts"]:
-                raise SpecError(f"{where}: introduces no parts; use place or moves")
+            wire_ids = expand(raw["wires"], list(wires), f"{where}.wires") if raw.get("wires") else []
+            if wire_ids:
+                start = t
+                for w_id in wire_ids:
+                    if w_id in wired:
+                        raise SpecError(f"{where}: wire {w_id} was already connected in {wired[w_id]}")
+                    wired[w_id] = where
+                    w = wires[w_id]
+                    for end in (w["from"], w["to"]):
+                        if end["instance"] and end["instance"] not in introduced:
+                            raise SpecError(f"{where}: wire {w_id} connects {end['ref']} before "
+                                            f"{end['instance']} is installed")
+                    length = sum(math.dist(a, b) for a, b in zip(w["route"], w["route"][1:]))
+                    w["t0"], w["t1"] = t, t + min(3.0, max(1.0, length / speed))
+                    t = w["t0"] + 0.5
+                    step["wires"].append(w_id)
+                t = max(start, *(wires[w]["t1"] for w in wire_ids)) + 0.2
+            if raw.get("diagram"):
+                diagram = base / raw["diagram"]
+                if not diagram.is_file():
+                    raise SpecError(f"{where}.diagram: missing draw-wiring spec {diagram}")
+                step["diagram"] = diagram
+            if not step["parts"] and not step["wires"]:
+                raise SpecError(f"{where}: introduces no parts or wires; use place, moves or wires")
             for n_i, note in enumerate(raw.get("notes") or []):
                 if isinstance(note, str):
                     note = {"title": "Note", "text": note}
@@ -294,6 +394,13 @@ def load_spec(path):
     missing = [n for n in names if n not in introduced]
     if missing:
         raise SpecError(f"instances never introduced by any step: {missing}")
+    unwired = sorted(set(wires) - set(wired))
+    if unwired:
+        raise SpecError(f"wires never connected by any step: {unwired}")
+    connected = {e["instance"] for w in wires.values() for e in (w["from"], w["to"]) if e["instance"]}
+    loose = [n for n in names if type_info[type_of(n)]["kind"] == "electrical" and n not in connected]
+    if loose:
+        raise SpecError(f"electrical parts with no wire: {loose}; add their wires and a wiring step")
 
     clearance = spec.get("clearance") or {}
     tol = float(clearance.get("tolerance_mm", 0.05))
@@ -320,6 +427,7 @@ def load_spec(path):
         "sections": sections, "steps": steps, "duration": t, "view": view,
         "tolerance": tol, "max_mm3": max_mm3, "allowed": allowed,
         "motion_sha256": hashlib.sha256(motion.encode()).hexdigest(),
+        "wires": wires,
     }
 
 
@@ -542,8 +650,12 @@ def timeline_json(norm, clearance):
                        "kind": norm["types"][type_of(n)]["kind"], "color": norm["types"][type_of(n)]["color"]}
                       for n in norm["names"]],
         "sections": norm["sections"],
-        "steps": [{k: s[k] for k in ("title", "section", "view", "t0", "t1", "place", "moves", "parts", "notes", "focus")}
-                  for s in norm["steps"]],
+        "steps": [{k: s[k] for k in ("title", "section", "view", "t0", "t1", "place", "moves", "parts", "notes",
+                                     "focus", "wires")} for s in norm["steps"]],
+        "wires": {w_id: {k: w[k] for k in ("id", "hex", "color", "route", "t0", "t1", "gauge")}
+                  | {"from": f'{w["from"]["label"]} {w["from"]["pin"]}', "to": f'{w["to"]["label"]} {w["to"]["pin"]}',
+                     "endpoints": [e["instance"] for e in (w["from"], w["to"]) if e["instance"]]}
+                  for w_id, w in norm["wires"].items()},
         "clearance": clearance,
     }
 
@@ -572,6 +684,16 @@ def stage_fonts(site):
 PILL = {"font": "400 15px Lato, 'Open Sans', sans-serif", "padX": 16, "height": 30}
 FIG_STEP = (1000, 720)
 FIG_PART = (150, 120)
+
+
+def render_diagram(spec, out):
+    """Pin-level wiring picture from a draw-wiring spec (skill://drawing-diagrams)."""
+    tool = shutil.which("draw-wiring")
+    if not tool:
+        die("draw-wiring not on PATH; run ~/src/agents/bin/omp-install")
+    res = subprocess.run([tool, str(spec), "-o", str(out), "--no-preview"], capture_output=True, text=True)
+    if res.returncode != 0 or not out.is_file():
+        die(f"draw-wiring failed on {spec}:\n{res.stderr.strip()}")
 
 
 def render_figures(site, jobs):
@@ -639,6 +761,9 @@ def build(norm, draft):
         jobs.append((f"part-{t}", {"kind": "part", "name": info["instances"][0],
                                    "width": FIG_PART[0], "height": FIG_PART[1], "fill": 0.8}))
     figures = render_figures(site, jobs)
+    for i, step in enumerate(norm["steps"]):
+        if step["diagram"]:
+            render_diagram(step["diagram"], site / "img" / f"wiring-{i + 1:02d}.svg")
     (site / "render.html").unlink()
     (site / "index.html").write_text(manual_html(norm, figures, clearance))
     return site
@@ -654,7 +779,32 @@ def step_labels(norm, step):
     for t, inst in counts.items():
         name = norm["types"][t]["name"]
         out.append({"text": f"{name} ×{len(inst)}" if len(inst) > 1 else name, "names": inst, "type": t})
+    # Wiring: name each wired part so the reader can match the connection table.
+    seen = set(step["parts"])
+    for w_id in step["wires"]:
+        for end in (norm["wires"][w_id]["from"], norm["wires"][w_id]["to"]):
+            if end["instance"] and end["instance"] not in seen:
+                seen.add(end["instance"])
+                out.append({"text": end["label"], "names": [end["instance"]], "type": type_of(end["instance"])})
     return out
+
+
+def wire_table(norm, wire_ids, step_of=None):
+    rows = []
+    for w_id in wire_ids:
+        w = norm["wires"][w_id]
+        ends = [e for e in w["ends"] if e]
+        detail = " · ".join(x for x in (w["color"], w["gauge"],
+                                         f'{w["length_mm"]:g} mm' if w["length_mm"] else "",
+                                         " / ".join(ends)) if x)
+        link = (f'<a href="#step-{step_of[w_id] + 1}">step {step_of[w_id] + 1}</a>'
+                if step_of is not None else "")
+        note = f'<div class="wnote">{esc(w["note"])}</div>' if w["note"] else ""
+        rows.append(f'''<li class="wire"><span class="wswatch" style="background:{w["hex"]}"></span>
+  <div><div class="wid">{esc(w_id)} {link}</div>
+  <div class="wends">{esc(w["from"]["label"])} <b>{esc(w["from"]["pin"])}</b> → {esc(w["to"]["label"])}
+  <b>{esc(w["to"]["pin"])}</b></div><div class="wdetail">{esc(detail)}</div>{note}</div></li>''')
+    return f'<ul class="wires">{"".join(rows)}</ul>'
 
 
 def esc(s):
@@ -717,18 +867,23 @@ def manual_html(norm, figures, clearance):
             nav.append(f'<a href="#step-{i + 1}"><span class="n">{i + 1}</span>{esc(step["title"])}</a>')
             notes = "".join(f'<div class="note {n["kind"]}"><h4>{esc(n["title"])}</h4><p>{esc(n["text"])}</p></div>'
                             for n in step["notes"])
-            body.append(f'''<section class="step" id="step-{i + 1}">
-  <div class="figure-wrap">{figure_svg(key, FIG_STEP, figures.get(key))}</div>
+            diagram = (f'<figure class="diagram"><img src="img/wiring-{i + 1:02d}.svg" alt="Wiring diagram">'
+                       f'</figure>' if step["diagram"] else "")
+            connections = (f'<h3>Connections</h3>{wire_table(norm, step["wires"])}' if step["wires"] else "")
+            parts_here = (f'<h3>This step</h3><ul>{part_rows(norm, counts_for(norm, [i]), icons=True)}</ul>'
+                          if step["parts"] else "")
+            body.append(f'''<section class="step{" wiring-step" if step["wires"] else ""}" id="step-{i + 1}">
+  <div class="figure-wrap">{figure_svg(key, FIG_STEP, figures.get(key))}{diagram}</div>
   <aside>
     <div class="kicker">{esc(sec["title"])} · Step {i + 1} of {len(norm["steps"])}</div>
     <h2>{esc(step["title"])}</h2>
     {notes}
-    <h3>This step</h3>
-    <ul>{part_rows(norm, counts_for(norm, [i]), icons=True)}</ul>
+    {connections}
+    {parts_here}
     <a class="watch" href="animation.html#step={i + 1}">Watch this step →</a>
   </aside>
 </section>''')
-    nav.append('<div class="nav-section">Reference</div><a href="#parts">Parts</a>')
+    nav.append('<div class="nav-section">Reference</div>')
 
     cards = []
     for kind in KINDS:
@@ -740,9 +895,15 @@ def manual_html(norm, figures, clearance):
   <div><div class="cname">{esc(info["name"])}</div>
   <div class="ckind"><span class="swatch" style="background:{info["color"]}"></span>{esc(kind_label(info))}</div>
   {desc}</div><div class="cqty">×{info["count"]}</div></div>''')
+    if norm["wires"]:
+        step_of = {w: i for i, s in enumerate(norm["steps"]) for w in s["wires"]}
+        nav.append('<a href="#wiring">Wiring</a>')
+        body.append(f'''<section class="wiring" id="wiring"><h2>Wiring</h2>
+  {wire_table(norm, list(norm["wires"]), step_of)}</section>''')
+    nav.append('<a href="#parts">Parts</a>')
     body.append(f'''<section class="parts" id="parts"><h2>Parts</h2><div class="cards">{"".join(cards)}</div>
   <p class="clearance{" draft" if draft else ""}">{esc(clearance["text"])}. The check uses nominal CAD
-  geometry; it does not prove fit, strength or print accuracy.</p></section>''')
+  geometry; it does not prove fit, strength or print accuracy. Wires are not clearance-checked.</p></section>''')
 
     return f'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
