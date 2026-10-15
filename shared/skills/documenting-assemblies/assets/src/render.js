@@ -146,7 +146,8 @@ export async function startRenderer() {
       canvas.style.height = `${height}px`;
       view.renderer.setPixelRatio(scale);
       view.setSize(width, height);
-      let offsets, names = null, v = tl.view, style = 'shaded', highlight = [], moves = [], wires = [], fitWires = [];
+      let offsets, names = null, v = tl.view, style = 'shaded', highlight = [], moves = [], wires = [], fitWires = [],
+        ghost = [];
       if (req.kind === 'step') {
         const step = tl.steps[req.index];
         offsets = explodedStep(tl, req.index);
@@ -157,6 +158,7 @@ export async function startRenderer() {
         moves = step.moves;
         wires = wiresThrough(tl, req.index);
         fitWires = wires.filter((w) => step.wires.includes(w.id));
+        ghost = step.transparent || [];
       } else if (req.kind === 'part') {
         offsets = new Map([[req.name, [0, 0, 0]]]);
         v = ISO;
@@ -167,6 +169,7 @@ export async function startRenderer() {
       view.setPoses(offsets);
       view.setStyle(style);
       view.setHighlight(highlight);
+      view.setGhost(ghost);
       view.setGuides(moves, 1.4);
       view.setWires(wires);
       const boxes = view.boxesFor(offsets, names);

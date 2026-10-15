@@ -130,6 +130,22 @@ class AssemblyDocs(unittest.TestCase):
         result = self.run_cli("check", self.wired_spec(2))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_only_parts_fitted_earlier_can_be_transparent(self):
+        data = spec()
+        data["sections"][0]["steps"][0]["transparent"] = ["peg_1"]
+        result = self.run_cli("check", data)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("transparent: peg_1 must be fitted in an earlier step", result.stderr)
+        data = spec()
+        data["sections"][0]["steps"][1]["transparent"] = ["peg_*"]
+        result = self.run_cli("check", data)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("transparent: peg_1 must be fitted in an earlier step", result.stderr)
+        data = spec()
+        data["sections"][0]["steps"][1]["transparent"] = ["wall"]
+        result = self.run_cli("check", data)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

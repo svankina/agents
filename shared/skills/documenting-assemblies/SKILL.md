@@ -52,6 +52,10 @@ Extending) so the next mechanism gets the improvement.
    - Add a `diagram` (a `draw-wiring` spec, see `skill://drawing-diagrams`)
      when the reader must find a pin on a board or a header. A route on the
      3D model does not show which hole a wire uses.
+   - When a step's new parts or wires sit inside an enclosure, list the
+     enclosure in the step's `transparent`. Those parts are drawn see-through
+     in that step's figure and animation; wires and parts behind them show
+     and keep their labels. Only parts fitted in earlier steps qualify.
 3. **Check.** Run `fair-run -- assembly-docs check assembly.json`. A FAIL
    on a move means the sequence or path is wrong: change it. A FAIL in the
    assembled state is a design defect: fix the model.

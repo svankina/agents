@@ -123,6 +123,7 @@ export async function startPlayer() {
       const si = stepAt(tl, time);
       const step = tl.steps[si];
       view.setHighlight(style === 'line' ? stepHighlights(tl, si) : []);
+      view.setGhost(step.transparent || []);
       view.setGuides(guides ? activeMoves(tl, time) : []);
       view.setWires(wiresAt(tl, time));
       showStep(si);

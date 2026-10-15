@@ -15,6 +15,8 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { Line2 } from 'three/examples/jsm/lines/Line2.js';
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
+import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
+import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 
 export const cadToWorld = (v) => new THREE.Vector3(v[0], v[2], -v[1]);
 const GUIDE_LAYER = 1;
@@ -181,11 +183,17 @@ export class AssemblyView {
         uniforms: { uId: { value: i + 1 }, uHi: { value: 0 }, uPick: this.pickUniform },
         vertexShader: INFO_VERTEX, fragmentShader: INFO_FRAGMENT, side: THREE.DoubleSide,
       });
+      // See-through variants for parts a step marks transparent.
+      const ghostFlat = new THREE.MeshBasicMaterial({
+        color: this.colors.fill, side: THREE.DoubleSide, transparent: true, opacity: 0.12, depthWrite: false,
+      });
+      const ghostShaded = shaded.clone();
+      Object.assign(ghostShaded, { transparent: true, opacity: 0.2, depthWrite: false });
       const parentInv = new THREE.Matrix3().setFromMatrix4(object.parent.matrixWorld).invert();
       const restBox = new THREE.Box3().setFromObject(object);
       this.instances.set(inst.name, {
-        ...inst, id: i + 1, object, meshes, flat, shaded, info, parentInv, restBox,
-        rest: object.position.clone(), offset: null,
+        ...inst, id: i + 1, object, meshes, flat, shaded, info, ghostFlat, ghostShaded, parentInv, restBox,
+        rest: object.position.clone(), offset: null, ghost: false, edges: null,
       });
     });
     this.setPoses(new Map());
@@ -212,6 +220,36 @@ export class AssemblyView {
       inst.flat.color.set(on ? this.colors.highlight : this.colors.fill);
       inst.info.uniforms.uHi.value = on ? 1 : 0;
     }
+  }
+
+  // Parts drawn see-through: translucent fill and faint feature edges. They
+  // stay out of the info and pick passes, so parts and wires behind them keep
+  // their outlines and can carry labels.
+  setGhost(names) {
+    const set = new Set(names || []);
+    for (const [name, inst] of this.instances) {
+      inst.ghost = set.has(name);
+      if (inst.ghost && !inst.edges) {
+        this.ghostEdgeMaterial ||= new LineMaterial({
+          color: this.colors.line, linewidth: 1, worldUnits: false, transparent: true, opacity: 0.4, depthWrite: false,
+        });
+        inst.edges = inst.meshes.map((mesh) => {
+          const geom = new LineSegmentsGeometry().fromEdgesGeometry(new THREE.EdgesGeometry(mesh.geometry, 28));
+          const seg = new LineSegments2(geom, this.ghostEdgeMaterial);
+          seg.layers.set(GUIDE_LAYER);
+          mesh.add(seg);
+          return seg;
+        });
+      }
+      for (const seg of inst.edges || []) seg.visible = inst.ghost;
+    }
+  }
+
+  // Hide see-through parts for a pass; returns a function that restores them.
+  _hideGhosts() {
+    const hidden = [...this.instances.values()].filter((i) => i.ghost && i.object.visible).map((i) => i.object);
+    hidden.forEach((o) => { o.visible = false; });
+    return () => hidden.forEach((o) => { o.visible = true; });
   }
 
   // Thin guide lines from each moving part's start pose to its seat.
@@ -325,7 +363,11 @@ export class AssemblyView {
   }
 
   _useMaterial(which) {
-    for (const inst of this.instances.values()) for (const m of inst.meshes) m.material = inst[which];
+    const ghost = { flat: 'ghostFlat', shaded: 'ghostShaded' }[which];
+    for (const inst of this.instances.values()) {
+      const material = inst[inst.ghost && ghost ? ghost : which];
+      for (const m of inst.meshes) m.material = material;
+    }
   }
 
   _aimLights() {
@@ -347,6 +389,7 @@ export class AssemblyView {
     const t = this._ensureTargets(size.x, size.y);
     const cam = this.camera;
     for (const g of [...this.guides.children, ...this.wireGroup.children]) g.material.resolution.set(size.x, size.y);
+    if (this.ghostEdgeMaterial) this.ghostEdgeMaterial.resolution.set(size.x, size.y);
     this._aimLights();
 
     const line = this.style === 'line';
@@ -357,11 +400,13 @@ export class AssemblyView {
     r.render(this.scene, cam);
 
     cam.layers.disable(GUIDE_LAYER);
+    const restore = this._hideGhosts();
     this._useMaterial('info');
     this.pickUniform.value = 0;
     r.setRenderTarget(t.info);
     r.clear();
     r.render(this.scene, cam);
+    restore();
     cam.layers.enable(GUIDE_LAYER);
 
     const u = this.composite.uniforms;
@@ -383,12 +428,14 @@ export class AssemblyView {
     const size = r.getDrawingBufferSize(new THREE.Vector2());
     const t = this._ensureTargets(size.x, size.y);
     this.camera.layers.disable(GUIDE_LAYER);
+    const restore = this._hideGhosts();
     this._useMaterial('info');
     this.pickUniform.value = 1;
     r.setRenderTarget(t.pick);
     r.setClearColor(0x000000, 0);
     r.clear();
     r.render(this.scene, this.camera);
+    restore();
     this.pickUniform.value = 0;
     this.camera.layers.enable(GUIDE_LAYER);
     const buf = new Uint8Array(size.x * size.y * 4);

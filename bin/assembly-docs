@@ -58,6 +58,10 @@ figures and the animation; "diagram" adds a pin-level draw-wiring picture.
 Wire colors: black red white yellow green blue brown orange violet grey pink
 green/yellow, or #rrggbb. Wires are not clearance-checked.
 
+A step's "transparent": [patterns] draws parts fitted in earlier steps as
+see-through in that step's figure and animation, for wiring or parts that sit
+inside an enclosure: {"title": "Wire the servo", "wires": ["W2"], "transparent": ["base_*"]}.
+
 check certifies every move against all parts installed before it: it samples
 the exact BREP distance and advances by at least the current clearance, so no
 pose between samples penetrates deeper than tolerance_mm. It also checks the
@@ -315,12 +319,13 @@ def load_spec(path):
             where = f"sections[{s_i}].steps[{p_i}] ({raw.get('title', '?')})"
             if "title" not in raw:
                 raise SpecError(f"{where}: needs a title")
-            extra = set(raw) - {"title", "place", "moves", "notes", "view", "focus", "wires", "diagram"}
+            extra = set(raw) - {"title", "place", "moves", "notes", "view", "focus", "wires", "diagram", "transparent"}
             if extra:
                 raise SpecError(f"{where}: unknown keys {sorted(extra)}")
             step_view = view_of(raw.get("view"), step_view, where)
             step = {"title": raw["title"], "section": s_i, "view": step_view, "t0": t,
-                    "place": None, "moves": [], "parts": [], "notes": [], "wires": [], "diagram": None}
+                    "place": None, "moves": [], "parts": [], "notes": [], "wires": [], "diagram": None,
+                    "transparent": []}
 
             def introduce(found_names, label):
                 for n in found_names:
@@ -386,6 +391,12 @@ def load_spec(path):
                     raise SpecError(f"{where}.notes[{n_i}]: needs text; kind is one of {NOTE_KINDS}")
                 step["notes"].append({"title": note.get("title", kind.title()), "text": note["text"], "kind": kind})
             step["focus"] = expand(raw["focus"], names, f"{where}.focus") if "focus" in raw else None
+            if raw.get("transparent"):
+                # See-through parts: already-fitted enclosures in front of what this step adds or wires.
+                for n in expand(raw["transparent"], names, f"{where}.transparent"):
+                    if n not in introduced or n in step["parts"]:
+                        raise SpecError(f"{where}.transparent: {n} must be fitted in an earlier step")
+                    step["transparent"].append(n)
             t += 0.6
             step["t1"] = t
             sec["steps"].append(len(steps))
@@ -651,7 +662,7 @@ def timeline_json(norm, clearance):
                       for n in norm["names"]],
         "sections": norm["sections"],
         "steps": [{k: s[k] for k in ("title", "section", "view", "t0", "t1", "place", "moves", "parts", "notes",
-                                     "focus", "wires")} for s in norm["steps"]],
+                                     "focus", "wires", "transparent")} for s in norm["steps"]],
         "wires": {w_id: {k: w[k] for k in ("id", "hex", "color", "route", "t0", "t1", "gauge")}
                   | {"from": f'{w["from"]["label"]} {w["from"]["pin"]}', "to": f'{w["to"]["label"]} {w["to"]["pin"]}',
                      "endpoints": [e["instance"] for e in (w["from"], w["to"]) if e["instance"]]}
