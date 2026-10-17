@@ -118,6 +118,10 @@ Idle channels retain history on disk, not a live model session.
 
 Each worker receives the receiver's current model, effective system prompt,
 and bounded, topic-selected excerpts from its human task conversation.
+The sender sets the worker's thinking effort with `peers send` `effort`
+(`low`, `medium`, or `high`). Requests without it run at `medium`. The
+receiver's own level is not used, because `auto` resolves it for the
+receiver's last task, not for the request.
 Peer messages and mixed-provenance compaction summaries are not copied.
 Workers retain their own channel history. Important older constraints should
 remain in the receiver's project guidance. Worker tools are restricted to the

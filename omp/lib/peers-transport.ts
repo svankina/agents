@@ -19,6 +19,9 @@ export interface PeerDescriptor {
 	activity?: string;
 }
 
+export const PEER_EFFORTS = ["low", "medium", "high"] as const;
+export type PeerEffort = (typeof PEER_EFFORTS)[number];
+
 export interface PeerMessage {
 	from: string;
 	to: string;
@@ -32,6 +35,8 @@ export interface PeerMessage {
 	kind?: "request" | "reply";
 	/** Preserve wake-relay suppression across process boundaries to avoid reply loops. */
 	wakeRelay?: boolean;
+	/** Thinking effort the sender asks the receiving channel worker to use. */
+	effort?: PeerEffort;
 }
 
 export interface PeerDeliveryReceipt {
@@ -131,7 +136,8 @@ function validMessage(value: unknown): value is PeerMessage {
 		(value.senderSessionId === undefined || (typeof value.senderSessionId === "string" && value.senderSessionId.length > 0 && value.senderSessionId.length <= 1024)) &&
 		(value.senderName === undefined || (typeof value.senderName === "string" && value.senderName.length <= 256)) &&
 		(value.kind === undefined || value.kind === "request" || value.kind === "reply") &&
-		(value.wakeRelay === undefined || typeof value.wakeRelay === "boolean")
+		(value.wakeRelay === undefined || typeof value.wakeRelay === "boolean") &&
+		(value.effort === undefined || (PEER_EFFORTS as readonly unknown[]).includes(value.effort))
 	);
 }
 

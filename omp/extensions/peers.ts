@@ -5,12 +5,14 @@ import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext, MessageRenderer, ToolDefinition } from "@oh-my-pi/pi-coding-agent";
 import { Markdown, truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
 import {
+	PEER_EFFORTS,
 	PeerNetwork,
 	parsePeerId,
 	peerDirectory,
 	qualifyPeer,
 	type PeerDescriptor,
 	type PeerDeliveryReceipt,
+	type PeerEffort,
 	type PeerMessage,
 } from "../lib/peers-transport";
 import { PeerChannels } from "../lib/peer-channels";
@@ -20,7 +22,7 @@ import { createPeerChannelReporter } from "../lib/peer-channel-ui";
 type ToolResult = AgentToolResult<unknown>;
 type PeersParams = {
 	op: "list" | "send" | "wait"; scope?: "all" | "project"; status?: PeerDescriptor["status"]; limit?: number;
-	to?: string; from?: string; message?: string; replyTo?: string; await?: boolean; timeoutMs?: number;
+	to?: string; from?: string; message?: string; replyTo?: string; await?: boolean; timeoutMs?: number; effort?: PeerEffort;
 };
 
 type WaitResult =
@@ -283,7 +285,7 @@ export default function peersExtension(pi: ExtensionAPI) {
 				directory: join(process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"), "omp", "peer-channels", sessionKey),
 				permitDirectory: join(process.env.XDG_RUNTIME_DIR || join(homedir(), ".cache"), "omp-channel-permits"),
 				worker: (channelDir, message, signal, onActivity) => createPeerWorker(pi, connection.ctx, {
-					channelDir, peerId: message.from, peerName: peerLabel(message.from), signal, onActivity,
+					channelDir, peerId: message.from, peerName: peerLabel(message.from), effort: message.effort, signal, onActivity,
 				}),
 				reply: async (request, answer) => {
 					const receipt = await network.send({
@@ -350,6 +352,7 @@ export default function peersExtension(pi: ExtensionAPI) {
 		replyTo: z.string().optional().describe("send: thread to answer; wait: thread to match"),
 		await: z.boolean().optional().describe("send: wait for the correlated reply"),
 		timeoutMs: z.number().int().min(0).max(2_147_483_647).optional().describe("send await / wait: default 60000; 0 waits until cancelled"),
+		effort: z.enum(PEER_EFFORTS).optional().describe("send: receiving worker's thinking effort for a new request; default medium"),
 	});
 	// `interruptible` is honored by the OMP runtime but absent from the published ToolDefinition type.
 	const definition: ToolDefinition<typeof parameters> & { interruptible(params: Partial<PeersParams>): boolean } = {
@@ -359,7 +362,7 @@ export default function peersExtension(pi: ExtensionAPI) {
 		approval: "read",
 		interruptible: args => args.op === "wait",
 		parameters,
-		description: "Cross-process messaging between live OMP sessions on this machine. Local jobs, services, and subagents stay on wait, proc://, and agent://. list discovers other live OMP sessions and returns their qualified omp:<instance>/<local-id> addresses; scope all (default) or project (exact cwd) filters discovery. send delivers message to one qualified address; a receipt means durable queue acceptance, not finished work. Each incoming peer request is handled by an isolated persistent worker for that sender, with the receiver's role and relevant context, not in the receiver's main conversation. Workers run FIFO per channel, at most four machine-wide; /channels shows progress/results/transcripts without adding them to main model context. Session identities retain channel history across transport restarts. send await:true waits for a correlated reply (default 60 seconds); timeout does not cancel work. Preserve replyTo on replies and omit await. wait receives the next reply or aside from a peer (from filters the sender, replyTo matches a thread). Replies go to the matching wait, or once as an aside in the requesting main session; requests never satisfy a main-session wait. Do not reply automatically to replies. external:herd and wake relays retain direct aside delivery. Remote lifecycle control is unsupported; closed sessions cannot be launched by messaging. Never retry unknown delivery automatically.",
+		description: "Cross-process messaging between live OMP sessions on this machine. Local jobs, services, and subagents stay on wait, proc://, and agent://. list discovers other live OMP sessions and returns their qualified omp:<instance>/<local-id> addresses; scope all (default) or project (exact cwd) filters discovery. send delivers message to one qualified address; a receipt means durable queue acceptance, not finished work. Each incoming peer request is handled by an isolated persistent worker for that sender, with the receiver's role and relevant context, not in the receiver's main conversation. Workers run FIFO per channel, at most four machine-wide; /channels shows progress/results/transcripts without adding them to main model context. send effort sets the worker's thinking and dominates reply time: low for lookups, facts, and status; medium (default) for routine questions; high only for design or analysis that must dig through files, which takes several times longer. Session identities retain channel history across transport restarts. send await:true waits for a correlated reply (default 60 seconds); timeout does not cancel work. Preserve replyTo on replies and omit await. wait receives the next reply or aside from a peer (from filters the sender, replyTo matches a thread). Replies go to the matching wait, or once as an aside in the requesting main session; requests never satisfy a main-session wait. Do not reply automatically to replies. external:herd and wake relays retain direct aside delivery. Remote lifecycle control is unsupported; closed sessions cannot be launched by messaging. Never retry unknown delivery automatically.",
 		renderCall(input, options, theme) {
 			const args = input as PeersParams;
 			if (args.op === "send") {
@@ -453,6 +456,8 @@ export default function peersExtension(pi: ExtensionAPI) {
 						replyTo: id, expectsReply: params.await === true, senderSessionId: connection.sessionId,
 						senderName: connection.ctx.sessionManager.getSessionName()?.slice(0, 256),
 						kind: params.replyTo === undefined ? "request" : "reply",
+						// Replies launch no worker, so only requests carry an effort.
+						...(params.replyTo === undefined && params.effort ? { effort: params.effort } : {}),
 					});
 					if (receipt.outcome === "failed") pending?.cancel("Delivery failed or acceptance is unknown");
 					return result({ id, receipt, ...(pending ? { reply: await pending.promise } : {}) });
