@@ -74,12 +74,19 @@ Extending) so the next mechanism gets the improvement.
 ## What the library does
 
 - **check** imports the STEP. For each move it tests the moving parts against
-  every part fitted before them. It samples the exact BREP distance and
-  advances by at least the current clearance. No pose between samples can
-  penetrate deeper than `tolerance_mm` (default 0.05 mm). It also checks every
-  pair in the assembled state. Motions are translations only, so the check
-  covers the whole path. It uses nominal geometry; it does not prove fit,
-  tolerance stack-up, strength, or print accuracy.
+  every part fitted before them, in pieces of at most 10 mm. It first sweeps
+  meshes along each piece. Faces the move slides along (planes that contain
+  the move direction, cylinders and extrusions along it) cannot start an
+  overlap, so they are skipped. If the remaining faces stay more than
+  `tolerance_mm` (default 0.05 mm) apart, the piece is certified at once.
+  T-nuts in slots and shafts in bearings therefore check in seconds, at any
+  clearance. Spans that do not clear, such as a nut that seats in its pocket,
+  are sampled with the exact BREP distance, advancing by at least the current
+  clearance, so no pose between samples can penetrate deeper than
+  `tolerance_mm`. It also checks every pair in the assembled state. Motions
+  are translations only, so the check covers the whole path. It uses nominal
+  geometry; it does not prove fit, tolerance stack-up, strength, or print
+  accuracy.
 - **build** renders the figures in headless Chromium with Playwright. The
   manual is a responsive webpage with no cover or front matter: a step list
   beside large step figures on wide screens, stacked on phones, and a parts

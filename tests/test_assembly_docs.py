@@ -29,6 +29,16 @@ b = one.moved(bd.Location((30, 0, 0))); b.label = "pin_2"
 shared = bd.Compound(children=[solid(bd.Box(10, 40, 20, align=(A, A, A)), "wall"), a, b])
 bd.export_step(shared, "shared.step")
 bd.export_gltf(shared, "shared.glb", unit=bd.Unit.M, binary=True)
+# A 6 mm peg installed in a 6.2 mm bore through a 100 mm block; "fit" has a 6 mm bore (line
+# contact all the way) and "blocked" narrows the 6.2 mm bore above the peg.
+C = bd.Align.CENTER
+bore = lambda r: bd.Box(20, 20, 100, align=(C, C, A)) - bd.Cylinder(r, 100, align=(C, C, A))
+pin = solid(bd.Pos(0, 0, 40) * bd.Cylinder(3, 20, align=(C, C, A)), "peg_1")
+ring = bd.Pos(0, 0, 78) * (bd.Cylinder(3.1, 4, align=(C, C, A)) - bd.Cylinder(2.5, 4, align=(C, C, A)))
+for name, body in (("slide", bore(3.1)), ("fit", bore(3)), ("blocked", bore(3.1) + ring)):
+    model = bd.Compound(children=[solid(body, "block"), copy.deepcopy(pin)])
+    bd.export_step(model, f"{name}.step")
+    bd.export_gltf(model, f"{name}.glb", unit=bd.Unit.M, binary=True)
 '''
 
 
@@ -86,6 +96,19 @@ class AssemblyDocs(unittest.TestCase):
         result = self.run_cli("check", spec(model="clash", allowed=allowed))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("allow wall / peg_1", result.stdout)
+
+    def test_sliding_fits_are_cleared_by_sweep_but_a_narrowed_bore_fails(self):
+        # 0.1 mm radial clearance over a 100 mm slide: exact stepping would need ~1000 samples.
+        result = self.run_cli("check", spec(model="slide", path=[[0, 0, 100]], place=["block"]))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("all 10 pieces cleared by sweep", result.stdout)
+        # In line contact only the pieces where a peg end passes the block's top face are sampled.
+        result = self.run_cli("check", spec(model="fit", path=[[0, 0, 100]], place=["block"]))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("6 of 10 pieces cleared by sweep", result.stdout)
+        result = self.run_cli("check", spec(model="blocked", path=[[0, 0, 100]], place=["block"]))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("FAIL step 2 (Peg) move 1: peg_1 hits block", result.stdout)
 
     def test_every_instance_is_introduced_exactly_once(self):
         result = self.run_cli("check", spec(place=["wall", "peg_1"]))
