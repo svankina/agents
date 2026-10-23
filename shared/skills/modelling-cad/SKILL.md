@@ -77,6 +77,28 @@ its `OPERATING.txt` states limits. Set `CAD_WORKBENCH_HOME` only for another eng
 - Export GLB for `serve-cad` with `unit=Unit.M`; that keeps coordinates in mm.
   Do not stack legacy scale corrections.
 
+## Lay out by iteration
+
+Packing parts into an enclosure or onto a board is a search. Do it in code:
+
+- Within your first few steps, write a rough layout as source parameters and
+  run the asserts. Move parts in response to the failures. Do not work out
+  placements, clearances, or collisions in your reasoning; a build answers
+  faster and exactly.
+- Keep a fast check path that builds the parts and runs the project checks
+  without exports, renders, or the assembly manual. Keep it under a minute.
+  Run the full export only after it passes.
+- Time each stage once. If a stage takes minutes, find the part or check that
+  causes it before you run it again.
+- Prefer cheap checks: bounding boxes, plan-view rectangle gaps, and sampled
+  points with `is_inside`. Use exact BREP distances only on the pairs that a
+  cheap check flags.
+- Assert only safety and function: insulation barriers, conductors that must
+  not cross, parts that must not intersect. Measure and report comfort margins
+  such as tool access, plug room, and size, unless the user set the number.
+- When you delegate a layout, mark each requirement as hard or as a goal. Do
+  not combine many hard clearances with "as small as possible".
+
 ## Verify the result
 
 Run `cad-check spec.json` on the exported files after every rebuild. It
