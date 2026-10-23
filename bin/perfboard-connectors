@@ -1,0 +1,207 @@
+#!/usr/bin/env python3
+"""Check that the connectors on a PerfStudio board can be plugged in by hand."""
+
+import argparse
+import fnmatch
+import math
+import os
+import sys
+from pathlib import Path
+
+TOOL_PYTHON = Path.home() / ".local/share/uv/tools/perfboard-studio/bin/python"
+INSTALL = ('uv tool install -p 3.12 '
+           '"perfboard-studio[mcp] @ git+https://github.com/medinstech/perfstudio@0298919"')
+
+try:
+    from perfboard_studio.drc import placed_body_box, placed_entry
+    from perfboard_studio.footprints import get_footprint
+    from perfboard_studio.geometry import all_pin_holes, hole_to_mm, substrate_edges_mm
+    from perfboard_studio.persist import parse_document_or_throw
+except ImportError:
+    python = Path(os.environ.get("PERFSTUDIO_PYTHON", TOOL_PYTHON))
+    if not os.environ.get("PERFBOARD_CONNECTORS_REEXEC") and python.is_file():
+        os.environ["PERFBOARD_CONNECTORS_REEXEC"] = "1"
+        os.execv(str(python), [str(python), os.path.abspath(__file__), *sys.argv[1:]])
+    print(f"perfboard-connectors: PerfStudio is not installed. Install it with:\n  {INSTALL}",
+          file=sys.stderr)
+    sys.exit(2)
+
+EPILOG = """\
+Checks every connector (parts matching --connectors, default J*) on the component
+side of a PerfStudio .perf document:
+
+  edge   the mating face points at a board edge and sits between --max-overhang mm
+         past it and --max-inset mm inside it ("vertical" connectors are exempt)
+  path   no other body stands between the mating face and that edge
+  grip   no other part taller than --grip-height mm lies within --grip-mm mm of
+         the mating face (of the whole body for a vertical connector)
+  gap    connector bodies are at least --gap-mm mm apart
+
+The mating face is the body side that reaches furthest past the pins: right for
+a side-entry header described as box-<n>x1-...-o0x<Y>, the wire entry for a
+screw terminal. Name it with --face REF=left|right|top|bottom|vertical when the
+body does not show it (top-entry headers, odd modules).
+
+PerfStudio puts the board edge half a pitch past the outer holes. A breakable
+board snapped through the next row of holes has its edge one pitch out: pass
+--edge-margin 2.54.
+
+Exit status: 0 every check passed, 1 a check failed, 2 usage or input error.
+"""
+
+EDGE_OF = {(0, 1): "bottom", (0, -1): "top", (1, 0): "right", (-1, 0): "left"}
+DIRECTION = {name: d for d, name in EDGE_OF.items()}
+
+
+def box_gap(a, b):
+    """Distance between two (min_x, max_x, min_y, max_y) boxes; 0 when they touch."""
+    dx = max(a[0] - b[1], b[0] - a[1], 0.0)
+    dy = max(a[2] - b[3], b[2] - a[3], 0.0)
+    return math.hypot(dx, dy)
+
+
+def mating_face(body, pins, entry):
+    """Facing direction from the wire entry, else from the side the body reaches furthest."""
+    if entry is not None:
+        dx, dy = entry[1]
+        return (int(math.copysign(1, dx)) if dx else 0, int(math.copysign(1, dy)) if dy else 0)
+    xs, ys = [p[0] for p in pins], [p[1] for p in pins]
+    reach = {(1, 0): body[1] - max(xs), (-1, 0): min(xs) - body[0],
+             (0, 1): body[3] - max(ys), (0, -1): min(ys) - body[2]}
+    ranked = sorted(reach.items(), key=lambda kv: -kv[1])
+    if ranked[0][1] - ranked[1][1] < 2.0:
+        return None
+    return ranked[0][0]
+
+
+def face_segment(body, face):
+    x0, x1, y0, y1 = body
+    return {(1, 0): (x1, x1, y0, y1), (-1, 0): (x0, x0, y0, y1),
+            (0, 1): (x0, x1, y1, y1), (0, -1): (x0, x1, y0, y0)}[face]
+
+
+def check(doc, args):
+    board = doc.board
+    edges = substrate_edges_mm(board)
+    if args.edge_margin is not None:
+        m = args.edge_margin
+        edges = (-m, (board.cols - 1) * board.pitch + m, -m, (board.rows - 1) * board.pitch + m)
+    else:
+        edges = (edges.min_x, edges.max_x, edges.min_y, edges.max_y)
+    faces = {}
+    for item in args.face:
+        ref, _, face = item.partition("=")
+        if face not in (*DIRECTION, "vertical"):
+            raise ValueError(f"--face {item}: use REF=left|right|top|bottom|vertical")
+        faces[ref] = face
+
+    parts, unknown = [], []
+    for c in doc.components:
+        footprint = get_footprint(c.footprint_id)
+        if footprint is None:
+            unknown.append(c.ref)
+            continue
+        if c.mirrored:
+            continue
+        pins = [(hole_to_mm(h, board).x, hole_to_mm(h, board).y) for _, h in all_pin_holes(c, footprint)]
+        parts.append({"ref": c.ref, "body": placed_body_box(c, footprint, board), "pins": pins,
+                      "height": float(footprint.body_height),
+                      "entry": placed_entry(c, footprint, board)})
+    if unknown:
+        raise ValueError(f"footprints PerfStudio does not know: {', '.join(sorted(unknown))}")
+    connectors = [p for p in parts if fnmatch.fnmatchcase(p["ref"], args.connectors)]
+    missing = sorted(set(faces) - {p["ref"] for p in connectors})
+    if missing:
+        raise ValueError(f"--face names {', '.join(missing)}, which is not a connector on the "
+                         f"component side (matching {args.connectors!r})")
+    if not connectors:
+        raise ValueError(f"no component-side part matches --connectors {args.connectors!r}")
+
+    failures, lines = [], []
+    for con in connectors:
+        ref, body = con["ref"], con["body"]
+        named = faces.get(ref)
+        face = None if named == "vertical" else DIRECTION.get(named) or mating_face(body, con["pins"], con["entry"])
+        if named is None and face is None:
+            failures.append(f"FAIL {ref} face: cannot tell which side the plug enters; "
+                            f"pass --face {ref}=left|right|top|bottom|vertical")
+            continue
+        others = [p for p in parts if p is not con]
+        if face is None:
+            lines.append(f"ok   {ref} vertical entry")
+            zone = body
+        else:
+            edge = EDGE_OF[face]
+            line = {(1, 0): edges[1], (-1, 0): edges[0], (0, 1): edges[3], (0, -1): edges[2]}[face]
+            seg = face_segment(body, face)
+            at = seg[1] if face[0] else seg[3]
+            inset = (line - at) * (face[0] or face[1])
+            if not -args.max_overhang <= inset <= args.max_inset:
+                where = f"{inset:.2f} mm inside" if inset >= 0 else f"{-inset:.2f} mm past"
+                failures.append(f"FAIL {ref} edge: mating face is {where} the {edge} edge; "
+                                f"allowed {args.max_overhang:g} mm past to {args.max_inset:g} mm inside")
+            else:
+                lines.append(f"ok   {ref} faces the {edge} edge, mating face {inset:+.2f} mm inside it")
+            # The plug's path: the strip from the face to the edge, as wide as the face.
+            path = {(1, 0): (seg[0], max(seg[0], line), seg[2], seg[3]),
+                    (-1, 0): (min(seg[0], line), seg[0], seg[2], seg[3]),
+                    (0, 1): (seg[0], seg[1], seg[2], max(seg[2], line)),
+                    (0, -1): (seg[0], seg[1], min(seg[2], line), seg[2])}[face]
+            for o in others:
+                b = o["body"]
+                if b[0] < path[1] and path[0] < b[1] and b[2] < path[3] and path[2] < b[3]:
+                    failures.append(f"FAIL {ref} path: {o['ref']} stands between the mating face "
+                                    f"and the {edge} edge")
+            zone = seg
+        for o in others:
+            if o["height"] > args.grip_height:
+                gap = box_gap(o["body"], zone)
+                if gap < args.grip_mm:
+                    failures.append(f"FAIL {ref} grip: {o['ref']} ({o['height']:g} mm tall) is "
+                                    f"{gap:.1f} mm from the {'body' if face is None else 'mating face'}; "
+                                    f"parts over {args.grip_height:g} mm keep {args.grip_mm:g} mm clear")
+    for i, a in enumerate(connectors):
+        for b in connectors[i + 1:]:
+            gap = box_gap(a["body"], b["body"])
+            if gap < args.gap_mm:
+                failures.append(f"FAIL {a['ref']}/{b['ref']} gap: bodies {gap:.1f} mm apart, "
+                                f"need {args.gap_mm:g} mm")
+    return lines, failures
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="perfboard-connectors", description=__doc__, epilog=EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("board", type=Path, metavar="BOARD.perf")
+    parser.add_argument("--connectors", default="J*", metavar="GLOB",
+                        help="reference designators to check (default J*)")
+    parser.add_argument("--face", action="append", default=[], metavar="REF=FACE",
+                        help="mating face of one connector; repeatable")
+    parser.add_argument("--edge-margin", type=float, metavar="MM",
+                        help="outer hole centre to board edge (default: PerfStudio's, half a pitch)")
+    parser.add_argument("--max-inset", type=float, default=1.0, metavar="MM",
+                        help="furthest the mating face may sit inside the edge (default 1)")
+    parser.add_argument("--max-overhang", type=float, default=0.5, metavar="MM",
+                        help="furthest the mating face may stand past the edge (default 0.5)")
+    parser.add_argument("--grip-mm", type=float, default=15.0, metavar="MM",
+                        help="finger room around each mating face (default 15)")
+    parser.add_argument("--grip-height", type=float, default=8.0, metavar="MM",
+                        help="tallest part allowed inside the finger room (default 8)")
+    parser.add_argument("--gap-mm", type=float, default=2.5, metavar="MM",
+                        help="minimum gap between connector bodies (default 2.5)")
+    args = parser.parse_args()
+    try:
+        doc = parse_document_or_throw(args.board.read_text(encoding="utf-8"))
+        lines, failures = check(doc, args)
+    except (OSError, ValueError) as exc:
+        print(f"perfboard-connectors: {exc}", file=sys.stderr)
+        return 2
+    for line in lines + failures:
+        print(line)
+    print(f"{len(failures)} failure(s)" if failures else "all connector checks passed")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

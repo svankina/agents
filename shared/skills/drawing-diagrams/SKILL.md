@@ -13,6 +13,8 @@ Pick the tool by the question the reader has:
 - **Which hole or pin does this wire go in?** Use the hardware workflow below.
   D2 boxes, schematics and pinout posters do not answer that question; the user
   rejected all three for the heater wiring.
+- **Where does each part and wire go on a perfboard?** Lay the board out with
+  `skill://laying-out-perfboards`; it renders the board itself.
 
 Never publish a diagram you have not looked at. Each helper's `--help` covers
 its flags, outputs and exit codes.

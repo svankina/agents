@@ -35,6 +35,9 @@ extension, or `managed-skills` is managed, and no `CLAUDE.md` alias is installed
 - `bin/assembly-docs` with `shared/skills/documenting-assemblies/`: assembly
   manuals, animations, and clearance checks; its three.js bundle is committed
   and rebuilt by `assets/src/build.sh`.
+- `bin/perfboard-connectors` with `shared/skills/laying-out-perfboards/`:
+  perfboard layout through the external PerfStudio uv tool, plus plug-access
+  checks it lacks; its tests skip when PerfStudio is not installed.
 
 ### Verify
 
