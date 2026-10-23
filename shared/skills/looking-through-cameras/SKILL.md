@@ -73,8 +73,8 @@ rectangle.
 
 ## Rules
 
-- Never point a bare `ffmpeg`/vendor client at a camera while the dashboard or
-  Frigate is running — one session per camera, and you will steal it.
+- Never point a bare `ffmpeg`/vendor client at a camera while the dashboard is
+  running — one session per camera, and you will steal it.
 - These are cameras inside someone's home. Capture what was asked for, keep the
   frames out of shared/served locations unless the user asked for a link, and
   do not leave a clip loop running.
@@ -82,7 +82,7 @@ rectangle.
   cleaned automatically, so delete large clips you no longer need.
 - Continuous viewing is not this script's job — start the dashboard instead:
   `scripts/live-cameras-hls.sh` (`:18771`, PTZ on `:18772`), stop it with
-  `scripts/stop-cameras-hls.sh`. Frigate NVR: `cd frigate && docker compose up -d`.
+  `scripts/stop-cameras-hls.sh`.
 
 ## Where the machinery lives
 
